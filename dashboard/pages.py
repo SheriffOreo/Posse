@@ -56,12 +56,31 @@ button:hover { background:#295084; }
 .small { font-size:12px; } .nowrap{white-space:nowrap;}
 code.cmd{ display:block; white-space:pre-wrap; word-break:break-all; background:#0d1320; padding:6px 8px;
           border-radius:5px; border:1px solid #22304a; color:#b9c7e0; }
+/* ---- lineage forest ---- */
+.legend { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin:4px 0 14px; font-size:12px; color:#9db2d6; }
+.legend .k { display:inline-flex; align-items:center; gap:7px; }
+.cbar { width:4px; height:15px; border-radius:1px; flex:none; display:inline-block; }
+.cbar.bh{background:#3fb950;} .cbar.bm{background:#e3b341;} .cbar.bl{background:#8a94a6;} .cbar.broot{background:#6cb6ff;}
+details.tree, details.singles { margin-bottom:6px; }
+details.tree > summary, details.singles > summary { cursor:pointer; list-style:none; padding:5px 2px; outline:none; }
+details.tree > summary::-webkit-details-marker, details.singles > summary::-webkit-details-marker { display:none; }
+details.tree > summary::before, details.singles > summary::before { content:'▾'; color:#8093b0; margin-right:6px; }
+details.tree:not([open]) > summary::before, details.singles:not([open]) > summary::before { content:'▸'; }
+ul.tree-ul { list-style:none; margin:0; padding-left:15px; border-left:1px solid #24304a; }
+ul.tree-ul.root { border-left:none; padding-left:0; }
+.tnode { display:flex; align-items:center; gap:8px; padding:2px 0; }
+a.tlink { color:#cdd7ea; } a.tlink:hover { color:#6cb6ff; }
+.bchip { font-size:10px; padding:1px 6px; border-radius:9px; background:#20293d; color:#8fa3c7; white-space:nowrap; }
+.singlewrap { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+a.schip { font-size:12px; padding:1px 7px; border-radius:5px; background:#1b2740; color:#9db2d6; font-family:ui-monospace,monospace; }
+a.schip:hover { background:#20406b; color:#dbe7ff; text-decoration:none; }
+.empty-state { text-align:center; color:#6b7688; padding:34px 16px; font-style:italic; }
 """
 
 _NAV = """
 <header>
   <span class="brand">&#129302; Claude Infra</span>
-  <nav><a href="/">Status</a><a href="/history">History</a></nav>
+  <nav><a href="/">Status</a><a href="/history">History</a><a href="/lineage">Lineage</a></nav>
   <span id="daemons" class="small muted"></span>
   <span class="spacer"></span>
   <a href="/logout" class="small">Logout</a>
@@ -95,6 +114,47 @@ def login_page(error=""):
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>Sign in</title><style>{_CSS}</style></head>"
+        f"<body><main>{body}</main></body></html>"
+    )
+
+
+def register_page(token=None, error="", closed=False):
+    """One-time registration form (bootstraps the first password). Server-rendered
+    and escaped; standalone shell (no nav) like the login page."""
+    err = f"<div class='banner'>{html.escape(error)}</div>" if error else ""
+    if closed:
+        inner = (
+            err +
+            "<p class='muted small'>If you have a valid one-time link, open it again. "
+            "Otherwise ask the operator to generate a fresh registration link.</p>"
+            "<p><a href='/login'>Go to sign in</a></p>"
+        )
+    else:
+        safe_tok = html.escape(token or "")
+        field = ("width:100%;padding:9px;border-radius:6px;border:1px solid #2f5488;"
+                 "background:#0d1320;color:#e6e9ef;margin-bottom:10px")
+        inner = (
+            err +
+            "<p class='muted small'>Choose a password for this dashboard. This is a "
+            "one-time link &mdash; it works once, then expires.</p>"
+            "<form method='post' action='/register'>"
+            f"<input type='hidden' name='token' value='{safe_tok}'>"
+            f"<input type='password' name='password' placeholder='New password (min 8)' "
+            f"autofocus style='{field}'>"
+            f"<input type='password' name='password2' placeholder='Confirm password' "
+            f"style='{field}'>"
+            "<button type='submit' style='width:100%'>Set password &amp; continue</button>"
+            "</form>"
+        )
+    body = (
+        "<div style='max-width:360px;margin:11vh auto;' class='card'>"
+        "<h2 style='border:none;margin-top:0'>Register dashboard</h2>"
+        f"{inner}</div>"
+    )
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<title>Register</title><style>{_CSS}</style></head>"
         f"<body><main>{body}</main></body></html>"
     )
 
@@ -142,6 +202,37 @@ function daemonsBar(ds){var s=document.getElementById('daemons'); if(!s)return; 
   ds.forEach(function(d){var p=el('span','pill'); var dot=el('span','dot '+(d.alive?'ok':'bad'));
     p.appendChild(dot); p.appendChild(el('span',null,d.name)); s.appendChild(p);
     s.appendChild(document.createTextNode(' '));});}
+// Task detail panel (thread + reconstructed lineage). Shared by History + Lineage;
+// harmless on pages without a #detail container (guarded).
+async function showTask(id){
+  var D=document.getElementById('detail'); if(!D) return;
+  D.innerHTML='<div class="card muted">loading&hellip;</div>';
+  var t=await getJSON('/api/task?id='+id); if(!t){D.innerHTML='';return;}
+  var c=el('div','card'); c.appendChild(el('h2',null,'Task #'+id+(t.conversation.agent?(' · '+t.conversation.agent):'')));
+  if(t.conversation.subject) c.appendChild(el('div',null,t.conversation.subject));
+  if(t.lineage){ var lin=el('div','card'); lin.appendChild(el('div','muted small','LINEAGE'));
+    var ul=el('ul','lin');
+    function lrow(n,dir){ var li=el('li'); if(dir){var a0=el('span','arrow',dir+' '); li.appendChild(a0);}
+      var s=el('a','',' #'+n.task_id+' '+n.title); s.href='javascript:void(0)';
+      s.onclick=(function(x){return function(){showTask(x);};})(n.task_id); li.appendChild(s);
+      if(n.basis) li.appendChild(el('span','muted small',' ['+n.basis+']')); return li; }
+    t.lineage.ancestors.forEach(function(a){ ul.appendChild(lrow(a,'↑')); });
+    var self=el('li','cur'); self.textContent='● #'+t.lineage.self.task_id+' '+t.lineage.self.title; ul.appendChild(self);
+    t.lineage.children.forEach(function(k){ ul.appendChild(lrow(k,'↓')); });
+    lin.appendChild(ul);
+    if(!t.lineage.ancestors.length && !t.lineage.children.length)
+      lin.appendChild(el('div','muted small','No linked parent/children reconstructed.'));
+    c.appendChild(lin);}
+  var conv=el('div','thread'); conv.appendChild(el('div','muted small','CONVERSATION'));
+  if(!t.conversation.messages.length) conv.appendChild(el('div','muted','No emails matched this thread.'));
+  t.conversation.messages.forEach(function(m){var d=el('div','msg '+(m.dir==='in'?'in':'out'));
+    var hd=el('div','small muted', (m.dir==='in'?('⇦ '+(m.from||'user')):('⇨ '+(m.agent||'agent')+' → '+(m.to||'')))+'  ·  '+fmtTs(m.ts));
+    d.appendChild(hd); d.appendChild(el('div',null,m.subject||''));
+    if(m.snippet) d.appendChild(el('div','small muted',m.snippet)); conv.appendChild(d);});
+  c.appendChild(conv);
+  c.appendChild(el('div','muted small',t.conversation.note||''));
+  D.innerHTML=''; D.appendChild(c);
+}
 """
 
 _STATUS_JS = _COMMON_JS + r"""
@@ -270,39 +361,85 @@ async function showJob(id){
   if(!any) dl.appendChild(el('div','muted small','(none recorded)'));
   c.appendChild(dl); D.innerHTML=''; D.appendChild(c);
 }
-async function showTask(id){
-  var D=document.getElementById('detail'); D.innerHTML='<div class="card muted">loading…</div>';
-  var t=await getJSON('/api/task?id='+id); if(!t){D.innerHTML='';return;}
-  var c=el('div','card'); c.appendChild(el('h2',null,'Task #'+id+(t.conversation.agent?(' · '+t.conversation.agent):'')));
-  if(t.conversation.subject) c.appendChild(el('div',null,t.conversation.subject));
-  // lineage
-  if(t.lineage){ var lin=el('div','card'); lin.appendChild(el('div','muted small','LINEAGE'));
-    var ul=el('ul','lin');
-    t.lineage.ancestors.forEach(function(a){var li=el('li');
-      li.innerHTML='<span class="arrow">↑</span> ';
-      var s=el('a','',' #'+a.task_id+' '+a.title); s.href='javascript:showTask('+a.task_id+')'; li.appendChild(s);
-      if(a.basis) li.appendChild(el('span','muted small',' ['+a.basis+']')); ul.appendChild(li);});
-    var self=el('li','cur'); self.textContent='● #'+t.lineage.self.task_id+' '+t.lineage.self.title; ul.appendChild(self);
-    t.lineage.children.forEach(function(k){var li=el('li');
-      li.innerHTML='<span class="arrow">↓</span> ';
-      var s=el('a','',' #'+k.task_id+' '+k.title); s.href='javascript:showTask('+k.task_id+')'; li.appendChild(s);
-      if(k.basis) li.appendChild(el('span','muted small',' ['+k.basis+']')); ul.appendChild(li);});
-    lin.appendChild(ul);
-    if(!t.lineage.ancestors.length && !t.lineage.children.length)
-      lin.appendChild(el('div','muted small','No linked parent/children reconstructed.'));
-    c.appendChild(lin);}
-  // conversation
-  var conv=el('div','thread'); conv.appendChild(el('div','muted small','CONVERSATION'));
-  if(!t.conversation.messages.length) conv.appendChild(el('div','muted','No emails matched this thread.'));
-  t.conversation.messages.forEach(function(m){var d=el('div','msg '+(m.dir==='in'?'in':'out'));
-    var hd=el('div','small muted', (m.dir==='in'?('⇦ '+(m.from||'user')):('⇨ '+(m.agent||'agent')+' → '+(m.to||'')))+'  ·  '+fmtTs(m.ts));
-    d.appendChild(hd); d.appendChild(el('div',null,m.subject||''));
-    if(m.snippet) d.appendChild(el('div','small muted',m.snippet)); conv.appendChild(d);});
-  c.appendChild(conv);
-  c.appendChild(el('div','muted small',t.conversation.note||''));
-  D.innerHTML=''; D.appendChild(c);
-}
+// showTask() is defined in _COMMON_JS (shared with the Lineage page).
 document.getElementById('prev').onclick=function(){cur.setMonth(cur.getMonth()-1);draw();};
 document.getElementById('next').onclick=function(){cur.setMonth(cur.getMonth()+1);draw();};
 loadCounts();
+"""
+
+
+# --------------------------------------------------------------------------- #
+# lineage forest page
+# --------------------------------------------------------------------------- #
+def lineage_page():
+    body = (
+        "<h2>Task Lineage</h2>"
+        "<div id='summary' class='muted small'>loading&hellip;</div>"
+        "<div class='legend'>"
+        "<span class='k'><span class='cbar bh'></span>explicit link — high confidence</span>"
+        "<span class='k'><span class='cbar bm'></span>follow-up phrasing — medium</span>"
+        "<span class='k'><span class='cbar bl'></span>same subject — low (heuristic)</span>"
+        "<span class='k'><span class='cbar broot'></span>root task (no parent)</span>"
+        "</div>"
+        "<div class='two'>"
+        "<div><div id='forest'>loading&hellip;</div><div id='singletons'></div></div>"
+        "<div id='detail'><div class='card'><div class='empty-state'>Select a task to "
+        "see its email thread and reconstructed lineage.</div></div></div>"
+        "</div>"
+    )
+    return _shell("Task Lineage", body, _LINEAGE_JS)
+
+
+_LINEAGE_JS = _COMMON_JS + r"""
+getJSON('/api/status').then(function(s){ if(s) daemonsBar(s.daemons); });
+var DOT={ 'explicit-chain':'bh','parent-field':'bh','followup-phrase':'bm','subject-thread':'bl' };
+var BLABEL={ 'explicit-chain':'explicit chain','parent-field':'parent_task field',
+  'followup-phrase':'follow-up phrasing','subject-thread':'same subject' };
+function nodeLi(n){
+  var li=el('li');
+  var row=el('div','tnode');
+  row.appendChild(el('span','cbar '+(DOT[n.basis]||'broot')));
+  var a=el('a','tlink','#'+n.task_id+'  '+(n.title||''));
+  a.href='javascript:void(0)'; a.title=n.title||'';
+  a.onclick=(function(id){return function(){showTask(id);};})(n.task_id);
+  row.appendChild(a);
+  if(n.basis) row.appendChild(el('span','bchip',BLABEL[n.basis]||n.basis));
+  li.appendChild(row);
+  if(n.children && n.children.length){
+    var ul=el('ul','tree-ul');
+    n.children.forEach(function(c){ ul.appendChild(nodeLi(c)); });
+    li.appendChild(ul);
+  }
+  return li;
+}
+async function loadForest(){
+  var f; try{ f=await getJSON('/api/forest'); }catch(e){ return; } if(!f) return;
+  document.getElementById('summary').textContent =
+    f.n_trees+' trees link '+f.n_in_trees+' of '+f.n_tasks+' tasks · '+
+    f.n_singletons+' standalone (no follow-ups)';
+  var host=document.getElementById('forest'); host.innerHTML='';
+  f.trees.forEach(function(t){
+    var d=el('details','tree card'); d.open=true;
+    var s=document.createElement('summary');
+    s.appendChild(el('b',null,'root #'+t.task_id));
+    s.appendChild(el('span','muted small','  '+(t.title||'')+'  ·  '+t.size+' tasks, depth '+t.depth));
+    d.appendChild(s);
+    var ul=el('ul','tree-ul root'); ul.appendChild(nodeLi(t)); d.appendChild(ul);
+    host.appendChild(d);
+  });
+  var sd=el('details','singles card');
+  var ss=document.createElement('summary');
+  ss.appendChild(el('b',null, f.singletons.length+' standalone tasks'));
+  ss.appendChild(el('span','muted small','  no reconstructed follow-ups — click to expand'));
+  sd.appendChild(ss);
+  var wrap=el('div','singlewrap');
+  f.singletons.forEach(function(n){
+    var a=el('a','schip','#'+n.task_id); a.title=n.title||''; a.href='javascript:void(0)';
+    a.onclick=(function(id){return function(){showTask(id);};})(n.task_id);
+    wrap.appendChild(a);
+  });
+  sd.appendChild(wrap);
+  var S=document.getElementById('singletons'); S.innerHTML=''; S.appendChild(sd);
+}
+loadForest();
 """

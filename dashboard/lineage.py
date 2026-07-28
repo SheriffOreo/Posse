@@ -212,6 +212,62 @@ def _build_lineage():
             "linked": len(edges), "roots": sum(1 for x in node_list if not x["parent"])}
 
 
+def build_forest():
+    """Group the flat lineage into rooted trees for display.
+
+    Returns nested trees (each node gets a `children` list), sorted largest-first,
+    plus the standalone tasks kept SEPARATE (a root with no children). The whole
+    point of the forest view is to show the 13 real trees and *summarize* the ~130
+    singletons rather than plot them as disconnected dots (the old hairball)."""
+    return state._cached("forest", 60, _build_forest)
+
+
+def _build_forest():
+    lin = build_lineage()
+    by = {n["task_id"]: dict(n, children=[]) for n in lin["nodes"]}
+    for n in lin["nodes"]:
+        p = n["parent"]
+        if p is not None and p in by:
+            by[p]["children"].append(by[n["task_id"]])
+    for n in by.values():
+        n["children"].sort(key=lambda c: c["task_id"])
+
+    def _size(n):
+        return 1 + sum(_size(c) for c in n["children"])
+
+    def _depth(n):
+        return 1 + max([_depth(c) for c in n["children"]], default=0)
+
+    roots = [n for n in by.values() if not n["parent"]]
+    trees = [n for n in roots if n["children"]]
+    singles = [n for n in roots if not n["children"]]
+    for t in trees:
+        t["size"] = _size(t)
+        t["depth"] = _depth(t)
+    # largest tree first; the deep chains and stars read top-left → bottom-right
+    trees.sort(key=lambda t: (-t["size"], t["task_id"]))
+    singles.sort(key=lambda n: n["task_id"])
+    return {
+        "trees": trees,
+        "singletons": singles,
+        "n_tasks": lin["count"],
+        "n_linked": lin["linked"],
+        "n_trees": len(trees),
+        "n_singletons": len(singles),
+        "n_in_trees": lin["count"] - len(singles),
+    }
+
+
+# basis → (human label, confidence rank 0=highest). Single source of truth for the
+# legend in both the standalone figure and the in-dashboard view.
+BASIS_INFO = {
+    "explicit-chain": ("explicit chain (task_a->b in spec)", 0),
+    "parent-field":   ("parent_task: field", 0),
+    "followup-phrase": ("follow-up phrasing", 1),
+    "subject-thread": ("same email subject (heuristic)", 2),
+}
+
+
 def lineage_for(task_id):
     """Ancestors + descendants of one task, for the detail view."""
     lin = build_lineage()

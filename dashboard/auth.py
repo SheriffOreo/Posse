@@ -20,6 +20,8 @@ import config
 _ITER = 240_000
 COOKIE_NAME = "infra_dash_session"
 SESSION_TTL = 12 * 3600  # seconds
+MIN_PW_LEN = 8
+REGISTER_TTL = 7 * 24 * 3600  # a one-time registration link is valid for 7 days
 
 # ip -> (fail_count, window_start_ts)   (module-level, per-process)
 _login_fails = {}
@@ -66,6 +68,77 @@ def verify_password(pw: str) -> bool:
         return hmac.compare_digest(h.hex(), d["pw_hash"])
     except Exception:
         return False
+
+
+# --- one-time registration token -------------------------------------------
+# Bootstraps the FIRST password without the operator having to run a CLI: mint a
+# single-use, high-entropy token, email its URL, and let them set a password once.
+# On disk we keep only the token's SHA-256 (register.json, git-ignored, chmod 600),
+# so the stored file never holds a usable secret. Registration is only "open" while
+# a valid unused token exists AND no password is set yet — it is not a reset path.
+def _load_register():
+    try:
+        return json.loads(config.REGISTER_FILE.read_text())
+    except Exception:
+        return None
+
+
+def create_register_token() -> str:
+    """Mint a fresh single-use token, persist its hash, return the raw token
+    (shown/emailed ONCE). Replaces any previous token."""
+    config.INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
+    tok = secrets.token_urlsafe(32)
+    d = {
+        "token_hash": hashlib.sha256(tok.encode()).hexdigest(),
+        "used": False,
+        "created": int(time.time()),
+    }
+    config.REGISTER_FILE.write_text(json.dumps(d))
+    try:
+        os.chmod(config.REGISTER_FILE, 0o600)
+    except OSError:
+        pass
+    return tok
+
+
+def register_open() -> bool:
+    """True iff registration can proceed: a token exists, is unused and unexpired,
+    and no password is configured yet."""
+    if is_configured():
+        return False
+    d = _load_register()
+    if not d or d.get("used"):
+        return False
+    if REGISTER_TTL and (time.time() - int(d.get("created", 0))) > REGISTER_TTL:
+        return False
+    return True
+
+
+def check_register_token(tok: str) -> bool:
+    if not tok or not register_open():
+        return False
+    d = _load_register() or {}
+    got = hashlib.sha256(tok.encode()).hexdigest()
+    return hmac.compare_digest(got, d.get("token_hash", ""))
+
+
+def consume_register_token(tok: str, pw: str) -> bool:
+    """Verify token (constant-time), set the password, then mark the token used.
+    Order matters: verify BEFORE set_password (which would flip register_open off)."""
+    if not check_register_token(tok):
+        return False
+    if not pw or len(pw) < MIN_PW_LEN:
+        return False
+    set_password(pw)
+    d = _load_register() or {}
+    d["used"] = True
+    d["used_at"] = int(time.time())
+    try:
+        config.REGISTER_FILE.write_text(json.dumps(d))
+        os.chmod(config.REGISTER_FILE, 0o600)
+    except OSError:
+        pass
+    return True
 
 
 def _secret() -> bytes:

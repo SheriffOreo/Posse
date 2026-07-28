@@ -103,6 +103,17 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/logout":
             expired = f"{auth.COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"
             return self._redirect("/login", cookie=expired)
+        if path == "/register":
+            tok = (q.get("token") or [""])[0]
+            if auth.is_configured():
+                return self._html(pages.register_page(
+                    error="This dashboard is already registered — use the login page.",
+                    closed=True), 409)
+            if not auth.check_register_token(tok):
+                return self._html(pages.register_page(
+                    error="Invalid, used, or expired registration link.",
+                    closed=True), 403)
+            return self._html(pages.register_page(token=tok))
 
         if not self._authed():
             if path.startswith("/api/"):
@@ -114,6 +125,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._html(pages.status_page())
         if path == "/history":
             return self._html(pages.history_page())
+        if path == "/lineage":
+            return self._html(pages.lineage_page())
         if path == "/api/status":
             return self._json(_api_status())
         if path == "/api/history/days":
@@ -137,6 +150,8 @@ class Handler(BaseHTTPRequestHandler):
             })
         if path == "/api/lineage":
             return self._json(lineage.build_lineage())
+        if path == "/api/forest":
+            return self._json(lineage.build_forest())
         if path == "/download":
             return self._download((q.get("path") or [""])[0])
         return self._json({"error": "not found"}, 404)
@@ -144,14 +159,21 @@ class Handler(BaseHTTPRequestHandler):
     # -- POST ---------------------------------------------------------------
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
-        if u.path != "/login":
+        if u.path not in ("/login", "/register"):
             return self._json({"error": "not found"}, 404)
         ip = self._client_ip()
-        if auth.is_locked(ip):
-            return self._html(pages.login_page("Too many attempts — wait a few minutes."), 429)
         n = int(self.headers.get("Content-Length", 0) or 0)
         data = self.rfile.read(n).decode("utf-8", "replace") if n else ""
-        pw = urllib.parse.parse_qs(data).get("password", [""])[0]
+        form = urllib.parse.parse_qs(data)
+        if u.path == "/register":
+            if auth.is_locked(ip):
+                return self._html(pages.register_page(
+                    error="Too many attempts — wait a few minutes.", closed=True), 429)
+            return self._do_register(form, ip)
+        # /login
+        if auth.is_locked(ip):
+            return self._html(pages.login_page("Too many attempts — wait a few minutes."), 429)
+        pw = form.get("password", [""])[0]
         if auth.verify_password(pw):
             auth.record_success(ip)
             cookie = (f"{auth.COOKIE_NAME}={auth.make_cookie()}; Path=/; "
@@ -159,6 +181,29 @@ class Handler(BaseHTTPRequestHandler):
             return self._redirect("/", cookie=cookie)
         auth.record_fail(ip)
         return self._html(pages.login_page("Incorrect password."), 401)
+
+    def _do_register(self, form, ip):
+        if auth.is_configured():
+            return self._html(pages.register_page(
+                error="This dashboard is already registered.", closed=True), 409)
+        tok = form.get("token", [""])[0]
+        pw = form.get("password", [""])[0]
+        pw2 = form.get("password2", [""])[0]
+        if not auth.check_register_token(tok):
+            auth.record_fail(ip)
+            return self._html(pages.register_page(
+                error="Invalid, used, or expired registration link.", closed=True), 403)
+        if pw != pw2:
+            return self._html(pages.register_page(
+                token=tok, error="Passwords did not match."), 400)
+        if len(pw) < auth.MIN_PW_LEN:
+            return self._html(pages.register_page(
+                token=tok, error=f"Password too short (min {auth.MIN_PW_LEN} chars)."), 400)
+        if auth.consume_register_token(tok, pw):
+            auth.record_success(ip)
+            return self._redirect("/login")
+        return self._html(pages.register_page(
+            error="Registration failed — link invalid or already used.", closed=True), 403)
 
     # -- guarded file download ---------------------------------------------
     def _download(self, req):

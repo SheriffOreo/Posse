@@ -26,6 +26,8 @@ INSTANCE_DIR = Path(
     os.environ.get("INFRA_DASH_INSTANCE", Path(__file__).resolve().parent / "instance")
 )
 SECRET_FILE = INSTANCE_DIR / "auth.json"
+# One-time registration token (hash + used flag). Also under the git-ignored instance/.
+REGISTER_FILE = INSTANCE_DIR / "register.json"
 
 # --- state file locations (all under STATE_ROOT) ----------------------------
 SCRATCH = STATE_ROOT / "scratch_full_logs"
@@ -56,7 +58,7 @@ DOWNLOAD_ROOTS = [
 # Never serve these, even inside a whitelisted root.
 DOWNLOAD_DENY = [
     "credentials.json", ".smtp_env", ".anthropic_key", ".credentials",
-    "auth.json", ".env", "id_rsa", "private", ".pem", ".key",
+    "auth.json", "register.json", ".env", "id_rsa", "private", ".pem", ".key",
 ]
 
 # Max bytes served by the download endpoint (guard against dumping huge files).
