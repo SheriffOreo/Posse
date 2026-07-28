@@ -392,11 +392,44 @@ def _reports_for(task_id, agent, cap=25):
     return out
 
 
+def _emailed_attachments(agent):
+    """Task 323 D3: files this task's agent actually emailed, from the persisted
+    `attachments` in sent_emails.jsonl — the AUTHORITATIVE deliverables (what the
+    worker really sent the user). Filtered to what the guarded /download endpoint
+    will serve, deduped by resolved path. Empty for agents that only sent emails
+    before the attachment-logging change (those rows carry no `attachments`)."""
+    if not agent:
+        return []
+    out, seen = [], set()
+    try:
+        lines = Path(config.SENT_EMAILS).read_text(errors="replace").splitlines()
+    except Exception:
+        return out
+    for ln in lines:
+        try:
+            r = json.loads(ln)
+        except Exception:
+            continue
+        if r.get("agent") != agent:
+            continue
+        for p in (r.get("attachments") or []):
+            rp = config.resolve_download(p)
+            if rp is None:
+                continue
+            key = str(rp)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"name": rp.name, "path": key, "emailed": True})
+    return out
+
+
 def deliverables_for(task_id, agent):
-    """Best-effort deliverables for a task: jobmgr/gpu jobs owned by the task's
-    agent (their output / stdout / stderr), plus reports/ files that reference the
-    task id or agent. Only paths that config.download_allowed() accepts are shown,
-    so every link resolves through the guarded /download endpoint."""
+    """Best-effort deliverables for a task: the files the task's agent actually
+    EMAILED (authoritative, Task 323 D3), plus jobmgr/gpu jobs it owns (their
+    output / stdout / stderr) and reports/ files that reference the task id or
+    agent. Only paths that config.download_allowed() accepts are shown, so every
+    link resolves through the guarded /download endpoint."""
     agent = agent_for_task(task_id, agent)
     jobs, seen = [], set()
     if agent:
@@ -418,7 +451,13 @@ def deliverables_for(task_id, agent):
                              "type": it.get("type"), "day": it.get("day"),
                              "paths": paths})
     jobs.sort(key=lambda j: -(epoch_from_id(j["job_id"]) or 0))
-    return {"jobs": jobs, "files": _reports_for(task_id, agent)}
+    # Emailed attachments first (authoritative), then reports/ matches not already
+    # covered by an emailed file (deduped by realpath).
+    emailed = _emailed_attachments(agent)
+    seen_files = {os.path.realpath(f["path"]) for f in emailed}
+    reports = [f for f in _reports_for(task_id, agent)
+               if os.path.realpath(f["path"]) not in seen_files]
+    return {"jobs": jobs, "files": emailed + reports}
 
 
 # --------------------------------------------------------------------------- #

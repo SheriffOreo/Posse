@@ -1,8 +1,28 @@
-# Proposed (NOT APPLIED): make task lineage exact
+# Proposed → APPLIED (Task 323): make task lineage exact
 
-**Status:** design only. Nothing here has been applied to the live infra —
-applying it edits `scratch_inbox.py` / `scratch_inbox_handle.sh`, which are live
-daemons, and needs Steven's go-ahead + a daemon bounce.
+**Status:** APPLIED 2026-07-28 (Task 323), via the "even simpler stopgap" below
+rather than the daemon-editing (1)+(2) — no daemon bounce was needed:
+
+- `scratch_inbox_handle.sh` now mechanically stamps `parent_task: <N>` onto every
+  new `task_<uid>.md` (helper `scratch_task_parent.py`): N = the `Re: Task N`
+  number in the reply subject → the worker's most-recent prior task
+  (`inbox/worker_last_task.json`) → `none`. The triage prompt also asks for it.
+- `scratch_notify_email.py` now persists the outbound `body` + `attachments` into
+  `sent_emails.jsonl` (D2), so the dashboard renders real outbound bodies and can
+  list emailed deliverables (D3).
+- `lineage.py` gained a `reply-subject` basis that retro-links past tasks from the
+  originating `Re: Task N` subject (lifted the live link count ~27 → 94/174).
+
+The original design (kept below for reference) proposed a `lineage.jsonl` written
+by `scratch_inbox.py`; the stamp achieves the same exact edge with a smaller,
+race-free surface. The `--task`-tagging idea (2) was superseded by stamping the
+spec directly.
+
+---
+
+_Original proposal (design only; NOT the path taken):_ applying (1)+(2) edits
+`scratch_inbox.py` / `scratch_inbox_handle.sh`, which are live daemons, and needs
+Steven's go-ahead + a daemon bounce.
 
 ## Problem
 

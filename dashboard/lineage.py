@@ -104,6 +104,10 @@ def _outbound_index():
                 "to": r.get("to"),
                 "ts": r.get("ts"),
                 "message_id": r.get("message_id"),
+                # Task 323 D2: persisted outbound body + attachment paths (absent on
+                # rows written before the change -> empty, handled by the UI).
+                "body": r.get("body", "") or "",
+                "attachments": r.get("attachments", []) or [],
             }
         )
     return out
@@ -183,6 +187,21 @@ def _build_lineage():
             fm = _FOLLOWUP.search(n["body"])
             if fm:
                 _set(tid, int(fm.group(1)), "followup-phrase")
+    # 2b) reply-subject (Task 323 retro): a task whose ORIGINATING email subject is
+    #     "Re: Task N ..." is a follow-up of N. Lower confidence than the persisted
+    #     parent_task field (an LLM-free but heuristic read), higher than same-subject
+    #     threading. This retroactively links historical chains (e.g.
+    #     317->319->320->322) whose specs predate the parent_task stamp.
+    # (env gate INFRA_LINEAGE_NO_REPLY_SUBJECT lets one A/B the heuristic — e.g.
+    #  render the pre-Task-323 "before" state; default is ON.)
+    if not os.environ.get("INFRA_LINEAGE_NO_REPLY_SUBJECT"):
+        inbound_by_uid = {e["uid"]: e for e in _indexes()[0]}
+        for tid in nodes:
+            if tid in edges:
+                continue
+            m = re.search(r"\btask[ _]?#?(\d+)", inbound_by_uid.get(tid, {}).get("subject", ""), re.I)
+            if m:
+                _set(tid, int(m.group(1)), "reply-subject")
     # 3) subject-thread fallback: chain same-subject tasks by ascending id
     threads = {}
     inbound = {e["uid"]: e for e in _indexes()[0]}
@@ -263,6 +282,7 @@ def _build_forest():
 BASIS_INFO = {
     "explicit-chain": ("explicit chain (task_a->b in spec)", 0),
     "parent-field":   ("parent_task: field", 0),
+    "reply-subject":  ("originating email subject 'Re: Task N'", 1),
     "followup-phrase": ("follow-up phrasing", 1),
     "subject-thread": ("same email subject (heuristic)", 2),
 }
@@ -370,6 +390,22 @@ def _attachments_for(uid):
     except Exception:
         pass
     return out
+
+
+def _out_attachments(paths):
+    """Task 323 D2/D3: validate persisted outbound attachment paths for display —
+    keep only those the guarded /download endpoint would actually serve, tagging
+    is_image so the UI can inline figures (same shape as _attachments_for)."""
+    out = []
+    for p in (paths or []):
+        rp = config.resolve_download(p)
+        if rp is None:
+            continue
+        out.append({"name": rp.name, "path": str(rp),
+                    "is_image": rp.suffix.lower() in _IMG_EXT})
+    return out
+
+
 def task_conversation(task_id):
     nodes = _all_task_nodes()
     node = nodes.get(task_id)
@@ -402,7 +438,10 @@ def task_conversation(task_id):
             msgs.append(
                 {"dir": "out", "ts": o["ts"], "agent": o.get("agent"),
                  "to": o.get("to"), "subject": o["subject"],
-                 "body": "", "attachments": []}
+                 # Task 323 D2: real outbound body + attachments when persisted
+                 # (empty for emails sent before the change).
+                 "body": o.get("body", ""),
+                 "attachments": _out_attachments(o.get("attachments"))}
             )
     msgs = [m for m in msgs if m.get("ts")]
     msgs.sort(key=lambda m: m["ts"])
@@ -412,7 +451,7 @@ def task_conversation(task_id):
         "subject": (root_in or {}).get("subject") or (node or {}).get("title"),
         "messages": msgs,
         "note": "Thread reconstructed by normalized-subject matching (In-Reply-To is "
-                "not persisted). Inbound bodies + attachments are shown in full; "
-                "outbound bodies/attachments are NOT stored (sent_emails.jsonl keeps "
-                "metadata only), so only their subject + time appear.",
+                "not persisted). Inbound AND outbound bodies + attachments are shown "
+                "in full when persisted (Task 323); emails sent before that change "
+                "have no stored body, so only their subject + time appear.",
     }

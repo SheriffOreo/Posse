@@ -39,6 +39,7 @@ CONNECT = "#aeb7c7"
 BASIS_COLOR = {
     "explicit-chain": "#1a7f37",   # highest confidence  (explicit arrow in spec)
     "parent-field":   "#1a7f37",   # highest confidence  (parent_task: field)
+    "reply-subject":  "#c98a00",   # medium   (Task 323: originating 'Re: Task N' subject)
     "followup-phrase": "#c98a00",  # medium              (follow-up phrasing)
     "subject-thread": "#8a94a6",   # lowest              (subject heuristic)
     "root":           "#31415e",   # a tree's root task

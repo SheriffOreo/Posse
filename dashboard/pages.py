@@ -223,9 +223,10 @@ function basename(p){ if(!p) return ''; var s=String(p); var i=s.lastIndexOf('/'
 // Lineage tree rendering — shared by the Lineage forest AND the History day view.
 // A node with on_day===false is off-day context (muted + a "context" chip); nodes
 // with no on_day key (the Lineage page) render normally with no highlight.
-var DOT={ 'explicit-chain':'bh','parent-field':'bh','followup-phrase':'bm','subject-thread':'bl' };
+var DOT={ 'explicit-chain':'bh','parent-field':'bh','reply-subject':'bm',
+  'followup-phrase':'bm','subject-thread':'bl' };
 var BLABEL={ 'explicit-chain':'explicit chain','parent-field':'parent_task field',
-  'followup-phrase':'follow-up phrasing','subject-thread':'same subject' };
+  'reply-subject':'reply subject','followup-phrase':'follow-up phrasing','subject-thread':'same subject' };
 function treeNodeLi(n){
   var li=el('li');
   var row=el('div','tnode'+(n.on_day===true?' onday':(n.on_day===false?' offday':'')));
@@ -271,7 +272,7 @@ async function showTask(id){
     var hd=el('div','small muted', (m.dir==='in'?('⇦ '+(m.from||'user')):('⇨ '+(m.agent||'agent')+' → '+(m.to||'')))+'  ·  '+fmtTs(m.ts));
     d.appendChild(hd); if(m.subject) d.appendChild(el('div',null,m.subject));
     if(m.body) d.appendChild(el('div','msgbody',m.body));              // full, untruncated
-    else if(m.dir==='out') d.appendChild(el('div','small muted','(outbound body not stored)'));
+    else if(m.dir==='out') d.appendChild(el('div','small muted','(outbound body not stored — email predates Task 323 body logging)'));
     if(m.attachments && m.attachments.length){                        // inline images / file links
       var at=el('div','atts');
       m.attachments.forEach(function(a){
@@ -296,8 +297,9 @@ async function showTask(id){
       a.href='/download?path='+encodeURIComponent(p.path); a.target='_blank'; jb.appendChild(a); });
     dl.appendChild(jb);
   });
-  (dd.files||[]).forEach(function(f){ var a=el('a','small','📄 '+f.name);
+  (dd.files||[]).forEach(function(f){ var a=el('a','small',(f.emailed?'📧 emailed: ':'📄 ')+f.name);
     a.href='/download?path='+encodeURIComponent(f.path); a.target='_blank';
+    a.title=f.emailed?'attachment this task’s agent emailed (authoritative)':'reports/ match';
     a.style.display='block'; dl.appendChild(a); });
   c.appendChild(dl);
   c.appendChild(el('div','muted small',t.conversation.note||''));
