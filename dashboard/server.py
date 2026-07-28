@@ -13,6 +13,7 @@ import http.cookies
 import json
 import mimetypes
 import os
+import ssl
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +27,14 @@ import state
 
 _INLINE_OK = {".txt", ".log", ".md", ".csv", ".json", ".png", ".jpg", ".jpeg",
               ".gif", ".svg", ".pdf", ".output"}
+
+
+def _session_cookie(value, max_age):
+    """Build the session Set-Cookie header. Adds the `Secure` flag under TLS so the
+    cookie is never sent back over plain HTTP on the LAN."""
+    secure = "; Secure" if config.TLS else ""
+    return (f"{auth.COOKIE_NAME}={value}; Path=/; Max-Age={max_age}; "
+            f"HttpOnly; SameSite=Strict{secure}")
 
 
 def _api_status():
@@ -101,8 +110,7 @@ class Handler(BaseHTTPRequestHandler):
                 "Password not set — run: python set_password.py"
             return self._html(pages.login_page(hint))
         if path == "/logout":
-            expired = f"{auth.COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"
-            return self._redirect("/login", cookie=expired)
+            return self._redirect("/login", cookie=_session_cookie("", 0))
         if path == "/register":
             tok = (q.get("token") or [""])[0]
             if auth.is_configured():
@@ -134,6 +142,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/history/day":
             day = (q.get("date") or [""])[0]
             return self._json(state.history_for_day(day))
+        if path == "/api/history/day_lineage":
+            day = (q.get("date") or [""])[0]
+            return self._json(lineage.history_day_lineage(day))
         if path == "/api/job":
             jid = (q.get("id") or [""])[0]
             j = state.job_detail(jid)
@@ -143,10 +154,12 @@ class Handler(BaseHTTPRequestHandler):
                 tid = int((q.get("id") or ["0"])[0])
             except ValueError:
                 return self._json({"error": "bad id"}, 400)
+            conv = lineage.task_conversation(tid)
             return self._json({
                 "task_id": tid,
-                "conversation": lineage.task_conversation(tid),
+                "conversation": conv,
                 "lineage": lineage.lineage_for(tid),
+                "deliverables": state.deliverables_for(tid, (conv or {}).get("agent")),
             })
         if path == "/api/lineage":
             return self._json(lineage.build_lineage())
@@ -176,8 +189,7 @@ class Handler(BaseHTTPRequestHandler):
         pw = form.get("password", [""])[0]
         if auth.verify_password(pw):
             auth.record_success(ip)
-            cookie = (f"{auth.COOKIE_NAME}={auth.make_cookie()}; Path=/; "
-                      f"Max-Age={auth.SESSION_TTL}; HttpOnly; SameSite=Strict")
+            cookie = _session_cookie(auth.make_cookie(), auth.SESSION_TTL)
             return self._redirect("/", cookie=cookie)
         auth.record_fail(ip)
         return self._html(pages.login_page("Incorrect password."), 401)
@@ -209,22 +221,10 @@ class Handler(BaseHTTPRequestHandler):
     def _download(self, req):
         if not req:
             return self._json({"error": "no path"}, 400)
-        try:
-            rp = Path(req).resolve()
-        except Exception:
-            return self._json({"error": "bad path"}, 400)
-        low = str(rp).lower()
-        if any(frag in low for frag in config.DOWNLOAD_DENY):
-            return self._json({"error": "forbidden"}, 403)
-        ok = False
-        for root in config.DOWNLOAD_ROOTS:
-            try:
-                rp.relative_to(root)
-                ok = True
-                break
-            except ValueError:
-                continue
-        if not ok or not rp.is_file():
+        # realpath under a whitelisted root, no DENY fragment, is a real file;
+        # relative paths resolve against STATE_ROOT (shared guard).
+        rp = config.resolve_download(req)
+        if rp is None:
             return self._json({"error": "forbidden"}, 403)
         try:
             size = rp.stat().st_size
@@ -255,10 +255,31 @@ def main():
             "\n[!] No dashboard password set. Run:  python set_password.py\n"
             "    (the server will start, but login will reject until you do)\n\n")
     srv = ThreadingHTTPServer((config.HOST, config.PORT), Handler)
+    scheme = "http"
+    if config.TLS:
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(str(config.CERT_FILE), str(config.KEY_FILE))
+            srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+            scheme = "https"
+        except Exception as e:
+            sys.stderr.write(
+                f"[infra-dash] TLS requested but could not load cert/key "
+                f"({config.CERT_FILE} / {config.KEY_FILE}): {e}\n"
+                f"[infra-dash] REFUSING to fall back to cleartext with TLS on. "
+                f"Generate a cert (start_dashboard.sh does this) or unset INFRA_DASH_TLS.\n")
+            srv.server_close()
+            raise SystemExit(1)
     sys.stderr.write(
-        f"[infra-dash] serving on http://{config.HOST}:{config.PORT}  "
-        f"(state root: {config.STATE_ROOT})\n"
-        f"[infra-dash] tunnel:  ssh -L {config.PORT}:localhost:{config.PORT} <host>\n")
+        f"[infra-dash] serving on {scheme}://{config.HOST}:{config.PORT}  "
+        f"(state root: {config.STATE_ROOT})\n")
+    if config.HOST in ("127.0.0.1", "localhost"):
+        sys.stderr.write(
+            f"[infra-dash] tunnel:  ssh -L {config.PORT}:localhost:{config.PORT} <host>\n")
+    elif not config.TLS:
+        sys.stderr.write(
+            "[infra-dash] NOTE: bound to a public interface over plain HTTP — the "
+            "login password travels cleartext on the LAN. Prefer INFRA_DASH_TLS=1.\n")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

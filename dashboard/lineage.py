@@ -289,38 +289,120 @@ def lineage_for(task_id):
     return {"ancestors": chain, "self": by[task_id], "children": kids}
 
 
+def _pub_node(n):
+    return {"task_id": n["task_id"], "title": n["title"], "agent": n.get("agent"),
+            "day": n.get("day"), "ts": n.get("ts"),
+            "parent": n.get("parent"), "basis": n.get("basis")}
+
+
+def history_day_lineage(day):
+    """Tasks launched on `day`, arranged as compact mini-trees grouped by root.
+
+    For each task launched that day we include its ancestor chain up to the root
+    (so a mini-tree is rooted at the true root) and its DIRECT children, tagging
+    every node on_day / off_day. Off-day nodes are context — the UI renders them
+    muted with a link. Nodes not needed to connect a day-task to its root or its
+    children are pruned, so the trees stay compact rather than the full forest."""
+    lin = build_lineage()
+    nodes = {n["task_id"]: n for n in lin["nodes"]}
+    day_ids = sorted((tid for tid, n in nodes.items() if n.get("day") == day),
+                     reverse=True)
+    # children adjacency (parent id -> [child ids])
+    kids = {}
+    for tid, n in nodes.items():
+        p = n.get("parent")
+        if p in nodes:
+            kids.setdefault(p, []).append(tid)
+    # relevant set: each day-task + ancestors (to root) + direct children
+    rel = set()
+    for d in day_ids:
+        rel.add(d)
+        cur, seen = nodes[d].get("parent"), set()
+        while cur in nodes and cur not in seen:
+            seen.add(cur)
+            rel.add(cur)
+            cur = nodes[cur].get("parent")
+        for k in kids.get(d, []):
+            rel.add(k)
+    day_set = set(day_ids)
+    obj = {tid: dict(_pub_node(nodes[tid]), on_day=(tid in day_set), children=[])
+           for tid in rel}
+    roots = []
+    for tid in rel:
+        p = nodes[tid].get("parent")
+        if p in rel:
+            obj[p]["children"].append(obj[tid])
+        else:
+            roots.append(obj[tid])
+    for o in obj.values():
+        o["children"].sort(key=lambda c: c["task_id"])
+    roots.sort(key=lambda r: -r["task_id"])
+    return {"day": day, "trees": roots, "n_day_tasks": len(day_ids),
+            "day_ids": day_ids}
+
+
 # --------------------------------------------------------------------------- #
 # per-task conversation
 # --------------------------------------------------------------------------- #
+_IMG_EXT = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}
+
+
+def _full_body(path):
+    """Complete inbound email body: whole file minus the leading header block
+    (FROM:/SUBJECT: lines up to the first blank line). No truncation."""
+    try:
+        txt = Path(path).read_text(errors="replace")
+    except Exception:
+        return ""
+    return txt.split("\n\n", 1)[1] if "\n\n" in txt else txt
+
+
+def _attachments_for(uid):
+    """Files saved for an inbound message under inbox/att/<uid>/ (already a
+    DOWNLOAD_ROOT), flagged is_image so the UI can inline them."""
+    d = config.INBOX / "att" / str(uid)
+    out = []
+    try:
+        for f in sorted(d.iterdir()):
+            if f.is_file():
+                out.append({"name": f.name, "path": str(f.resolve()),
+                            "is_image": f.suffix.lower() in _IMG_EXT})
+    except Exception:
+        pass
+    return out
 def task_conversation(task_id):
     nodes = _all_task_nodes()
     node = nodes.get(task_id)
     inbound, outbound = _indexes()
+    # resolve the worker agent (spec --agent, else worker-prompt fallback) — used
+    # both for subject threading below and as the conversation header label.
+    agent = state.agent_for_task(task_id, node.get("agent") if node else None)
     root_in = next((e for e in inbound if e["uid"] == task_id), None)
     norm = None
     if root_in:
         norm = root_in["norm"]
-    elif node:
-        # derive a subject from the spec's own first outbound of that agent
-        agent = node.get("agent")
+    elif agent:
+        # derive a subject from the resolved agent's first outbound
         cand = [o for o in outbound if o.get("agent") == agent]
         if cand:
             norm = min(cand, key=lambda o: o.get("ts") or 0)["norm"]
-    agent = node.get("agent") if node else None
 
     msgs = []
     for e in inbound:
         if norm and e["norm"] == norm:
             msgs.append(
                 {"dir": "in", "ts": e["ts"], "from": e["from"],
-                 "subject": e["subject"], "snippet": e["snippet"]}
+                 "subject": e["subject"],
+                 "body": _full_body(e["file"]),
+                 "attachments": _attachments_for(e["uid"])}
             )
     for o in outbound:
         match_subj = norm and o["norm"] == norm
         if match_subj:
             msgs.append(
                 {"dir": "out", "ts": o["ts"], "agent": o.get("agent"),
-                 "to": o.get("to"), "subject": o["subject"], "snippet": ""}
+                 "to": o.get("to"), "subject": o["subject"],
+                 "body": "", "attachments": []}
             )
     msgs = [m for m in msgs if m.get("ts")]
     msgs.sort(key=lambda m: m["ts"])
@@ -329,7 +411,8 @@ def task_conversation(task_id):
         "agent": agent,
         "subject": (root_in or {}).get("subject") or (node or {}).get("title"),
         "messages": msgs,
-        "note": "Reconstructed by normalized-subject threading (In-Reply-To is not "
-                "persisted). Bodies of outbound emails are not stored; snippets shown "
-                "for inbound only.",
+        "note": "Thread reconstructed by normalized-subject matching (In-Reply-To is "
+                "not persisted). Inbound bodies + attachments are shown in full; "
+                "outbound bodies/attachments are NOT stored (sent_emails.jsonl keeps "
+                "metadata only), so only their subject + time appear.",
     }

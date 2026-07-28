@@ -17,10 +17,15 @@ lineage). Pure Python **standard library** — no pip installs, no build step.
 
 **History** (`/history`)
 - A **calendar**; days with activity show a count. Click a day →
-- everything **launched** that day: **tasks** and **jobs** (status, owner, command). Click a
-  job → detail + **deliverable download** (output / stdout / stderr). Click a task →
-- the **conversation** (email thread, reconstructed) + a **lineage** view (ancestors →
-  this task → follow-up children), each edge labelled by how it was inferred.
+- that day's tasks as **lineage mini-trees** (grouped by root, not a flat list): each
+  task nested under its parent, edges colour-labelled by inference confidence, and
+  parents/children from *other* days shown muted as **context** links. Plus the day's
+  **jobs** (status, owner, command); click a job → detail + **deliverable download**.
+- Click any task → its **full, untruncated conversation** (inbound email bodies in a
+  scrollable panel, **attached images rendered inline**), a **lineage** view (ancestors →
+  this task → follow-up children), and a **DELIVERABLES** section linking that task's
+  job artifacts (output / stdout / stderr) and matching `reports/` files — every link
+  served through the guarded `/download` endpoint.
 
 ## Run it
 
@@ -28,25 +33,42 @@ lineage). Pure Python **standard library** — no pip installs, no build step.
 cd dashboard
 # 1) set a login password (stored only as a salted PBKDF2 hash under instance/)
 python3 set_password.py                 # or: INFRA_DASH_PASSWORD=... python3 set_password.py --env
-# 2) start (localhost:8787 by default)
-./run.sh
+#    (first-time bootstrap without the CLI: python3 make_register_link.py → open the URL)
+# 2a) localhost only (reach via SSH tunnel):
+bash start_dashboard.sh                  # http://127.0.0.1:8787
+# 2b) public host, no tunnel — binds 0.0.0.0 AND enables TLS (encrypted login):
+INFRA_DASH_PUBLIC=1 bash start_dashboard.sh
+#     → https://<this-host>:8787   (self-signed cert generated once into instance/)
 ```
 
-From your laptop, tunnel and open a browser:
+`start_dashboard.sh` runs the server in its own auto-restarting `infra_dashboard`
+tmux session (idempotent; it is **not** one of the always-on daemons and never
+touches them).
+
+**Localhost mode** — tunnel from your laptop:
 
 ```bash
 ssh -L 8787:localhost:8787 <this-host>
 # then browse http://localhost:8787
 ```
 
+**Public mode** (`INFRA_DASH_PUBLIC=1`) — browse `https://<this-host>:8787`
+directly on the LAN. The cert is self-signed, so the browser shows a one-time
+"not private" warning → **Advanced → Proceed**. To bind publicly over plain HTTP
+instead (password travels **cleartext** on the LAN — not recommended), use
+`INFRA_DASH_HOST=0.0.0.0 INFRA_DASH_TLS=0 bash start_dashboard.sh`.
+
 ## Configuration (env vars)
 
 | var | default | meaning |
 |-----|---------|---------|
 | `INFRA_STATE_ROOT` | `/home/steven/Projects/time-series-omp` | dir the daemons read/write (read-only here) |
-| `INFRA_DASH_HOST` | `127.0.0.1` | bind address — keep localhost unless fronted by TLS + auth |
+| `INFRA_DASH_HOST` | `127.0.0.1` | bind address; `0.0.0.0` = all interfaces (public) |
 | `INFRA_DASH_PORT` | `8787` | port |
-| `INFRA_DASH_INSTANCE` | `dashboard/instance` | where the password hash + cookie secret live (git-ignored) |
+| `INFRA_DASH_PUBLIC` | `0` | `1` = shortcut for host `0.0.0.0` + TLS on (public, encrypted) |
+| `INFRA_DASH_TLS` | `0` | `1` = wrap the socket with stdlib `ssl`; adds `Secure` to the cookie |
+| `INFRA_DASH_CERT` / `INFRA_DASH_KEY` | `instance/cert.pem` / `instance/key.pem` | TLS cert + key (self-signed, generated once by `start_dashboard.sh`) |
+| `INFRA_DASH_INSTANCE` | `dashboard/instance` | where the password hash + cookie secret (+ TLS cert/key) live (git-ignored) |
 | `INFRA_DASH_PASSWORD` | — | one-shot, only read by `set_password.py --env` |
 
 ## Security notes
@@ -60,11 +82,34 @@ ssh -L 8787:localhost:8787 <this-host>
   under a whitelisted root (`reports/`, `outputs_*`, `scratch_full_logs/`,
   `gpu_queue/logs/`, `eval/`) and matches none of the secret denylist
   (`credentials.json`, `.smtp_env`, `.anthropic_key`, keys, `auth.json`, …). Blocks
-  `../` traversal and secret leakage; 50 MB cap.
-- **Bind localhost.** Reach it via SSH tunnel. If you must bind wider, put it behind a
-  TLS reverse proxy and add the `Secure` cookie flag (see `auth.py`).
+  `../` traversal and secret leakage; 50 MB cap. Relative paths (e.g. a job's
+  `output_path`) resolve against `INFRA_STATE_ROOT`, never the server's cwd.
+- **Public bind + TLS.** Default bind is localhost (reach via SSH tunnel). To serve
+  on the LAN without a tunnel, use `INFRA_DASH_PUBLIC=1` — it binds `0.0.0.0` **and**
+  turns on TLS (stdlib `ssl`, self-signed cert in `instance/`), so the login password
+  is encrypted in transit and the session cookie gets the `Secure` flag. Plain-HTTP
+  public bind is possible (`INFRA_DASH_TLS=0`) but sends the password **cleartext** on
+  the wire — keep this on the CMU LAN only; never internet-expose or port-forward it.
 - Security headers on every response: `nosniff`, `X-Frame-Options: DENY`,
-  `Referrer-Policy: no-referrer`, a restrictive CSP.
+  `Referrer-Policy: no-referrer`, a restrictive CSP (`img-src 'self' data:`).
+
+### Fully automated — no Claude/Anthropic API
+
+The served dashboard is **pure Python standard library**. It reads the live state
+files **read-only**, serves HTTP(S), and does nothing else: it makes **no
+Claude/Anthropic API calls, spawns no `claude` process, and issues no external
+network requests**. The only subprocess it ever runs is `tmux ls` (to show daemon
+health). Verify:
+
+```bash
+grep -rInE 'anthropic|claude|ANTHROPIC_API|api\.anthropic|subprocess|os\.system|requests\.|urllib\.request|http\.client' dashboard/*.py
+```
+
+The only hits are `.anthropic_key` in the download **denylist**, the string
+"claude_infra" in docstrings, and the `subprocess.run(["tmux","ls"])` health check —
+no LLM calls. (`lineage_figure.py` is a **standalone, offline** figure generator that
+imports matplotlib; it is **not** imported by `server.py` and is never part of the
+running service.) So the dashboard runs unattended with zero token cost.
 
 ## Files
 
@@ -77,7 +122,9 @@ ssh -L 8787:localhost:8787 <this-host>
 | `pages.py` | HTML/CSS/JS (status + history are JS-driven off the JSON APIs) |
 | `config.py` | paths + bind + download-safety config (all env-overridable) |
 | `set_password.py` | set/reset the login password |
-| `run.sh` | start script (ensures a password, exports env, launches) |
+| `make_register_link.py` | mint the one-time registration URL (first-password bootstrap) |
+| `start_dashboard.sh` | launch/verify the auto-restarting `infra_dashboard` tmux session (+ public/TLS) |
+| `run.sh` | minimal start script (ensures a password, exports env, launches) |
 
 ## Task lineage — how reliable is it?
 

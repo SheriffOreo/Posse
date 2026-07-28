@@ -293,6 +293,135 @@ def job_detail(job_id):
 
 
 # --------------------------------------------------------------------------- #
+# task -> agent resolution (for deliverables + the conversation header)
+# --------------------------------------------------------------------------- #
+# Most task_<N>.md specs carry the concrete worker name only as a `--agent <name>`
+# placeholder, so lineage's spec-scrape often yields nothing. The reliable signal
+# is the spawned worker's own prompt file, worker_<name>_prompt.md, whose TASK
+# section starts with `# Task <N> — ...`. We map that back to (task -> agent).
+def _primary_task(txt):
+    """The task number a worker prompt was spawned for — taken from its TASK
+    section heading, so we don't pick up parent/reference task numbers cited in
+    the shared preamble."""
+    parts = re.split(r"={5,}\s*TASK\s*={5,}", txt, 1)
+    body = parts[1] if len(parts) > 1 else txt
+    for pat in (r"(?m)^\s*#+\s*Task\s+(\d{2,4})\b",
+                r"Task\s+(\d{2,4})\s*[—:-]",
+                r"\btask_(\d{2,4})\b"):
+        m = re.search(pat, body)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def _build_wpmap():
+    m = {}
+    for f in glob.glob(str(config.SCRATCH / "worker_*_prompt.md")):
+        nm = re.match(r"worker_(.+)_prompt\.md$", os.path.basename(f))
+        if not nm:
+            continue
+        try:
+            tid = _primary_task(Path(f).read_text(errors="replace"))
+            mt = os.path.getmtime(f)
+        except Exception:
+            continue
+        if tid:
+            m.setdefault(tid, []).append((nm.group(1), mt))
+    return m
+
+
+def worker_prompt_task_map():
+    """task_id -> [(agent, prompt_mtime), ...] from worker prompt files."""
+    return _cached("wpmap", 120, _build_wpmap)
+
+
+def _job_owner_counts():
+    def build():
+        c = {}
+        for it in history_index():
+            a = it.get("owner_agent")
+            if a and a != "?":
+                c[a] = c.get(a, 0) + 1
+        return c
+    return _cached("job_owner_counts", 120, build)
+
+
+def agent_for_task(task_id, spec_agent=None):
+    """Resolve the worker agent for a task: the spec's own --agent if present,
+    else the worker-prompt fallback (preferring, among candidates, the agent that
+    owns the most finished jobs so the deliverables lookup is meaningful)."""
+    if spec_agent:
+        return spec_agent
+    cands = worker_prompt_task_map().get(task_id) or []
+    if not cands:
+        return None
+    owners = _job_owner_counts()
+    cands = sorted(cands, key=lambda c: (-(owners.get(c[0], 0)), -c[1]))
+    return cands[0][0]
+
+
+# --------------------------------------------------------------------------- #
+# per-task deliverables (best-effort) — for the task detail panel
+# --------------------------------------------------------------------------- #
+def _reports_for(task_id, agent, cap=25):
+    """reports/ files whose name references this task id (precise) or the agent
+    name (looser). Bounded to the top 2 levels + `cap` hits; every path is passed
+    through config.download_allowed so we never surface a link that would 403."""
+    root = config.STATE_ROOT / "reports"
+    try:
+        if not root.is_dir():
+            return []
+    except OSError:
+        return []
+    tid = str(task_id)
+    tokens = [f"task_{tid}", f"task-{tid}", f"task{tid}", f"_{tid}_"]
+    ag = (agent or "").lower()
+    out, seen = [], set()
+    for pat in (str(root / "*"), str(root / "*" / "*")):
+        for f in glob.glob(pat):
+            if len(out) >= cap:
+                break
+            if f in seen or not os.path.isfile(f):
+                continue
+            name = os.path.basename(f).lower()
+            hit = any(t in name for t in tokens) or (len(ag) >= 4 and ag in name)
+            if hit and config.download_allowed(f):
+                seen.add(f)
+                out.append({"name": os.path.basename(f), "path": f})
+    out.sort(key=lambda r: r["name"])
+    return out
+
+
+def deliverables_for(task_id, agent):
+    """Best-effort deliverables for a task: jobmgr/gpu jobs owned by the task's
+    agent (their output / stdout / stderr), plus reports/ files that reference the
+    task id or agent. Only paths that config.download_allowed() accepts are shown,
+    so every link resolves through the guarded /download endpoint."""
+    agent = agent_for_task(task_id, agent)
+    jobs, seen = [], set()
+    if agent:
+        for it in history_index() + jobmgr_jobs(active_only=False) + gpu_jobs_active():
+            if it.get("owner_agent") != agent:
+                continue
+            jid = it.get("job_id")
+            if jid in seen:
+                continue
+            seen.add(jid)
+            paths = []
+            for label, key in (("output", "output_path"),
+                               ("stdout", "out_log"), ("stderr", "err_log")):
+                p = it.get(key)
+                if p and config.download_allowed(p):
+                    paths.append({"label": label, "path": p})
+            if paths:  # a job with no downloadable artifact isn't a deliverable
+                jobs.append({"job_id": jid, "status": it.get("status"),
+                             "type": it.get("type"), "day": it.get("day"),
+                             "paths": paths})
+    jobs.sort(key=lambda j: -(epoch_from_id(j["job_id"]) or 0))
+    return {"jobs": jobs, "files": _reports_for(task_id, agent)}
+
+
+# --------------------------------------------------------------------------- #
 # task launches (task_<N>.md specs) — used by calendar + lineage
 # --------------------------------------------------------------------------- #
 def _task_files():

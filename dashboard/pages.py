@@ -75,6 +75,23 @@ a.tlink { color:#cdd7ea; } a.tlink:hover { color:#6cb6ff; }
 a.schip { font-size:12px; padding:1px 7px; border-radius:5px; background:#1b2740; color:#9db2d6; font-family:ui-monospace,monospace; }
 a.schip:hover { background:#20406b; color:#dbe7ff; text-decoration:none; }
 .empty-state { text-align:center; color:#6b7688; padding:34px 16px; font-style:italic; }
+/* ---- day-lineage mini-trees (History) ---- */
+.daytrees .mtree { padding:6px 0; }
+.daytrees .mtree + .mtree { border-top:1px solid #1e273b; }
+.tnode.onday > a.tlink { color:#f0d48a; font-weight:700; }
+.tnode.offday { opacity:.6; }
+.bchip.ctx { background:#1b2233; color:#7f8ba3; font-style:italic; }
+/* ---- full conversation body + inline attachments (Task detail) ---- */
+.msgbody { white-space:pre-wrap; word-break:break-word; max-height:360px; overflow:auto;
+           background:#0d1320; border:1px solid #22304a; border-radius:5px;
+           padding:7px 9px; margin-top:5px; font-size:13px; }
+.atts { margin-top:8px; display:flex; flex-direction:column; gap:7px; }
+img.attimg { max-width:100%; height:auto; border:1px solid #263049; border-radius:6px; background:#0d1320; }
+a.attfile { display:inline-block; }
+/* ---- deliverables section (Task detail) ---- */
+.deliv { margin-top:12px; padding-top:8px; border-top:1px solid #263049; }
+.deliv .job { margin:5px 0; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.deliv a { color:#6cb6ff; }
 """
 
 _NAV = """
@@ -202,6 +219,31 @@ function daemonsBar(ds){var s=document.getElementById('daemons'); if(!s)return; 
   ds.forEach(function(d){var p=el('span','pill'); var dot=el('span','dot '+(d.alive?'ok':'bad'));
     p.appendChild(dot); p.appendChild(el('span',null,d.name)); s.appendChild(p);
     s.appendChild(document.createTextNode(' '));});}
+function basename(p){ if(!p) return ''; var s=String(p); var i=s.lastIndexOf('/'); return i>=0?s.slice(i+1):s; }
+// Lineage tree rendering — shared by the Lineage forest AND the History day view.
+// A node with on_day===false is off-day context (muted + a "context" chip); nodes
+// with no on_day key (the Lineage page) render normally with no highlight.
+var DOT={ 'explicit-chain':'bh','parent-field':'bh','followup-phrase':'bm','subject-thread':'bl' };
+var BLABEL={ 'explicit-chain':'explicit chain','parent-field':'parent_task field',
+  'followup-phrase':'follow-up phrasing','subject-thread':'same subject' };
+function treeNodeLi(n){
+  var li=el('li');
+  var row=el('div','tnode'+(n.on_day===true?' onday':(n.on_day===false?' offday':'')));
+  row.appendChild(el('span','cbar '+(DOT[n.basis]||'broot')));
+  var a=el('a','tlink','#'+n.task_id+'  '+(n.title||''));
+  a.href='javascript:void(0)'; a.title=n.title||'';
+  a.onclick=(function(id){return function(){showTask(id);};})(n.task_id);
+  row.appendChild(a);
+  if(n.basis) row.appendChild(el('span','bchip',BLABEL[n.basis]||n.basis));
+  if(n.on_day===false) row.appendChild(el('span','bchip ctx','context'));
+  li.appendChild(row);
+  if(n.children && n.children.length){
+    var ul=el('ul','tree-ul');
+    n.children.forEach(function(c){ ul.appendChild(treeNodeLi(c)); });
+    li.appendChild(ul);
+  }
+  return li;
+}
 // Task detail panel (thread + reconstructed lineage). Shared by History + Lineage;
 // harmless on pages without a #detail container (guarded).
 async function showTask(id){
@@ -227,9 +269,37 @@ async function showTask(id){
   if(!t.conversation.messages.length) conv.appendChild(el('div','muted','No emails matched this thread.'));
   t.conversation.messages.forEach(function(m){var d=el('div','msg '+(m.dir==='in'?'in':'out'));
     var hd=el('div','small muted', (m.dir==='in'?('⇦ '+(m.from||'user')):('⇨ '+(m.agent||'agent')+' → '+(m.to||'')))+'  ·  '+fmtTs(m.ts));
-    d.appendChild(hd); d.appendChild(el('div',null,m.subject||''));
-    if(m.snippet) d.appendChild(el('div','small muted',m.snippet)); conv.appendChild(d);});
+    d.appendChild(hd); if(m.subject) d.appendChild(el('div',null,m.subject));
+    if(m.body) d.appendChild(el('div','msgbody',m.body));              // full, untruncated
+    else if(m.dir==='out') d.appendChild(el('div','small muted','(outbound body not stored)'));
+    if(m.attachments && m.attachments.length){                        // inline images / file links
+      var at=el('div','atts');
+      m.attachments.forEach(function(a){
+        var url='/download?path='+encodeURIComponent(a.path);
+        if(a.is_image){ var im=document.createElement('img'); im.className='attimg';
+          im.src=url; im.alt=a.name; im.loading='lazy'; at.appendChild(im); }
+        else { var la=el('a','attfile small','📎 '+a.name); la.href=url; la.target='_blank'; at.appendChild(la); }
+      });
+      d.appendChild(at);
+    }
+    conv.appendChild(d);});
   c.appendChild(conv);
+  // deliverables (best-effort): job artifacts owned by this task's agent + reports/
+  var dd=t.deliverables||{jobs:[],files:[]};
+  var dl=el('div','deliv'); dl.appendChild(el('div','muted small','DELIVERABLES (best-effort)'));
+  if(!(dd.jobs&&dd.jobs.length) && !(dd.files&&dd.files.length))
+    dl.appendChild(el('div','muted small','(none found)'));
+  (dd.jobs||[]).forEach(function(j){
+    var jb=el('div','job'); jb.appendChild(el('span','mono small','job '+j.job_id));
+    jb.appendChild(badge(j.status));
+    (j.paths||[]).forEach(function(p){ var a=el('a','small',p.label+': '+basename(p.path));
+      a.href='/download?path='+encodeURIComponent(p.path); a.target='_blank'; jb.appendChild(a); });
+    dl.appendChild(jb);
+  });
+  (dd.files||[]).forEach(function(f){ var a=el('a','small','📄 '+f.name);
+    a.href='/download?path='+encodeURIComponent(f.path); a.target='_blank';
+    a.style.display='block'; dl.appendChild(a); });
+  c.appendChild(dl);
   c.appendChild(el('div','muted small',t.conversation.note||''));
   D.innerHTML=''; D.appendChild(c);
 }
@@ -316,18 +386,34 @@ function draw(){
     cal.appendChild(cell);
   }
 }
+function dayLegend(){
+  var L=el('div','legend');
+  [['bh','explicit link'],['bm','follow-up'],['bl','same subject'],['broot','root']].forEach(function(k){
+    var s=el('span','k'); s.appendChild(el('span','cbar '+k[0]));
+    s.appendChild(document.createTextNode(k[1])); L.appendChild(s);});
+  var s2=el('span','k'); s2.appendChild(el('span','bchip ctx','context'));
+  s2.appendChild(document.createTextNode(' other-day parent/child')); L.appendChild(s2);
+  return L;
+}
 async function loadDay(day){
   var dv=document.getElementById('dayview'); dv.innerHTML='<div class="card muted">loading…</div>';
   var data=await getJSON('/api/history/day?date='+day); if(!data) return;
+  var lin=await getJSON('/api/history/day_lineage?date='+day)||{trees:[],n_day_tasks:0};
   dv.innerHTML=''; var c=el('div','card');
   c.appendChild(el('h2',null,'Launched on '+day));
-  // tasks
-  if(data.tasks.length){ c.appendChild(el('div','muted small','TASKS'));
-    var tt=el('table'); tt.innerHTML='<tr><th>task</th><th>title</th></tr>';
-    data.tasks.forEach(function(t){var tr=el('tr'); tr.style.cursor='pointer';
-      tr.appendChild(td('#'+t.task_id,'mono')); tr.appendChild(td(t.title,''));
-      tr.onclick=function(){showTask(t.task_id);}; tt.appendChild(tr);});
-    c.appendChild(tt);}
+  // task lineage — mini-trees grouped by root (not a flat list)
+  if(lin.trees && lin.trees.length){
+    c.appendChild(el('div','muted small','TASK LINEAGE — '+lin.n_day_tasks+
+      ' task'+(lin.n_day_tasks===1?'':'s')+' this day, shown in context · click a task for detail'));
+    c.appendChild(dayLegend());
+    var host=el('div','daytrees');
+    lin.trees.forEach(function(t){
+      var mt=el('div','mtree'); var ul=el('ul','tree-ul root');
+      ul.appendChild(treeNodeLi(t)); mt.appendChild(ul); host.appendChild(mt);});
+    c.appendChild(host);
+  } else {
+    c.appendChild(el('div','muted small','No tasks launched this day.'));
+  }
   // jobs
   if(data.jobs.length){ c.appendChild(el('div','muted small','JOBS ('+data.jobs.length+')'));
     var jt=el('table'); jt.innerHTML='<tr><th>status</th><th>owner</th><th>type</th><th>command</th></tr>';
@@ -338,7 +424,6 @@ async function loadDay(day){
       tr.appendChild(td((j.command||'').slice(0,80),'mono small'));
       tr.onclick=function(){showJob(j.job_id);}; jt.appendChild(tr);});
     c.appendChild(jt);}
-  if(!data.tasks.length && !data.jobs.length) c.appendChild(el('div','muted','Nothing launched.'));
   dv.appendChild(c);
 }
 async function showJob(id){
@@ -392,26 +477,7 @@ def lineage_page():
 
 _LINEAGE_JS = _COMMON_JS + r"""
 getJSON('/api/status').then(function(s){ if(s) daemonsBar(s.daemons); });
-var DOT={ 'explicit-chain':'bh','parent-field':'bh','followup-phrase':'bm','subject-thread':'bl' };
-var BLABEL={ 'explicit-chain':'explicit chain','parent-field':'parent_task field',
-  'followup-phrase':'follow-up phrasing','subject-thread':'same subject' };
-function nodeLi(n){
-  var li=el('li');
-  var row=el('div','tnode');
-  row.appendChild(el('span','cbar '+(DOT[n.basis]||'broot')));
-  var a=el('a','tlink','#'+n.task_id+'  '+(n.title||''));
-  a.href='javascript:void(0)'; a.title=n.title||'';
-  a.onclick=(function(id){return function(){showTask(id);};})(n.task_id);
-  row.appendChild(a);
-  if(n.basis) row.appendChild(el('span','bchip',BLABEL[n.basis]||n.basis));
-  li.appendChild(row);
-  if(n.children && n.children.length){
-    var ul=el('ul','tree-ul');
-    n.children.forEach(function(c){ ul.appendChild(nodeLi(c)); });
-    li.appendChild(ul);
-  }
-  return li;
-}
+// tree rendering (treeNodeLi, DOT, BLABEL) is shared from _COMMON_JS.
 async function loadForest(){
   var f; try{ f=await getJSON('/api/forest'); }catch(e){ return; } if(!f) return;
   document.getElementById('summary').textContent =
@@ -424,7 +490,7 @@ async function loadForest(){
     s.appendChild(el('b',null,'root #'+t.task_id));
     s.appendChild(el('span','muted small','  '+(t.title||'')+'  ·  '+t.size+' tasks, depth '+t.depth));
     d.appendChild(s);
-    var ul=el('ul','tree-ul root'); ul.appendChild(nodeLi(t)); d.appendChild(ul);
+    var ul=el('ul','tree-ul root'); ul.appendChild(treeNodeLi(t)); d.appendChild(ul);
     host.appendChild(d);
   });
   var sd=el('details','singles card');

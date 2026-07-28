@@ -18,8 +18,23 @@ STATE_ROOT = Path(
 ).resolve()
 
 # --- network bind (default localhost; reach via SSH tunnel) ------------------
+# HOST defaults to localhost (safe). To reach it without a tunnel, bind wider via
+# INFRA_DASH_HOST=0.0.0.0 (or the INFRA_DASH_PUBLIC=1 path in start_dashboard.sh).
 HOST = os.environ.get("INFRA_DASH_HOST", "127.0.0.1")
 PORT = int(os.environ.get("INFRA_DASH_PORT", "8787"))
+
+
+def _flag(name, default=False):
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+# --- optional TLS (stdlib ssl; cert generated at setup time, see start_dashboard.sh)
+# When on, the server wraps its socket with a self-signed cert and the session
+# cookie gets the `Secure` flag so the password is never sent cleartext on the LAN.
+TLS = _flag("INFRA_DASH_TLS")
 
 # --- dashboard-private secret store (password hash + cookie key) ------------
 INSTANCE_DIR = Path(
@@ -28,6 +43,10 @@ INSTANCE_DIR = Path(
 SECRET_FILE = INSTANCE_DIR / "auth.json"
 # One-time registration token (hash + used flag). Also under the git-ignored instance/.
 REGISTER_FILE = INSTANCE_DIR / "register.json"
+# TLS cert + key (self-signed, generated at setup time). Under the git-ignored
+# instance/ so they never land in git. Only read when TLS is on.
+CERT_FILE = Path(os.environ.get("INFRA_DASH_CERT", INSTANCE_DIR / "cert.pem"))
+KEY_FILE = Path(os.environ.get("INFRA_DASH_KEY", INSTANCE_DIR / "key.pem"))
 
 # --- state file locations (all under STATE_ROOT) ----------------------------
 SCRATCH = STATE_ROOT / "scratch_full_logs"
@@ -63,3 +82,45 @@ DOWNLOAD_DENY = [
 
 # Max bytes served by the download endpoint (guard against dumping huge files).
 DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024
+
+
+def _under(rp, root) -> bool:
+    try:
+        rp.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def resolve_download(path):
+    """Resolve a download request to a concrete file Path IFF it is allowed, else
+    None. Single source of truth shared by the /download handler and the
+    deliverables-link assembler (so we never surface a link the server would 403).
+
+    RELATIVE paths resolve against STATE_ROOT — job JSONs store artifact paths
+    relative to the state root, not the server's cwd. The realpath must then sit
+    under a DOWNLOAD_ROOT, match no DENY fragment, and be a real file. Size is NOT
+    checked here (the handler enforces the cap)."""
+    if not path:
+        return None
+    try:
+        p = Path(path)
+        if not p.is_absolute():
+            p = STATE_ROOT / p
+        rp = p.resolve()
+    except Exception:
+        return None
+    low = str(rp).lower()
+    if any(frag in low for frag in DOWNLOAD_DENY):
+        return None
+    if not any(_under(rp, root) for root in DOWNLOAD_ROOTS):
+        return None
+    try:
+        return rp if rp.is_file() else None
+    except OSError:
+        return None
+
+
+def download_allowed(path) -> bool:
+    """True iff resolve_download() would serve `path`. See it for the rules."""
+    return resolve_download(path) is not None
