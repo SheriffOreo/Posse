@@ -1,0 +1,5 @@
+# The dashboard uses ONLY the Python 3.8+ standard library — no third-party
+# packages, no build step, nothing to pip install. This is deliberate: it keeps
+# the surface tiny and auditable for a login-protected, read-only status tool.
+#
+# (Runs as-is inside the tsomp conda env, or any python3.)

@@ -1,0 +1,279 @@
+"""
+Task lineage + per-task conversation reconstruction.
+
+WHY THIS IS BEST-EFFORT
+-----------------------
+Follow-ups are dispatched by the inbox handler as new task_<uid>.md specs, but the
+parent link is NOT persisted anywhere (sent_emails.jsonl stores only
+agent/subject/to/ts/message_id -- no In-Reply-To). So we reconstruct lineage from
+three signals, in decreasing confidence:
+
+  1. EXPLICIT chain notation in a spec body, e.g. "task_274->275->276->316"
+     or "Task 274 -> 275" -> exact edges.
+  2. FOLLOW-UP phrasing, e.g. "follow-up of Task 274", "supersedes Task 261".
+  3. THREAD fallback: tasks whose originating email shares a normalized subject
+     are chained by time.
+
+Each edge carries a `basis` so the UI can show how confident it is. The permanent
+fix (recommended to Steven, patch in ../proposed_patches/) is to have
+scratch_inbox_handle.sh stamp `parent_task:` into every task spec at creation.
+"""
+import glob
+import json
+import os
+import re
+import time
+from pathlib import Path
+
+import config
+import state
+
+_ARROW = r"(?:->|-->|=>|→)"
+_CHAIN = re.compile(r"task[_ ]?(\d+(?:\s*" + _ARROW + r"\s*\d+)+)", re.I)
+_FOLLOWUP = re.compile(
+    r"(?:follow[- ]?up (?:to|of|for)|supersed\w*|continu\w*(?: from)?|builds on|"
+    r"parent[_ ]?task[:=]?)\s*task[_ ]?(\d+)",
+    re.I,
+)
+_PARENT_FIELD = re.compile(r"^\s*parent[_ ]?task\s*[:=]\s*(\d+)\s*$", re.I | re.M)
+
+
+def _norm_subject(s):
+    s = (s or "").strip()
+    s = re.sub(r"^(?:\s*(?:re|fwd?|fw)\s*:\s*)+", "", s, flags=re.I)
+    s = re.sub(r"\[[^\]]*\]", "", s)  # drop [tags]
+    s = re.sub(r"--\s*task\s*\d+.*$", "", s, flags=re.I)
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+# --------------------------------------------------------------------------- #
+# inbound / outbound email indexes
+# --------------------------------------------------------------------------- #
+def _inbound_index():
+    out = []
+    for f in glob.glob(str(config.INBOX / "[0-9]*.txt")):
+        base = os.path.basename(f)
+        m = re.match(r"(\d+)\.txt$", base)
+        if not m:
+            continue
+        uid = int(m.group(1))
+        try:
+            txt = Path(f).read_text(errors="replace")
+            ts = os.path.getmtime(f)
+        except Exception:
+            continue
+        subj, frm = "", ""
+        for ln in txt.splitlines()[:6]:
+            if ln.upper().startswith("SUBJECT:"):
+                subj = ln.split(":", 1)[1].strip()
+            elif ln.upper().startswith("FROM:"):
+                frm = ln.split(":", 1)[1].strip()
+        body = txt.split("\n\n", 1)[1] if "\n\n" in txt else txt
+        out.append(
+            {
+                "dir": "in",
+                "uid": uid,
+                "subject": subj,
+                "norm": _norm_subject(subj),
+                "from": frm,
+                "ts": ts,
+                "snippet": " ".join(body.split())[:280],
+                "file": f,
+            }
+        )
+    return out
+
+
+def _outbound_index():
+    out = []
+    try:
+        lines = Path(config.SENT_EMAILS).read_text(errors="replace").splitlines()
+    except Exception:
+        return out
+    for ln in lines:
+        try:
+            r = json.loads(ln)
+        except Exception:
+            continue
+        out.append(
+            {
+                "dir": "out",
+                "agent": r.get("agent"),
+                "subject": r.get("subject", ""),
+                "norm": _norm_subject(r.get("subject", "")),
+                "to": r.get("to"),
+                "ts": r.get("ts"),
+                "message_id": r.get("message_id"),
+            }
+        )
+    return out
+
+
+def _indexes():
+    return state._cached("email_idx", 60, lambda: (_inbound_index(), _outbound_index()))
+
+
+# --------------------------------------------------------------------------- #
+# task nodes
+# --------------------------------------------------------------------------- #
+def _task_node(f):
+    base = os.path.basename(f)
+    m = re.match(r"task_(\d+)\.md$", base)
+    if not m:
+        return None
+    tid = int(m.group(1))
+    try:
+        body = Path(f).read_text(errors="replace")
+        ts = os.path.getmtime(f)
+    except Exception:
+        body, ts = "", None
+    title = f"Task {tid}"
+    for ln in body.splitlines():
+        if ln.strip().startswith("#"):
+            title = ln.lstrip("# ").strip()
+            break
+    agent = None
+    am = re.search(r"--agent\s+([A-Za-z0-9_]+)", body)
+    if am:
+        agent = am.group(1)
+    return {"task_id": tid, "title": title, "ts": ts, "day": state.day_of(ts),
+            "agent": agent, "body": body}
+
+
+def _all_task_nodes():
+    nodes = {}
+    for f in glob.glob(str(config.INBOX / "task_*.md")):
+        n = _task_node(f)
+        if n:
+            nodes[n["task_id"]] = n
+    return nodes
+
+
+def build_lineage():
+    return state._cached("lineage", 60, _build_lineage)
+
+
+def _build_lineage():
+    nodes = _all_task_nodes()
+    ids = set(nodes)
+    edges = {}  # child_id -> {"parent": pid, "basis": ...}
+
+    def _set(child, parent, basis):
+        if parent in ids and parent != child and child not in edges:
+            edges[child] = {"parent": parent, "basis": basis}
+
+    # 1) explicit arrow chains  (task_274->275->276->316). Intermediate task
+    #    numbers may not exist as spec files, so link each element to its nearest
+    #    PRECEDING element that is a real node (274->276->316 with 275 absent still
+    #    yields 316 -> 274).
+    for tid, n in nodes.items():
+        for m in _CHAIN.finditer(n["body"]):
+            seq = [int(x) for x in re.findall(r"\d+", m.group(1))]
+            for i in range(1, len(seq)):
+                for j in range(i - 1, -1, -1):
+                    if seq[j] in ids:
+                        _set(seq[i], seq[j], "explicit-chain")
+                        break
+    # 2) follow-up phrasing / parent_task field
+    for tid, n in nodes.items():
+        pf = _PARENT_FIELD.search(n["body"])
+        if pf:
+            _set(tid, int(pf.group(1)), "parent-field")
+        else:
+            fm = _FOLLOWUP.search(n["body"])
+            if fm:
+                _set(tid, int(fm.group(1)), "followup-phrase")
+    # 3) subject-thread fallback: chain same-subject tasks by ascending id
+    threads = {}
+    inbound = {e["uid"]: e for e in _indexes()[0]}
+    for tid, n in nodes.items():
+        subj = inbound.get(tid, {}).get("norm")
+        if subj:
+            threads.setdefault(subj, []).append(tid)
+    for subj, members in threads.items():
+        members.sort()
+        for a, b in zip(members, members[1:]):
+            _set(b, a, "subject-thread")
+
+    node_list = []
+    for tid, n in sorted(nodes.items()):
+        node_list.append(
+            {
+                "task_id": tid,
+                "title": n["title"],
+                "agent": n["agent"],
+                "day": n["day"],
+                "ts": n["ts"],
+                "parent": edges.get(tid, {}).get("parent"),
+                "basis": edges.get(tid, {}).get("basis"),
+            }
+        )
+    return {"nodes": node_list, "count": len(node_list),
+            "linked": len(edges), "roots": sum(1 for x in node_list if not x["parent"])}
+
+
+def lineage_for(task_id):
+    """Ancestors + descendants of one task, for the detail view."""
+    lin = build_lineage()
+    by = {n["task_id"]: n for n in lin["nodes"]}
+    if task_id not in by:
+        return None
+    # ancestors
+    chain = []
+    cur = by[task_id].get("parent")
+    seen = set()
+    while cur in by and cur not in seen:
+        seen.add(cur)
+        chain.append(by[cur])
+        cur = by[cur].get("parent")
+    chain.reverse()
+    # direct children
+    kids = [n for n in lin["nodes"] if n.get("parent") == task_id]
+    kids.sort(key=lambda r: r["task_id"])
+    return {"ancestors": chain, "self": by[task_id], "children": kids}
+
+
+# --------------------------------------------------------------------------- #
+# per-task conversation
+# --------------------------------------------------------------------------- #
+def task_conversation(task_id):
+    nodes = _all_task_nodes()
+    node = nodes.get(task_id)
+    inbound, outbound = _indexes()
+    root_in = next((e for e in inbound if e["uid"] == task_id), None)
+    norm = None
+    if root_in:
+        norm = root_in["norm"]
+    elif node:
+        # derive a subject from the spec's own first outbound of that agent
+        agent = node.get("agent")
+        cand = [o for o in outbound if o.get("agent") == agent]
+        if cand:
+            norm = min(cand, key=lambda o: o.get("ts") or 0)["norm"]
+    agent = node.get("agent") if node else None
+
+    msgs = []
+    for e in inbound:
+        if norm and e["norm"] == norm:
+            msgs.append(
+                {"dir": "in", "ts": e["ts"], "from": e["from"],
+                 "subject": e["subject"], "snippet": e["snippet"]}
+            )
+    for o in outbound:
+        match_subj = norm and o["norm"] == norm
+        if match_subj:
+            msgs.append(
+                {"dir": "out", "ts": o["ts"], "agent": o.get("agent"),
+                 "to": o.get("to"), "subject": o["subject"], "snippet": ""}
+            )
+    msgs = [m for m in msgs if m.get("ts")]
+    msgs.sort(key=lambda m: m["ts"])
+    return {
+        "task_id": task_id,
+        "agent": agent,
+        "subject": (root_in or {}).get("subject") or (node or {}).get("title"),
+        "messages": msgs,
+        "note": "Reconstructed by normalized-subject threading (In-Reply-To is not "
+                "persisted). Bodies of outbound emails are not stored; snippets shown "
+                "for inbound only.",
+    }

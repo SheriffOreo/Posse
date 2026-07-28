@@ -1,0 +1,61 @@
+# ============================================================================
+# claude_infra/.gitignore  — repo holds CODE ONLY. All runtime state + secrets
+# live in the tsomp working dir (INFRA_STATE_ROOT) and must NEVER be committed.
+# ============================================================================
+
+# ---- Secrets (defense in depth; these live outside the repo, but never track) ----
+.smtp_env
+*.smtp_env
+.anthropic_key
+*.anthropic_key
+credentials.json
+.credentials.json
+*credentials.json
+*.pem
+*.key
+id_rsa*
+.env
+.env.*
+infra_env.local.sh          # local machine overrides (may name real paths)
+
+# ---- Dashboard instance dir: password hash + cookie-signing secret ----
+dashboard/instance/
+dashboard/**/instance/
+*.secret
+
+# ---- Runtime state / generated artifacts (belong in INFRA_STATE_ROOT, not git) ----
+scratch_full_logs/
+gpu_queue/
+outputs_sweep/
+outputs_tuning/
+reports/
+rtf_checkpoints/
+jobs/
+watchdog_jobs.json
+scratch_agents_registry.json
+inbox_blocked.json
+sent_emails.jsonl
+mailbox_*.md
+scratch_worker_*_relaunch.sh
+scratch_worker_*_launch.sh
+worker_*_prompt.md
+*.output
+*.pid
+*.done
+*.log
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# ---- Editor / OS ----
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
