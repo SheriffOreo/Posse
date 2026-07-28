@@ -71,6 +71,7 @@ ul.tree-ul.root { border-left:none; padding-left:0; }
 .tnode { display:flex; align-items:center; gap:8px; padding:2px 0; }
 a.tlink { color:#cdd7ea; } a.tlink:hover { color:#6cb6ff; }
 .bchip { font-size:10px; padding:1px 6px; border-radius:9px; background:#20293d; color:#8fa3c7; white-space:nowrap; }
+.wchip { font-size:10px; color:#7f8ba3; white-space:nowrap; font-family:ui-monospace,monospace; }
 .singlewrap { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
 a.schip { font-size:12px; padding:1px 7px; border-radius:5px; background:#1b2740; color:#9db2d6; font-family:ui-monospace,monospace; }
 a.schip:hover { background:#20406b; color:#dbe7ff; text-decoration:none; }
@@ -181,6 +182,7 @@ def status_page():
         "<div id='limit'></div>"
         "<h2>Active Workers <span id='wc' class='muted small'></span></h2>"
         "<div id='workers'>loading&hellip;</div>"
+        "<div id='detail'></div>"  # Task 327: task detail when a worker's task# is clicked
         "<h2>GPU</h2><div id='gpu'>loading&hellip;</div>"
         "<h2>Job Manager &mdash; Active Jobs</h2><div id='jobs'>loading&hellip;</div>"
         "<p class='muted small' id='updated'></p>"
@@ -236,6 +238,7 @@ function treeNodeLi(n){
   a.onclick=(function(id){return function(){showTask(id);};})(n.task_id);
   row.appendChild(a);
   if(n.basis) row.appendChild(el('span','bchip',BLABEL[n.basis]||n.basis));
+  if(n.agent) row.appendChild(el('span','wchip','· '+n.agent));  // Task 327: owning worker
   if(n.on_day===false) row.appendChild(el('span','bchip ctx','context'));
   li.appendChild(row);
   if(n.children && n.children.length){
@@ -320,14 +323,20 @@ async function tick(){
     L.appendChild(b);}
   // workers
   document.getElementById('wc').textContent='('+s.workers.length+' active)';
-  var wt=el('table'); wt.innerHTML='<tr><th>worker</th><th>state</th><th>description</th>'+
+  var wt=el('table'); wt.innerHTML='<tr><th>worker</th><th>state</th><th>task#</th><th>description</th>'+
     '<th>requester</th><th class=nowrap>mail</th><th>rl</th></tr>';
   s.workers.forEach(function(w){var tr=el('tr');
     tr.appendChild(td(w.name,'mono'));
     var st=el('td'); var cls=w.state==='running'?'b-running':(w.state==='failed'?'b-failed':
       (String(w.state).indexOf('wait')>=0?'b-parked':'b-done'));
     st.appendChild(el('span','badge '+cls, w.state_label||w.state)); tr.appendChild(st);
-    tr.appendChild(td(w.desc||'',''));
+    // Task 327: task# — clickable like the tree links, opens the detail panel below
+    var tk=el('td');
+    if(w.task){ var a=el('a','tlink','#'+w.task); a.href='javascript:void(0)';
+      a.onclick=(function(id){return function(){showTask(id);};})(w.task); tk.appendChild(a); }
+    tr.appendChild(tk);
+    // description = the task's title (fall back to the registry desc when unresolved)
+    tr.appendChild(td(w.task_title||w.desc||'',''));
     tr.appendChild(td(w.requester||'','small muted'));
     tr.appendChild(td(w.mailbox_pending?'●':'','flag'));
     tr.appendChild(td(String(w.relaunched||0),'small muted'));

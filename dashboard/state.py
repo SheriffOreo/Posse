@@ -40,6 +40,9 @@ def _read_jsons(dirp):
 
 _MS = re.compile(r"[A-Za-z]?(\d{13})(?:\D|$)")
 _SEC = re.compile(r"[A-Za-z]?(\d{10})(?:\D|$)")
+# Task 327: "Task N" token in an email subject -> the task it belongs to. Kept in
+# lockstep with lineage._TASK_TOKEN (agents title emails "Task N START/FINAL/...").
+_SUBJ_TASK = re.compile(r"\btask[ _]?#?(\d+)", re.I)
 
 
 def epoch_from_id(jid):
@@ -126,6 +129,23 @@ def _worker_prompt_task(name):
     return body.strip()
 
 
+def _worker_task_info(name):
+    """Task 327: (task_id|None, title) a worker is CURRENTLY on, from its prompt's
+    TASK section — the number via _primary_task, the title from the first heading
+    (its `# Task N — ...` line). Used to show task# + description on the Status page."""
+    txt = _worker_prompt_task(name)
+    if not txt:
+        return None, ""
+    tid = _primary_task(txt)
+    title = ""
+    for ln in txt.splitlines():
+        s = ln.strip()
+        if s.startswith("#"):
+            title = s.lstrip("# ").strip()
+            break
+    return tid, title
+
+
 def _mailbox_pending(name):
     f = config.INBOX / f"mailbox_{name}.md"
     try:
@@ -146,11 +166,16 @@ def workers(active_only=False):
         if active_only and st in ("done", "failed"):
             continue
         rinfo = reg.get(name, {})
+        tid, ttitle = _worker_task_info(name)
         rows.append(
             {
                 "name": name,
                 "state": st,
                 "state_label": _STATE_LABEL.get(st, st or "?"),
+                # Task 327: the task this worker is currently on (number + title),
+                # resolved from its prompt's TASK section for the Status page.
+                "task": tid,
+                "task_title": ttitle,
                 "requester": e.get("requester"),
                 "desc": rinfo.get("desc") or "",
                 "keywords": rinfo.get("match", []),
@@ -346,18 +371,49 @@ def _job_owner_counts():
     return _cached("job_owner_counts", 120, build)
 
 
+def _build_email_task_agents():
+    """task_id -> agent, learned from outbound email subjects' "Task N" token
+    (majority vote per task). Task 327: this is the reliable task->worker signal
+    for a PERSISTENT worker (e.g. `paper`), whose per-task prompt file only ever
+    reflects its CURRENT task, so worker_prompt_task_map() misses its past ones."""
+    votes = {}
+    try:
+        lines = Path(config.SENT_EMAILS).read_text(errors="replace").splitlines()
+    except Exception:
+        return {}
+    for ln in lines:
+        try:
+            r = json.loads(ln)
+        except Exception:
+            continue
+        ag = r.get("agent")
+        if not ag:
+            continue
+        m = _SUBJ_TASK.search(r.get("subject", "") or "")
+        if m:
+            c = votes.setdefault(int(m.group(1)), {})
+            c[ag] = c.get(ag, 0) + 1
+    return {tid: max(c.items(), key=lambda kv: kv[1])[0] for tid, c in votes.items()}
+
+
+def email_task_agents():
+    return _cached("email_task_agents", 120, _build_email_task_agents)
+
+
 def agent_for_task(task_id, spec_agent=None):
     """Resolve the worker agent for a task: the spec's own --agent if present,
     else the worker-prompt fallback (preferring, among candidates, the agent that
-    owns the most finished jobs so the deliverables lookup is meaningful)."""
+    owns the most finished jobs so the deliverables lookup is meaningful), else
+    (Task 327) the agent that emailed "Task N ..." — the only signal that survives
+    for a persistent worker whose prompt file no longer names this task."""
     if spec_agent:
         return spec_agent
     cands = worker_prompt_task_map().get(task_id) or []
-    if not cands:
-        return None
-    owners = _job_owner_counts()
-    cands = sorted(cands, key=lambda c: (-(owners.get(c[0], 0)), -c[1]))
-    return cands[0][0]
+    if cands:
+        owners = _job_owner_counts()
+        cands = sorted(cands, key=lambda c: (-(owners.get(c[0], 0)), -c[1]))
+        return cands[0][0]
+    return email_task_agents().get(task_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -392,12 +448,17 @@ def _reports_for(task_id, agent, cap=25):
     return out
 
 
-def _emailed_attachments(agent):
+def _emailed_attachments(agent, task_id=None):
     """Task 323 D3: files this task's agent actually emailed, from the persisted
     `attachments` in sent_emails.jsonl — the AUTHORITATIVE deliverables (what the
     worker really sent the user). Filtered to what the guarded /download endpoint
     will serve, deduped by resolved path. Empty for agents that only sent emails
-    before the attachment-logging change (those rows carry no `attachments`)."""
+    before the attachment-logging change (those rows carry no `attachments`).
+
+    Task 327: when `task_id` is given, only attachments from emails whose subject
+    carries the matching "Task N" token count — so a persistent worker (e.g.
+    `paper`, which titles every email "Task N ...") attributes each FINAL png to
+    the right task instead of dumping all of its emailed files under every task."""
     if not agent:
         return []
     out, seen = [], set()
@@ -412,6 +473,10 @@ def _emailed_attachments(agent):
             continue
         if r.get("agent") != agent:
             continue
+        if task_id is not None:
+            m = _SUBJ_TASK.search(r.get("subject", "") or "")
+            if not (m and int(m.group(1)) == task_id):
+                continue
         for p in (r.get("attachments") or []):
             rp = config.resolve_download(p)
             if rp is None:
@@ -452,8 +517,9 @@ def deliverables_for(task_id, agent):
                              "paths": paths})
     jobs.sort(key=lambda j: -(epoch_from_id(j["job_id"]) or 0))
     # Emailed attachments first (authoritative), then reports/ matches not already
-    # covered by an emailed file (deduped by realpath).
-    emailed = _emailed_attachments(agent)
+    # covered by an emailed file (deduped by realpath). Task 327: scope the emailed
+    # files to THIS task via the "Task N" subject token, not all of the agent's.
+    emailed = _emailed_attachments(agent, task_id)
     seen_files = {os.path.realpath(f["path"]) for f in emailed}
     reports = [f for f in _reports_for(task_id, agent)
                if os.path.realpath(f["path"]) not in seen_files]

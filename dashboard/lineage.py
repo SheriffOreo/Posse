@@ -46,6 +46,20 @@ def _norm_subject(s):
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
+# The "Task N" token agents reliably put in every outbound subject
+# ("Task 324 START/milestone/FINAL/DONE", or a "Re: Task 324 ..." ack). Used to
+# attribute an OUTBOUND email to its task explicitly, overriding subject-thread
+# matching (a persistent worker like `paper` spans many task numbers, so its
+# normalized subject alone mis-groups emails). See task_conversation().
+_TASK_TOKEN = re.compile(r"\btask[ _]?#?(\d+)", re.I)
+
+
+def subject_task(subject):
+    """Integer N parsed from a 'Task N ...' / 'Re: Task N ...' subject, else None."""
+    m = _TASK_TOKEN.search(subject or "")
+    return int(m.group(1)) if m else None
+
+
 # --------------------------------------------------------------------------- #
 # inbound / outbound email indexes
 # --------------------------------------------------------------------------- #
@@ -101,6 +115,11 @@ def _outbound_index():
                 "agent": r.get("agent"),
                 "subject": r.get("subject", ""),
                 "norm": _norm_subject(r.get("subject", "")),
+                # Task 327: explicit "Task N" token -> the task this email belongs
+                # to (None if the subject has no such token). Overrides norm-subject
+                # thread matching in task_conversation() so a persistent worker's
+                # "Task 324 FINAL" no longer leaks into a sibling task's thread.
+                "task": subject_task(r.get("subject", "")),
                 "to": r.get("to"),
                 "ts": r.get("ts"),
                 "message_id": r.get("message_id"),
@@ -345,8 +364,15 @@ def history_day_lineage(day):
         for k in kids.get(d, []):
             rel.add(k)
     day_set = set(day_ids)
-    obj = {tid: dict(_pub_node(nodes[tid]), on_day=(tid in day_set), children=[])
-           for tid in rel}
+    # Task 327: resolve each node's OWNING worker so the History mini-tree can show
+    # it. _pub_node carries only the spec-scraped --agent (usually None for a
+    # persistent worker), so fall back through state.agent_for_task (prompt map ->
+    # "Task N" email map).
+    obj = {}
+    for tid in rel:
+        pub = _pub_node(nodes[tid])
+        pub["agent"] = state.agent_for_task(tid, pub.get("agent"))
+        obj[tid] = dict(pub, on_day=(tid in day_set), children=[])
     roots = []
     for tid in rel:
         p = nodes[tid].get("parent")
@@ -433,8 +459,17 @@ def task_conversation(task_id):
                  "attachments": _attachments_for(e["uid"])}
             )
     for o in outbound:
-        match_subj = norm and o["norm"] == norm
-        if match_subj:
+        # Task 327: an explicit "Task N" token in the OUTBOUND subject wins over
+        # norm-subject threading. Include iff it names THIS task, or (no token) its
+        # subject threads with the originating email. A token naming a DIFFERENT
+        # task excludes the email even if the norm matches — so a persistent
+        # worker's "Task 324 FINAL" no longer leaks into task 326's conversation.
+        otask = o.get("task")
+        if otask is not None:
+            include = (otask == task_id)
+        else:
+            include = bool(norm and o["norm"] == norm)
+        if include:
             msgs.append(
                 {"dir": "out", "ts": o["ts"], "agent": o.get("agent"),
                  "to": o.get("to"), "subject": o["subject"],
