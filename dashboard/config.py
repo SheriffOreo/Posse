@@ -73,6 +73,11 @@ DOWNLOAD_ROOTS = [
     (SCRATCH).resolve(),
     (GPU_QUEUE / "logs").resolve(),
     (STATE_ROOT / "eval").resolve(),
+    # Task 327 (Steven-approved, option b): the paper's notes dir, so deliverables a
+    # persistent worker emails from the paper repo (e.g. residual_models_survey.pdf,
+    # the Task 324 FINAL attachment) resolve through the guarded /download. Narrowest
+    # path that covers them; DOWNLOAD_DENY below still blocks any secret inside it.
+    Path("/home/steven/Papers/Time_series_OMP/notes").resolve(),
 ]
 # Never serve these, even inside a whitelisted root.
 DOWNLOAD_DENY = [
