@@ -451,7 +451,17 @@ def task_conversation(task_id):
 
     msgs = []
     for e in inbound:
-        if norm and e["norm"] == norm:
+        # Task 331: mirror the Task 327 outbound fix on the INBOUND side. Include an
+        # inbound email iff it IS the originating email (uid == task_id), OR its
+        # subject explicitly names this task ("Re: Task N ..." token == task_id), OR
+        # (fallback) its norm threads with the originating email. Without the token
+        # clause, a mid-task reply keyed by a different norm was dropped — e.g.
+        # Steven's replies to a 326 milestone/FINAL ("Re: Task 326 ...") were missing
+        # from task 326 because 326's originating norm is "task 324 final ...". A
+        # bridging reply that also spawned its own task legitimately shows in both
+        # threads (its own uid + the task it names).
+        etask = subject_task(e["subject"])
+        if e["uid"] == task_id or etask == task_id or (norm and e["norm"] == norm):
             msgs.append(
                 {"dir": "in", "ts": e["ts"], "from": e["from"],
                  "subject": e["subject"],
