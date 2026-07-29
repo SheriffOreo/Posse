@@ -21,6 +21,7 @@ from pathlib import Path
 
 import auth
 import config
+import cowork
 import lineage
 import pages
 import state
@@ -135,6 +136,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._html(pages.history_page())
         if path == "/lineage":
             return self._html(pages.lineage_page())
+        if path == "/cowork":
+            return self._html(pages.cowork_page())
         if path == "/api/status":
             return self._json(_api_status())
         if path == "/api/history/days":
@@ -165,6 +168,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(lineage.build_lineage())
         if path == "/api/forest":
             return self._json(lineage.build_forest())
+        if path == "/api/agents":
+            qs = (q.get("q") or [""])[0]
+            return self._json(cowork.agent_index(qs))
         if path == "/download":
             return self._download((q.get("path") or [""])[0])
         return self._json({"error": "not found"}, 404)

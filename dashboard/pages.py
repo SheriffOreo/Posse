@@ -167,6 +167,39 @@ a.attfile { display:inline-block; }
 /* Task 346: login / register brand lockup (mark + wordmark, centered above the form) */
 .brandmark { display:flex; flex-direction:column; align-items:center; gap:6px; margin-bottom:14px; }
 .brandmark span { font-weight:700; letter-spacing:.3px; font-size:16px; color:var(--fg); }
+/* ---- cowork assignment form + agent-search modal (Task 353) ---- */
+.cowork-form { max-width:680px; display:flex; flex-direction:column; gap:16px; }
+.cowork-form .fld { display:flex; flex-direction:column; gap:6px; }
+.cowork-form .fld.chk { flex-direction:row; align-items:center; gap:9px; cursor:pointer; }
+.cowork-form .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--th); font-weight:600; }
+.cowork-form textarea, .cowork-form input[type=text], .modal-card input[type=text] {
+  width:100%; padding:9px; border-radius:6px; border:1px solid var(--accent-border);
+  background:var(--surface2); color:var(--fg); font:inherit; }
+.cowork-form textarea { resize:vertical; min-height:96px; }
+.cowork-form .pickrow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.cowork-form .chips { display:flex; flex-wrap:wrap; gap:6px; }
+.cw-chip, .cw-lead { display:inline-flex; align-items:center; gap:7px; font-family:ui-monospace,monospace;
+  border-radius:12px; padding:2px 9px; }
+.cw-chip { font-size:12px; background:var(--chip-bg); color:var(--h2); }
+.cw-lead { font-size:13px; background:var(--has-bg); color:var(--fg); border:1px solid var(--accent-border); }
+.cw-chip .x, .cw-lead .x { cursor:pointer; color:var(--muted); font-weight:700; }
+.cw-chip .x:hover, .cw-lead .x:hover { color:var(--link); }
+.cowork-form .actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+/* modal overlay + card (agent search). Scrim reads on both themes. */
+.modal { position:fixed; inset:0; background:rgba(6,10,18,.62); display:flex;
+  align-items:flex-start; justify-content:center; z-index:20; padding:56px 16px; }
+.modal-card { background:var(--card); border:1px solid var(--border); border-radius:10px;
+  width:min(560px,100%); max-height:78vh; display:flex; flex-direction:column; padding:14px;
+  box-shadow:0 12px 44px rgba(0,0,0,.45); }
+.modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.pickresults { overflow-y:auto; margin-top:10px; display:flex; flex-direction:column; gap:4px;
+  scrollbar-width:thin; scrollbar-color:var(--border) transparent; }
+.pickrow-item { padding:7px 9px; border-radius:6px; cursor:pointer; border:1px solid transparent; }
+.pickrow-item:hover { background:var(--row-hover); border-color:var(--hover-border); }
+.pickrow-item .an { font-weight:700; font-family:ui-monospace,monospace; color:var(--tlink); }
+.pickrow-item .at { color:var(--muted); font-size:12px; }
+.pickrow-item .tk { display:inline-block; font-size:11px; color:var(--th); background:var(--chip-bg);
+  border-radius:8px; padding:0 6px; margin:3px 4px 0 0; font-family:ui-monospace,monospace; }
 """
 
 def _mark(px):
@@ -190,8 +223,8 @@ def _mark(px):
 
 
 def _nav(active=""):
-    """Header nav. `active` in {status,history,lineage} marks the current link with .cur
-    so you can see which page you're on (Task 346)."""
+    """Header nav. `active` in {status,history,lineage,cowork} marks the current link
+    with .cur so you can see which page you're on (Task 346; +cowork Task 353)."""
     def cur(name):
         return " class='cur'" if name == active else ""
     return (
@@ -199,7 +232,8 @@ def _nav(active=""):
         f"<span class='brand'>{_mark(22)}Rookery</span>"
         f"<nav><a href='/'{cur('status')}>Status</a>"
         f"<a href='/history'{cur('history')}>History</a>"
-        f"<a href='/lineage'{cur('lineage')}>Lineage</a></nav>"
+        f"<a href='/lineage'{cur('lineage')}>Lineage</a>"
+        f"<a href='/cowork'{cur('cowork')}>Cowork</a></nav>"
         "<span id='daemons' class='small muted'></span>"
         "<span class='spacer'></span>"
         "<button id='themebtn' class='small' title='Toggle day / night mode' onclick='toggleTheme()' "
@@ -655,4 +689,140 @@ async function loadForest(){
   var S=document.getElementById('singletons'); S.innerHTML=''; S.appendChild(sd);
 }
 loadForest();
+"""
+
+
+# --------------------------------------------------------------------------- #
+# cowork assignment page (Task 353)
+# --------------------------------------------------------------------------- #
+def cowork_page():
+    """Assignment form: pick a LEAD + collaborators (via an agent-search popup that
+    finds agents by name OR by a task they did), optionally add a critic, describe the
+    task, submit. The form is a thin shell; all dynamic values go in via textContent
+    (XSS-safe). Submitting POSTs JSON to /api/cowork (wired in B2)."""
+    body = (
+        "<h2>New Cowork</h2>"
+        "<div class='muted small' style='margin-bottom:14px;max-width:680px'>"
+        "A cowork is a group of previously-active agents working together on one task. "
+        "One agent <b>leads</b> (owns the deliverables, plans, delegates, reviews and "
+        "iterates); <b>collaborators</b> carry the knowledge of their prior tasks; an "
+        "optional <b>critic</b> audits the outputs independently. All communication is by "
+        "email and every agent is watchdog-monitored, exactly like regular work.</div>"
+        "<div class='card cowork-form'>"
+        "<div class='fld'><span class='lbl'>Lead agent</span>"
+        "<div class='pickrow'><span id='leadslot' class='muted small'>none selected</span>"
+        "<button type='button' id='lead-search-btn' class='small'>Search&hellip;</button></div></div>"
+        "<div class='fld'><span class='lbl'>Collaborating agents</span>"
+        "<div id='collabchips' class='chips'></div>"
+        "<div><button type='button' id='collab-add-btn' class='small'>Add collaborator&hellip;</button></div></div>"
+        "<label class='fld chk'><input type='checkbox' id='critic'>"
+        "<span>Add an independent critic agent</span></label>"
+        "<div class='fld'><span class='lbl'>Task description</span>"
+        "<textarea id='desc' rows='6' placeholder='What should this cowork accomplish? "
+        "Be specific about the deliverables.'></textarea></div>"
+        "<div class='actions'><button type='button' id='submitcw'>Create cowork</button>"
+        "<span id='cwstatus' class='small muted'></span></div>"
+        "</div>"
+        # agent-search modal (hidden until opened)
+        "<div id='pickmodal' class='modal' style='display:none'>"
+        "<div class='modal-card'>"
+        "<div class='modal-head'><b id='picktitle'>Find an agent</b>"
+        "<button type='button' id='pickclose' class='small'>&#10005;</button></div>"
+        "<input id='pickq' type='text' autocomplete='off' "
+        "placeholder='Search by agent name or a task it did&hellip;'>"
+        "<div id='pickresults' class='pickresults'></div>"
+        "</div></div>"
+    )
+    return _shell("New Cowork", body, _COWORK_JS, active="cowork")
+
+
+_COWORK_JS = _COMMON_JS + r"""
+getJSON('/api/status').then(function(s){ if(s) daemonsBar(s.daemons); });
+var CW={ lead:null, collabs:[], mode:null, timer:null };
+function renderLead(){
+  var slot=document.getElementById('leadslot'); slot.innerHTML='';
+  if(!CW.lead){ slot.className='muted small'; slot.textContent='none selected'; return; }
+  slot.className='';
+  var c=el('span','cw-lead'); c.appendChild(el('b',null,CW.lead));
+  var x=el('span','x','✕'); x.title='clear lead';
+  x.onclick=function(){ CW.lead=null; renderLead(); };
+  c.appendChild(x); slot.appendChild(c);
+}
+function renderCollabs(){
+  var host=document.getElementById('collabchips'); host.innerHTML='';
+  if(!CW.collabs.length){ host.appendChild(el('span','muted small','none added')); return; }
+  CW.collabs.forEach(function(name){
+    var c=el('span','cw-chip'); c.appendChild(el('b',null,name));
+    var x=el('span','x','✕'); x.title='remove';
+    x.onclick=function(){ CW.collabs=CW.collabs.filter(function(n){return n!==name;}); renderCollabs(); };
+    c.appendChild(x); host.appendChild(c);
+  });
+}
+function openPick(mode){
+  CW.mode=mode;
+  document.getElementById('picktitle').textContent =
+    mode==='lead' ? 'Select the lead agent' : 'Add a collaborating agent';
+  document.getElementById('pickmodal').style.display='flex';
+  var q=document.getElementById('pickq'); q.value=''; q.focus();
+  runSearch('');
+}
+function closePick(){ document.getElementById('pickmodal').style.display='none'; CW.mode=null; }
+function pick(name){
+  if(CW.mode==='lead'){ CW.lead=name; CW.collabs=CW.collabs.filter(function(n){return n!==name;}); renderLead(); }
+  else { if(name!==CW.lead && CW.collabs.indexOf(name)<0) CW.collabs.push(name); renderCollabs(); }
+  closePick();
+}
+async function runSearch(q){
+  var box=document.getElementById('pickresults'); box.innerHTML='';
+  var rows; try{ rows=await getJSON('/api/agents?q='+encodeURIComponent(q)); }catch(e){ return; }
+  if(!rows || !rows.length){ box.appendChild(el('div','muted small','No agents match.')); return; }
+  rows.forEach(function(r){
+    var it=el('div','pickrow-item');
+    var head=el('div'); head.appendChild(el('span','an',r.agent));
+    if(r.n_tasks) head.appendChild(el('span','at','  ·  '+r.n_tasks+' task'+(r.n_tasks===1?'':'s')));
+    it.appendChild(head);
+    if(r.blurb) it.appendChild(el('div','at',r.blurb));
+    if(r.tasks && r.tasks.length){ var tk=el('div');
+      r.tasks.slice(0,6).forEach(function(t){ tk.appendChild(el('span','tk','#'+t.id)); });
+      it.appendChild(tk); }
+    it.onclick=(function(n){ return function(){ pick(n); }; })(r.agent);
+    box.appendChild(it);
+  });
+}
+async function submitCowork(){
+  var st=document.getElementById('cwstatus');
+  var desc=document.getElementById('desc').value.trim();
+  if(!CW.lead){ st.className='small flag'; st.textContent='Pick a lead agent.'; return; }
+  if(!CW.collabs.length){ st.className='small flag'; st.textContent='Add at least one collaborator.'; return; }
+  if(!desc){ st.className='small flag'; st.textContent='Add a task description.'; return; }
+  st.className='small muted'; st.textContent='Submitting…';
+  var payload={ lead:CW.lead, collaborators:CW.collabs,
+    critic:document.getElementById('critic').checked, description:desc };
+  try{
+    var r=await fetch('/api/cowork',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    if(r.status===401){ location='/login'; return; }
+    var d={}; try{ d=await r.json(); }catch(e){}
+    if(r.ok && d.ok){
+      st.className='small'; st.textContent='Cowork '+(d.cowork_id||'')+' created — '+
+        (d.note||'the inbox monitor will spawn the agents.');
+      CW.lead=null; CW.collabs=[]; document.getElementById('desc').value='';
+      document.getElementById('critic').checked=false; renderLead(); renderCollabs();
+    } else if(r.status===404){
+      st.className='small muted';
+      st.textContent='Form valid. Backend POST /api/cowork is not wired yet (pending sign-off).';
+    } else {
+      st.className='small flag'; st.textContent='Error: '+(d.error||('HTTP '+r.status));
+    }
+  }catch(e){ st.className='small flag'; st.textContent='Network error.'; }
+}
+document.getElementById('lead-search-btn').onclick=function(){ openPick('lead'); };
+document.getElementById('collab-add-btn').onclick=function(){ openPick('collab'); };
+document.getElementById('pickclose').onclick=closePick;
+document.getElementById('submitcw').onclick=submitCowork;
+document.getElementById('pickmodal').onclick=function(e){ if(e.target===this) closePick(); };
+document.getElementById('pickq').addEventListener('input', function(){
+  clearTimeout(CW.timer); var v=this.value; CW.timer=setTimeout(function(){ runSearch(v); }, 180); });
+document.addEventListener('keydown', function(e){ if(e.key==='Escape') closePick(); });
+renderLead(); renderCollabs();
 """
