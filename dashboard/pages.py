@@ -20,6 +20,7 @@ _CSS = """
   --tlink:#cdd7ea; --code-fg:#b9c7e0; --empty:#7c8698; --dot:#5a6b8c; --tree-line:#33415f;
   --accent-border:#2f5488; --btn-bg:#20406b; --btn-fg:#dbe7ff; --btn-hover:#295084;
   --amber:#e3b341; --onday:#f0d48a;
+  --heat1:#17283f; --heat2:#1e3a5c; --heat3:#28527e; --heat4:#3466a0;
 }
 .theme-day{
   --bg:#eef1f6; --fg:#1b2330; --link:#1560c4;
@@ -32,6 +33,7 @@ _CSS = """
   --tlink:#2b3648; --code-fg:#39465f; --empty:#66707f; --dot:#9aa7bd; --tree-line:#c2cbd9;
   --accent-border:#b7cbe9; --btn-bg:#e6eefb; --btn-fg:#1a4d8f; --btn-hover:#d6e3f8;
   --amber:#9a6f12; --onday:#8a6d0f;
+  --heat1:#e0ecfb; --heat2:#c3daf5; --heat3:#9dc2ec; --heat4:#6ea3df;
 }
 /* day-mode chips/badges (dark-fill status chips -> light tints, darker text) */
 .theme-day .b-running{background:#d8f1df;color:#1a7a33;} .theme-day .b-done{background:#e4e9f2;color:#3f5170;}
@@ -44,8 +46,9 @@ body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,san
 a { color:var(--link); text-decoration:none; } a:hover { text-decoration:underline; }
 header { display:flex; align-items:center; gap:16px; padding:10px 18px;
          background:var(--header-bg); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:5; }
-header .brand { font-weight:700; letter-spacing:.3px; }
+header .brand { font-weight:700; letter-spacing:.3px; display:inline-flex; align-items:center; gap:7px; }
 header nav a { margin-right:14px; font-weight:600; }
+header nav a.cur { color:var(--fg); border-bottom:2px solid var(--link); padding-bottom:2px; }
 header .spacer { flex:1; }
 .pill { display:inline-flex; align-items:center; gap:6px; padding:2px 9px; border-radius:20px;
         font-size:12px; font-weight:600; background:var(--chip-bg); }
@@ -58,6 +61,11 @@ table { width:100%; border-collapse:collapse; font-size:13px; }
 th,td { text-align:left; padding:6px 9px; border-bottom:1px solid var(--border-soft); vertical-align:top; }
 th { color:var(--th); font-weight:600; font-size:11px; text-transform:uppercase; }
 tr:hover td { background:var(--row-hover); }
+/* Task 346: wide tables (Status workers/jobmgr) scroll instead of crushing at narrow
+   width. The min-width floor is what forces the scroll — a bare width:100% table would
+   just re-wrap inside the wrapper. Desktop (container >= 760px) is byte-identical. */
+.tablewrap { overflow-x:auto; }
+.tablewrap > table { min-width:760px; }
 .badge { padding:1px 7px; border-radius:5px; font-size:11px; font-weight:700; }
 .b-running{background:#12351d;color:#5ce07e;} .b-done{background:#1b2740;color:#9db2d6;}
 .b-failed{background:#3a1518;color:#ff7b72;} .b-parked{background:#33280f;color:#e3b341;}
@@ -79,9 +87,18 @@ button:hover { background:var(--btn-hover); }
 .cal .day:hover { border-color:var(--hover-border); }
 .cal .day.empty { background:transparent; border:none; cursor:default; }
 .cal .day.has { background:var(--has-bg); }
+/* Task 346: count-graded heatmap (log-scaled, 4 buckets). Defined AFTER .day.has so
+   these win on equal specificity; the --heatN vars swap with the theme automatically. */
+.cal .day.h1 { background:var(--heat1); } .cal .day.h2 { background:var(--heat2); }
+.cal .day.h3 { background:var(--heat3); } .cal .day.h4 { background:var(--heat4); }
 .cal .day.sel { outline:2px solid var(--link); }
 .cal .day .n { font-size:11px; color:var(--h2); }
 .cal .day .c { position:absolute; right:4px; bottom:3px; font-size:11px; font-weight:700; color:var(--link); }
+/* heatmap legend under the calendar (shares the --heatN vars, so it themes too) */
+.calkey { display:flex; align-items:center; justify-content:center; gap:5px; margin:8px 0 2px; color:var(--muted); font-size:12px; }
+.calkey i { width:14px; height:14px; border-radius:3px; border:1px solid var(--cal-border); display:inline-block; }
+.calkey i.k1 { background:var(--heat1); } .calkey i.k2 { background:var(--heat2); }
+.calkey i.k3 { background:var(--heat3); } .calkey i.k4 { background:var(--heat4); }
 .two { display:grid; grid-template-columns:540px 1fr; gap:18px; align-items:start; }
 /* Task 336: the detail/conversation panel follows the scroll (History + Lineage
    reuse .two + #detail). Sticky is scoped to the two-column context, so Status's
@@ -104,7 +121,7 @@ button:hover { background:var(--btn-hover); }
 .two > #detail::-webkit-scrollbar-track { background:transparent; }
 .two > #detail::-webkit-scrollbar-thumb { background:var(--border); border-radius:5px; }
 .thread .msg { border-left:3px solid var(--accent-border); padding:5px 10px; margin:7px 0; background:var(--surface); border-radius:0 6px 6px 0; }
-.thread .msg.in { border-left-color:#3fb950; }
+.thread .msg.in { border-left-color:#3fb950; background:var(--has-bg); }  /* faint tint separates inbound from outbound (Task 346 P3) */
 .lin { list-style:none; padding-left:0; } .lin li { padding:3px 0; }
 .lin .arrow { color:var(--muted); } .lin .cur { font-weight:700; color:var(--amber); }
 .small { font-size:12px; } .nowrap{white-space:nowrap;}
@@ -124,8 +141,8 @@ ul.tree-ul { list-style:none; margin:0; padding-left:15px; border-left:1px solid
 ul.tree-ul.root { border-left:none; padding-left:0; }
 .tnode { display:flex; align-items:center; gap:8px; padding:2px 0; }
 a.tlink { color:var(--tlink); } a.tlink:hover { color:var(--link); }
-.bchip { font-size:10px; padding:1px 6px; border-radius:9px; background:var(--chip-bg); color:var(--th); white-space:nowrap; }
-.wchip { font-size:10px; color:var(--muted2); white-space:nowrap; font-family:ui-monospace,monospace; }
+.bchip { font-size:11px; padding:1px 6px; border-radius:9px; background:var(--chip-bg); color:var(--th); white-space:nowrap; }
+.wchip { font-size:11px; color:var(--muted2); white-space:nowrap; font-family:ui-monospace,monospace; }
 .singlewrap { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
 a.schip { font-size:12px; padding:1px 7px; border-radius:5px; background:var(--chip2-bg); color:var(--h2); font-family:ui-monospace,monospace; }
 a.schip:hover { background:var(--btn-bg); color:var(--btn-fg); text-decoration:none; }
@@ -147,19 +164,49 @@ a.attfile { display:inline-block; }
 .deliv { margin-top:12px; padding-top:8px; border-top:1px solid var(--border); }
 .deliv .job { margin:5px 0; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .deliv a { color:var(--link); }
+/* Task 346: login / register brand lockup (mark + wordmark, centered above the form) */
+.brandmark { display:flex; flex-direction:column; align-items:center; gap:6px; margin-bottom:14px; }
+.brandmark span { font-weight:700; letter-spacing:.3px; font-size:16px; color:var(--fg); }
 """
 
-_NAV = """
-<header>
-  <span class="brand">&#129302; Claude Infra</span>
-  <nav><a href="/">Status</a><a href="/history">History</a><a href="/lineage">Lineage</a></nav>
-  <span id="daemons" class="small muted"></span>
-  <span class="spacer"></span>
-  <button id="themebtn" class="small" title="Toggle day / night mode" onclick="toggleTheme()"
-          style="margin-right:12px;padding:2px 9px;line-height:1.3">&#9790;</button>
-  <a href="/logout" class="small">Logout</a>
-</header>
-"""
+def _mark(px):
+    """The Rookery mark (rook tower + beacon) as a self-contained, flat-fill inline SVG.
+    No <defs>/gradients/ids, so it never collides when it appears more than once on a
+    page, and it reads on any background (nav header + login card, both themes). CSP-safe
+    (inline SVG, not an <img src> — the server won't serve asset files)."""
+    return (
+        f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512' width='{px}' height='{px}' "
+        "role='img' aria-label='Rookery' style='vertical-align:middle;flex:none'>"
+        "<circle cx='256' cy='150' r='30' fill='#f0d48a'/>"
+        "<circle cx='256' cy='150' r='30' fill='none' stroke='#e3b341' stroke-width='8'/>"
+        "<circle cx='249' cy='142' r='9' fill='#fff8e6'/>"
+        "<path d='M150 372 h212 a12 12 0 0 1 12 12 v28 a12 12 0 0 1 -12 12 h-212 "
+        "a12 12 0 0 1 -12 -12 v-28 a12 12 0 0 1 12 -12 z' fill='#3d6ea5'/>"
+        "<rect x='186' y='238' width='140' height='146' fill='#5aa0e0'/>"
+        "<path d='M162 238 v-52 h32 v-28 h20 v28 h28 v-28 h20 v28 h28 v-28 h20 v28 h32 v52 z' fill='#5aa0e0'/>"
+        "<path d='M226 384 v-46 a30 30 0 0 1 60 0 v46 z' fill='#16243a'/>"
+        "</svg>"
+    )
+
+
+def _nav(active=""):
+    """Header nav. `active` in {status,history,lineage} marks the current link with .cur
+    so you can see which page you're on (Task 346)."""
+    def cur(name):
+        return " class='cur'" if name == active else ""
+    return (
+        "<header>"
+        f"<span class='brand'>{_mark(22)}Rookery</span>"
+        f"<nav><a href='/'{cur('status')}>Status</a>"
+        f"<a href='/history'{cur('history')}>History</a>"
+        f"<a href='/lineage'{cur('lineage')}>Lineage</a></nav>"
+        "<span id='daemons' class='small muted'></span>"
+        "<span class='spacer'></span>"
+        "<button id='themebtn' class='small' title='Toggle day / night mode' onclick='toggleTheme()' "
+        "style='margin-right:12px;padding:2px 9px;line-height:1.3'>&#9790;</button>"
+        "<a href='/logout' class='small'>Logout</a>"
+        "</header>"
+    )
 
 # Applied in <head> BEFORE the stylesheet so the saved theme is on <html> before
 # first paint (no flash-of-dark). Night is the default: with nothing stored, no
@@ -179,14 +226,14 @@ _THEME_JS = (
 )
 
 
-def _shell(title, body, script=""):
+def _shell(title, body, script="", active=""):
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{html.escape(title)}</title>"
         f"<script>{_THEME_PREPAINT}</script>"
         f"<style>{_CSS}</style></head>"
-        f"<body>{_NAV}<main>{body}</main>"
+        f"<body>{_nav(active)}<main>{body}</main>"
         f"<script>{_THEME_JS}</script>"
         f"<script>{script}</script></body></html>"
     )
@@ -196,19 +243,21 @@ def login_page(error=""):
     err = f"<div class='banner'>{html.escape(error)}</div>" if error else ""
     body = (
         "<div style='max-width:340px;margin:12vh auto;' class='card'>"
+        f"<div class='brandmark'>{_mark(48)}<span>Rookery</span></div>"
         "<h2 style='border:none;margin-top:0'>Sign in</h2>"
         f"{err}"
         "<form method='post' action='/login'>"
         "<input type='password' name='password' placeholder='Password' autofocus "
-        "style='width:100%;padding:9px;border-radius:6px;border:1px solid #2f5488;"
-        "background:#0d1320;color:#e6e9ef;margin-bottom:10px'>"
+        "style='width:100%;padding:9px;border-radius:6px;border:1px solid var(--accent-border);"
+        "background:var(--surface2);color:var(--fg);margin-bottom:10px'>"
         "<button type='submit' style='width:100%'>Enter</button>"
         "</form></div>"
     )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>Sign in</title><style>{_CSS}</style></head>"
+        f"<title>Sign in</title><script>{_THEME_PREPAINT}</script>"
+        f"<style>{_CSS}</style></head>"
         f"<body><main>{body}</main></body></html>"
     )
 
@@ -226,8 +275,8 @@ def register_page(token=None, error="", closed=False):
         )
     else:
         safe_tok = html.escape(token or "")
-        field = ("width:100%;padding:9px;border-radius:6px;border:1px solid #2f5488;"
-                 "background:#0d1320;color:#e6e9ef;margin-bottom:10px")
+        field = ("width:100%;padding:9px;border-radius:6px;border:1px solid var(--accent-border);"
+                 "background:var(--surface2);color:var(--fg);margin-bottom:10px")
         inner = (
             err +
             "<p class='muted small'>Choose a password for this dashboard. This is a "
@@ -243,13 +292,15 @@ def register_page(token=None, error="", closed=False):
         )
     body = (
         "<div style='max-width:360px;margin:11vh auto;' class='card'>"
+        f"<div class='brandmark'>{_mark(48)}<span>Rookery</span></div>"
         "<h2 style='border:none;margin-top:0'>Register dashboard</h2>"
         f"{inner}</div>"
     )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>Register</title><style>{_CSS}</style></head>"
+        f"<title>Register</title><script>{_THEME_PREPAINT}</script>"
+        f"<style>{_CSS}</style></head>"
         f"<body><main>{body}</main></body></html>"
     )
 
@@ -258,13 +309,13 @@ def status_page():
     body = (
         "<div id='limit'></div>"
         "<h2>Active Workers <span id='wc' class='muted small'></span></h2>"
-        "<div id='workers'>loading&hellip;</div>"
+        "<div id='workers' class='tablewrap'>loading&hellip;</div>"  # Task 346: 7-col table scrolls at narrow width
         "<div id='detail'></div>"  # Task 327: task detail when a worker's task# is clicked
         "<h2>GPU</h2><div id='gpu'>loading&hellip;</div>"
-        "<h2>Job Manager &mdash; Active Jobs</h2><div id='jobs'>loading&hellip;</div>"
+        "<h2>Job Manager &mdash; Active Jobs</h2><div id='jobs' class='tablewrap'>loading&hellip;</div>"
         "<p class='muted small' id='updated'></p>"
     )
-    return _shell("Infra Status", body, _STATUS_JS)
+    return _shell("Infra Status", body, _STATUS_JS, active="status")
 
 
 def history_page():
@@ -274,12 +325,14 @@ def history_page():
         "<div><div class='card'><div style='display:flex;align-items:center;gap:10px;margin-bottom:8px'>"
         "<button id='prev'>&#8592;</button><b id='mlabel'></b><button id='next'>&#8594;</button></div>"
         "<div id='cal' class='cal'></div>"
+        "<div class='calkey'>fewer<i class='k1'></i><i class='k2'></i>"
+        "<i class='k3'></i><i class='k4'></i>more</div>"
         "<p class='muted small'>Click a day to list what was launched.</p></div>"
         "<div id='dayview'></div></div>"
         "<div id='detail'><div class='card muted'>Select a job or task to see details.</div></div>"
         "</div>"
     )
-    return _shell("Job History", body, _HISTORY_JS)
+    return _shell("Job History", body, _HISTORY_JS, active="history")
 
 
 # --------------------------------------------------------------------------- #
@@ -464,10 +517,16 @@ function draw(){
   ['S','M','T','W','T','F','S'].forEach(function(h){cal.appendChild(el('div','h',h));});
   var first=new Date(cur.getFullYear(),cur.getMonth(),1);
   var start=first.getDay(), dim=new Date(cur.getFullYear(),cur.getMonth()+1,0).getDate();
+  // Task 346: max launch count over the visible month -> log-scaled heatmap buckets.
+  var maxCount=0;
+  for(var mc=1; mc<=dim; mc++){ var mk=cur.getFullYear()+'-'+String(cur.getMonth()+1).padStart(2,'0')+'-'+String(mc).padStart(2,'0');
+    if((counts[mk]||0)>maxCount) maxCount=counts[mk]||0; }
   for(var i=0;i<start;i++) cal.appendChild(el('div','day empty'));
   for(var d=1; d<=dim; d++){
     var key=cur.getFullYear()+'-'+String(cur.getMonth()+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
     var n=counts[key]||0; var cell=el('div','day'+(n?' has':'')+(key===selDay?' sel':''));
+    if(n){ var t=Math.log(n+1)/Math.log(maxCount+1);           // maxCount>=1 here, so log(maxCount+1)>0
+           cell.classList.add('h'+(t>=0.75?4:t>=0.5?3:t>=0.25?2:1)); }
     cell.appendChild(el('div','n',String(d)));
     if(n) cell.appendChild(el('div','c',String(n)));
     (function(k){cell.onclick=function(){selDay=k; draw(); loadDay(k);};})(key);
@@ -560,7 +619,7 @@ def lineage_page():
         "see its email thread and reconstructed lineage.</div></div></div>"
         "</div>"
     )
-    return _shell("Task Lineage", body, _LINEAGE_JS)
+    return _shell("Task Lineage", body, _LINEAGE_JS, active="lineage")
 
 
 _LINEAGE_JS = _COMMON_JS + r"""
