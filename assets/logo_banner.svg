@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-label="Rookery">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a2133"/>
+      <stop offset="1" stop-color="#0f1420"/>
+    </linearGradient>
+    <linearGradient id="tower" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8cc6ff"/>
+      <stop offset="1" stop-color="#4f93d6"/>
+    </linearGradient>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f93d6"/>
+      <stop offset="1" stop-color="#3d6ea5"/>
+    </linearGradient>
+    <radialGradient id="beaconGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f0d48a" stop-opacity="0.9"/>
+      <stop offset="0.45" stop-color="#e3b341" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#e3b341" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="4" y="4" width="1192" height="292" rx="30" fill="url(#bg)" stroke="#263049" stroke-width="2"/>
+
+  <!-- logomark (tower + beacon + orbiting flock), scaled -->
+  <g transform="translate(34,11) scale(0.64)">
+    <g fill="none" stroke="#2f5488" stroke-width="3" stroke-dasharray="2 12" stroke-linecap="round" opacity="0.9">
+      <ellipse cx="256" cy="300" rx="176" ry="96"/>
+    </g>
+    <circle cx="432" cy="300" r="9" fill="#6cb6ff"/>
+    <circle cx="80"  cy="300" r="9" fill="#e3b341"/>
+    <circle cx="150" cy="378" r="8" fill="#3fb950"/>
+    <circle cx="362" cy="378" r="8" fill="#c58bff"/>
+    <circle cx="256" cy="118" r="58" fill="url(#beaconGlow)"/>
+    <g fill="none" stroke="#e3b341" stroke-linecap="round">
+      <path d="M228 96 Q256 70 284 96" stroke-width="7"/>
+      <path d="M208 88 Q256 46 304 88" stroke-width="6" opacity="0.55"/>
+    </g>
+    <circle cx="256" cy="118" r="19" fill="#f0d48a"/>
+    <circle cx="256" cy="118" r="19" fill="none" stroke="#e3b341" stroke-width="4"/>
+    <circle cx="252" cy="112" r="6" fill="#fff8e6"/>
+    <path d="M168 360 h176 a10 10 0 0 1 10 10 v22 a10 10 0 0 1 -10 10 h-176 a10 10 0 0 1 -10 -10 v-22 a10 10 0 0 1 10 -10 z" fill="url(#base)"/>
+    <rect x="196" y="214" width="120" height="150" fill="url(#tower)"/>
+    <path d="M176 214 v-46 h28 v-24 h16 v24 h24 v-24 h16 v24 h24 v-24 h16 v24 h28 v46 z" fill="url(#tower)"/>
+    <path d="M236 364 v-40 a20 20 0 0 1 40 0 v40 z" fill="#16243a"/>
+    <rect x="248" y="250" width="16" height="34" rx="8" fill="#16243a"/>
+  </g>
+
+  <!-- wordmark + tagline -->
+  <text x="336" y="158" font-family="Helvetica,Arial,sans-serif" font-size="104" font-weight="700" fill="#e6e9ef" letter-spacing="1">Rookery</text>
+  <rect x="340" y="182" width="150" height="5" rx="2.5" fill="#e3b341"/>
+  <text x="340" y="223" font-family="Helvetica,Arial,sans-serif" font-size="27" font-weight="400" fill="#8fb3e0">Orchestration &amp; watchdog for a fleet of headless Claude workers</text>
+</svg>

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Rookery">
+  <defs>
+    <linearGradient id="bgL" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef1f6"/>
+    </linearGradient>
+    <linearGradient id="towerL" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a90d9"/>
+      <stop offset="1" stop-color="#1f6fc0"/>
+    </linearGradient>
+    <linearGradient id="baseL" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f6fc0"/>
+      <stop offset="1" stop-color="#175aa0"/>
+    </linearGradient>
+    <radialGradient id="beaconGlowL" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f3c766" stop-opacity="0.85"/>
+      <stop offset="0.45" stop-color="#e0a52e" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#e0a52e" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#bgL)" stroke="#d5dbe6" stroke-width="3"/>
+
+  <g fill="none" stroke="#b7cbe9" stroke-width="3" stroke-dasharray="2 12" stroke-linecap="round">
+    <ellipse cx="256" cy="300" rx="176" ry="96"/>
+  </g>
+  <circle cx="432" cy="300" r="9" fill="#1560c4"/>
+  <circle cx="80"  cy="300" r="9" fill="#c98a12"/>
+  <circle cx="150" cy="378" r="8" fill="#2e9c46"/>
+  <circle cx="362" cy="378" r="8" fill="#7b3fb8"/>
+
+  <circle cx="256" cy="118" r="58" fill="url(#beaconGlowL)"/>
+  <g fill="none" stroke="#d99a1e" stroke-linecap="round">
+    <path d="M228 96 Q256 70 284 96" stroke-width="7"/>
+    <path d="M208 88 Q256 46 304 88" stroke-width="6" opacity="0.5"/>
+  </g>
+  <circle cx="256" cy="118" r="19" fill="#eab637"/>
+  <circle cx="256" cy="118" r="19" fill="none" stroke="#c98a12" stroke-width="4"/>
+  <circle cx="252" cy="112" r="6" fill="#fff8e6"/>
+
+  <path d="M168 360 h176 a10 10 0 0 1 10 10 v22 a10 10 0 0 1 -10 10 h-176 a10 10 0 0 1 -10 -10 v-22 a10 10 0 0 1 10 -10 z" fill="url(#baseL)"/>
+  <rect x="196" y="214" width="120" height="150" fill="url(#towerL)"/>
+  <path d="M176 214 v-46 h28 v-24 h16 v24 h24 v-24 h16 v24 h24 v-24 h16 v24 h28 v46 z" fill="url(#towerL)"/>
+  <path d="M236 364 v-40 a20 20 0 0 1 40 0 v40 z" fill="#eaf1fb"/>
+  <rect x="248" y="250" width="16" height="34" rx="8" fill="#eaf1fb"/>
+</svg>

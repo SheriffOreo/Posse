@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Rookery">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a2133"/>
+      <stop offset="1" stop-color="#0f1420"/>
+    </linearGradient>
+    <linearGradient id="tower" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8cc6ff"/>
+      <stop offset="1" stop-color="#4f93d6"/>
+    </linearGradient>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4f93d6"/>
+      <stop offset="1" stop-color="#3d6ea5"/>
+    </linearGradient>
+    <radialGradient id="beaconGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#f0d48a" stop-opacity="0.95"/>
+      <stop offset="0.45" stop-color="#e3b341" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#e3b341" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- app-icon plate -->
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#bg)" stroke="#263049" stroke-width="3"/>
+
+  <!-- beacon (bigger + centered for small sizes) -->
+  <circle cx="256" cy="150" r="74" fill="url(#beaconGlow)"/>
+  <circle cx="256" cy="150" r="26" fill="#f0d48a"/>
+  <circle cx="256" cy="150" r="26" fill="none" stroke="#e3b341" stroke-width="6"/>
+  <circle cx="250" cy="142" r="8" fill="#fff8e6"/>
+
+  <!-- tower: crenellated cap + body + base (a rook), enlarged to fill the icon -->
+  <path d="M150 372 h212 a12 12 0 0 1 12 12 v28 a12 12 0 0 1 -12 12 h-212 a12 12 0 0 1 -12 -12 v-28 a12 12 0 0 1 12 -12 z" fill="url(#base)"/>
+  <rect x="186" y="238" width="140" height="146" fill="url(#tower)"/>
+  <path d="M162 238 v-52 h32 v-28 h20 v28 h28 v-28 h20 v28 h28 v-28 h20 v28 h32 v52 z" fill="url(#tower)"/>
+  <path d="M226 384 v-46 a30 30 0 0 1 60 0 v46 z" fill="#16243a"/>
+</svg>

@@ -17,7 +17,7 @@ _CSS = """
   --row-hover:#161d2c; --has-bg:#16243a; --hover-border:#3d68a8;
   --chip-bg:#20293d; --chip2-bg:#1b2740; --ctx-bg:#1b2233;
   --muted:#8093b0; --muted2:#7f8ba3; --th:#8fa3c7; --h2:#9db2d6;
-  --tlink:#cdd7ea; --code-fg:#b9c7e0; --empty:#6b7688; --dot:#5a6b8c;
+  --tlink:#cdd7ea; --code-fg:#b9c7e0; --empty:#7c8698; --dot:#5a6b8c; --tree-line:#33415f;
   --accent-border:#2f5488; --btn-bg:#20406b; --btn-fg:#dbe7ff; --btn-hover:#295084;
   --amber:#e3b341; --onday:#f0d48a;
 }
@@ -29,13 +29,13 @@ _CSS = """
   --row-hover:#eaf0f9; --has-bg:#dbe8f7; --hover-border:#7ba3d8;
   --chip-bg:#e7ecf4; --chip2-bg:#e2e8f2; --ctx-bg:#edeff5;
   --muted:#5f6b80; --muted2:#6b7789; --th:#57647f; --h2:#3a4d6e;
-  --tlink:#2b3648; --code-fg:#39465f; --empty:#8a94a6; --dot:#9aa7bd;
+  --tlink:#2b3648; --code-fg:#39465f; --empty:#66707f; --dot:#9aa7bd; --tree-line:#c2cbd9;
   --accent-border:#b7cbe9; --btn-bg:#e6eefb; --btn-fg:#1a4d8f; --btn-hover:#d6e3f8;
   --amber:#9a6f12; --onday:#8a6d0f;
 }
 /* day-mode chips/badges (dark-fill status chips -> light tints, darker text) */
 .theme-day .b-running{background:#d8f1df;color:#1a7a33;} .theme-day .b-done{background:#e4e9f2;color:#3f5170;}
-.theme-day .b-failed{background:#fbdedb;color:#b3261e;} .theme-day .b-parked{background:#f6ecd0;color:#8a6d0f;}
+.theme-day .b-failed{background:#fbdedb;color:#b3261e;} .theme-day .b-parked{background:#f6ecd0;color:#7d620d;}
 .theme-day .b-pending{background:#dde9fb;color:#1560c4;} .theme-day .b-gpu{background:#eaddfb;color:#7b3fb8;}
 .theme-day .banner{background:#fce8e6;border-color:#f0b8b3;color:#b3261e;}
 * { box-sizing: border-box; }
@@ -63,6 +63,7 @@ tr:hover td { background:var(--row-hover); }
 .b-failed{background:#3a1518;color:#ff7b72;} .b-parked{background:#33280f;color:#e3b341;}
 .b-pending{background:#1a2b3d;color:#6cb6ff;} .b-gpu{background:#2a1a3d;color:#c58bff;}
 .card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:10px; }
+.card .card{ background:var(--surface); }  /* nested cards get a distinct surface for depth (Task 344 critic P1.4) */
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
 .muted { color:var(--muted); } .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
 .banner { background:#3a1518; border:1px solid #7d2b30; color:#ffb4b0; padding:10px 14px;
@@ -71,7 +72,7 @@ tr:hover td { background:var(--row-hover); }
 button, .btn { background:var(--btn-bg); color:var(--btn-fg); border:1px solid var(--accent-border); padding:5px 11px;
         border-radius:6px; cursor:pointer; font-size:13px; }
 button:hover { background:var(--btn-hover); }
-.cal { display:grid; grid-template-columns:repeat(7,1fr); gap:5px; max-width:520px; }
+.cal { display:grid; grid-template-columns:repeat(7,1fr); gap:5px; max-width:520px; margin:0 auto; }
 .cal .h { text-align:center; color:var(--muted); font-size:11px; font-weight:700; }
 .cal .day { min-height:46px; border:1px solid var(--cal-border); border-radius:6px; padding:4px; cursor:pointer;
             background:var(--surface); position:relative; }
@@ -93,7 +94,8 @@ button:hover { background:var(--btn-hover); }
    overflow on the sticky element itself is safe — only overflow on an ANCESTOR
    would break position:sticky, and no ancestor of .two sets it. */
 .two > #detail { position:sticky; top:64px; align-self:start;
-                 max-height:calc(100vh - 80px); overflow-y:auto; }
+                 max-height:calc(100vh - 80px); overflow-y:auto;
+                 scrollbar-width:thin; scrollbar-color:var(--border) transparent; }
 @media(max-width:1000px){ .two{grid-template-columns:1fr;} .two > #detail{ position:static; max-height:none; overflow:visible; } }
 /* Task 338: thin themed scrollbar for the internally-scrolling detail panel. Only
    renders when a tall conversation overflows the cap; short panels show none, so
@@ -118,7 +120,7 @@ details.tree > summary, details.singles > summary { cursor:pointer; list-style:n
 details.tree > summary::-webkit-details-marker, details.singles > summary::-webkit-details-marker { display:none; }
 details.tree > summary::before, details.singles > summary::before { content:'▾'; color:var(--muted); margin-right:6px; }
 details.tree:not([open]) > summary::before, details.singles:not([open]) > summary::before { content:'▸'; }
-ul.tree-ul { list-style:none; margin:0; padding-left:15px; border-left:1px solid var(--cal-border); }
+ul.tree-ul { list-style:none; margin:0; padding-left:15px; border-left:1px solid var(--tree-line); }
 ul.tree-ul.root { border-left:none; padding-left:0; }
 .tnode { display:flex; align-items:center; gap:8px; padding:2px 0; }
 a.tlink { color:var(--tlink); } a.tlink:hover { color:var(--link); }

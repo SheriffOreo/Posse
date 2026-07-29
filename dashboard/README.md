@@ -1,5 +1,9 @@
 # Claude Infra Dashboard
 
+> The observability surface for **[Rookery](../README.md)** — the headless-worker
+> orchestration system. This page documents the dashboard itself; see the
+> [project README](../README.md) for the whole system and its architecture figure.
+
 A small, **login-protected, read-only** web dashboard over the live infra state
 (workers, GPU, job manager, usage limits, job history + task conversations &
 lineage). Pure Python **standard library** — no pip installs, no build step.
