@@ -85,9 +85,22 @@ button:hover { background:var(--btn-hover); }
 /* Task 336: the detail/conversation panel follows the scroll (History + Lineage
    reuse .two + #detail). Sticky is scoped to the two-column context, so Status's
    full-width #detail is unaffected; align-self:start keeps the grid child from
-   stretching (which would defeat sticky). */
-.two > #detail { position:sticky; top:64px; align-self:start; }
-@media(max-width:1000px){ .two{grid-template-columns:1fr;} .two > #detail{ position:static; } }
+   stretching (which would defeat sticky).
+   Task 338: bound the sticky panel to the viewport (max-height) and give it its
+   own overflow-y, so a conversation taller than the screen scrolls INSIDE the
+   pinned panel instead of running off-screen (page-scroll would otherwise only
+   move the left day-list, leaving the bottom of a long thread unreachable).
+   overflow on the sticky element itself is safe — only overflow on an ANCESTOR
+   would break position:sticky, and no ancestor of .two sets it. */
+.two > #detail { position:sticky; top:64px; align-self:start;
+                 max-height:calc(100vh - 80px); overflow-y:auto; }
+@media(max-width:1000px){ .two{grid-template-columns:1fr;} .two > #detail{ position:static; max-height:none; overflow:visible; } }
+/* Task 338: thin themed scrollbar for the internally-scrolling detail panel. Only
+   renders when a tall conversation overflows the cap; short panels show none, so
+   they stay byte-identical. Scoped to .two > #detail (Status's panel is unaffected). */
+.two > #detail::-webkit-scrollbar { width:10px; }
+.two > #detail::-webkit-scrollbar-track { background:transparent; }
+.two > #detail::-webkit-scrollbar-thumb { background:var(--border); border-radius:5px; }
 .thread .msg { border-left:3px solid var(--accent-border); padding:5px 10px; margin:7px 0; background:var(--surface); border-radius:0 6px 6px 0; }
 .thread .msg.in { border-left-color:#3fb950; }
 .lin { list-style:none; padding-left:0; } .lin li { padding:3px 0; }

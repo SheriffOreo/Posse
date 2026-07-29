@@ -28,7 +28,9 @@ lineage). Pure Python **standard library** — no pip installs, no build step.
   served through the guarded `/download` endpoint.
 - On History (and Lineage) the task **conversation/detail panel is sticky** — it
   follows the scroll and updates in place, so clicking a job at the bottom of a long
-  day-list shows the detail where you are rather than jumping to the top.
+  day-list shows the detail where you are rather than jumping to the top. A
+  conversation taller than the viewport **scrolls inside the panel** (the panel is
+  capped at `100vh − 80px`), so the last messages and deliverables stay reachable.
 
 **Appearance** — a **day/night toggle** (moon/sun button in the nav) switches between
 the default dark palette and a light theme; the choice is saved in `localStorage`
