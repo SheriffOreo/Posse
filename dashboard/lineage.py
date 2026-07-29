@@ -262,7 +262,15 @@ def build_forest():
 
 def _build_forest():
     lin = build_lineage()
-    by = {n["task_id"]: dict(n, children=[]) for n in lin["nodes"]}
+    # Task 353A: the flat lineage nodes carry only the spec-scraped --agent, which is
+    # usually None for a persistent worker. Resolve each node's OWNING worker via
+    # state.agent_for_task (prompt map -> "Task N" email map), mirroring
+    # history_day_lineage (Task 327), so the forest's treeNodeLi wchip shows "· <agent>".
+    by = {}
+    for n in lin["nodes"]:
+        node = dict(n, children=[])
+        node["agent"] = state.agent_for_task(n["task_id"], n.get("agent"))
+        by[n["task_id"]] = node
     for n in lin["nodes"]:
         p = n["parent"]
         if p is not None and p in by:
