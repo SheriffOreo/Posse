@@ -26,6 +26,14 @@ lineage). Pure Python **standard library** — no pip installs, no build step.
   this task → follow-up children), and a **DELIVERABLES** section linking that task's
   job artifacts (output / stdout / stderr) and matching `reports/` files — every link
   served through the guarded `/download` endpoint.
+- On History (and Lineage) the task **conversation/detail panel is sticky** — it
+  follows the scroll and updates in place, so clicking a job at the bottom of a long
+  day-list shows the detail where you are rather than jumping to the top.
+
+**Appearance** — a **day/night toggle** (moon/sun button in the nav) switches between
+the default dark palette and a light theme; the choice is saved in `localStorage`
+(`infra-theme`) and applied before first paint (no flash). The palette is a set of
+CSS custom properties, so night mode is unchanged from before.
 
 ## Run it
 

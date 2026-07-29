@@ -4,95 +4,134 @@ in via textContent on the client, so they are XSS-safe)."""
 import html
 
 _CSS = """
+/* ---- theme palette (CSS custom properties) ------------------------------- #
+   Night (default) lives in :root and holds the ORIGINAL hex values verbatim, so
+   the dark theme is byte-identical to before. Day is a .theme-day override on
+   <html> (toggled by the nav button, persisted in localStorage). Status/GPU/
+   badge accent hues (greens/reds/purples) stay literal — they read on both bgs. */
+:root{
+  --bg:#0f1420; --fg:#e6e9ef; --link:#6cb6ff;
+  --header-bg:#161c2b;
+  --border:#263049; --border-soft:#1e273b; --cal-border:#24304a; --code-border:#22304a;
+  --card:#141b29; --surface:#131a28; --surface2:#0d1320;
+  --row-hover:#161d2c; --has-bg:#16243a; --hover-border:#3d68a8;
+  --chip-bg:#20293d; --chip2-bg:#1b2740; --ctx-bg:#1b2233;
+  --muted:#8093b0; --muted2:#7f8ba3; --th:#8fa3c7; --h2:#9db2d6;
+  --tlink:#cdd7ea; --code-fg:#b9c7e0; --empty:#6b7688; --dot:#5a6b8c;
+  --accent-border:#2f5488; --btn-bg:#20406b; --btn-fg:#dbe7ff; --btn-hover:#295084;
+  --amber:#e3b341; --onday:#f0d48a;
+}
+.theme-day{
+  --bg:#eef1f6; --fg:#1b2330; --link:#1560c4;
+  --header-bg:#ffffff;
+  --border:#d5dbe6; --border-soft:#e3e8f0; --cal-border:#ccd4e1; --code-border:#d5dbe6;
+  --card:#ffffff; --surface:#f4f7fb; --surface2:#e9edf4;
+  --row-hover:#eaf0f9; --has-bg:#dbe8f7; --hover-border:#7ba3d8;
+  --chip-bg:#e7ecf4; --chip2-bg:#e2e8f2; --ctx-bg:#edeff5;
+  --muted:#5f6b80; --muted2:#6b7789; --th:#57647f; --h2:#3a4d6e;
+  --tlink:#2b3648; --code-fg:#39465f; --empty:#8a94a6; --dot:#9aa7bd;
+  --accent-border:#b7cbe9; --btn-bg:#e6eefb; --btn-fg:#1a4d8f; --btn-hover:#d6e3f8;
+  --amber:#9a6f12; --onday:#8a6d0f;
+}
+/* day-mode chips/badges (dark-fill status chips -> light tints, darker text) */
+.theme-day .b-running{background:#d8f1df;color:#1a7a33;} .theme-day .b-done{background:#e4e9f2;color:#3f5170;}
+.theme-day .b-failed{background:#fbdedb;color:#b3261e;} .theme-day .b-parked{background:#f6ecd0;color:#8a6d0f;}
+.theme-day .b-pending{background:#dde9fb;color:#1560c4;} .theme-day .b-gpu{background:#eaddfb;color:#7b3fb8;}
+.theme-day .banner{background:#fce8e6;border-color:#f0b8b3;color:#b3261e;}
 * { box-sizing: border-box; }
 body { margin:0; font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-       background:#0f1420; color:#e6e9ef; }
-a { color:#6cb6ff; text-decoration:none; } a:hover { text-decoration:underline; }
+       background:var(--bg); color:var(--fg); }
+a { color:var(--link); text-decoration:none; } a:hover { text-decoration:underline; }
 header { display:flex; align-items:center; gap:16px; padding:10px 18px;
-         background:#161c2b; border-bottom:1px solid #263049; position:sticky; top:0; z-index:5; }
+         background:var(--header-bg); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:5; }
 header .brand { font-weight:700; letter-spacing:.3px; }
 header nav a { margin-right:14px; font-weight:600; }
 header .spacer { flex:1; }
 .pill { display:inline-flex; align-items:center; gap:6px; padding:2px 9px; border-radius:20px;
-        font-size:12px; font-weight:600; background:#20293d; }
-.dot { width:8px; height:8px; border-radius:50%; background:#5a6b8c; display:inline-block; }
+        font-size:12px; font-weight:600; background:var(--chip-bg); }
+.dot { width:8px; height:8px; border-radius:50%; background:var(--dot); display:inline-block; }
 .dot.ok { background:#3fb950; } .dot.bad { background:#f85149; }
 main { padding:18px; max-width:1200px; margin:0 auto; }
-h2 { font-size:15px; text-transform:uppercase; letter-spacing:.5px; color:#9db2d6;
-     margin:22px 0 8px; border-bottom:1px solid #263049; padding-bottom:4px; }
+h2 { font-size:15px; text-transform:uppercase; letter-spacing:.5px; color:var(--h2);
+     margin:22px 0 8px; border-bottom:1px solid var(--border); padding-bottom:4px; }
 table { width:100%; border-collapse:collapse; font-size:13px; }
-th,td { text-align:left; padding:6px 9px; border-bottom:1px solid #1e273b; vertical-align:top; }
-th { color:#8fa3c7; font-weight:600; font-size:11px; text-transform:uppercase; }
-tr:hover td { background:#161d2c; }
+th,td { text-align:left; padding:6px 9px; border-bottom:1px solid var(--border-soft); vertical-align:top; }
+th { color:var(--th); font-weight:600; font-size:11px; text-transform:uppercase; }
+tr:hover td { background:var(--row-hover); }
 .badge { padding:1px 7px; border-radius:5px; font-size:11px; font-weight:700; }
 .b-running{background:#12351d;color:#5ce07e;} .b-done{background:#1b2740;color:#9db2d6;}
 .b-failed{background:#3a1518;color:#ff7b72;} .b-parked{background:#33280f;color:#e3b341;}
 .b-pending{background:#1a2b3d;color:#6cb6ff;} .b-gpu{background:#2a1a3d;color:#c58bff;}
-.card { background:#141b29; border:1px solid #263049; border-radius:8px; padding:12px 14px; margin-bottom:10px; }
+.card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:10px; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
-.muted { color:#8093b0; } .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+.muted { color:var(--muted); } .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
 .banner { background:#3a1518; border:1px solid #7d2b30; color:#ffb4b0; padding:10px 14px;
           border-radius:8px; margin-bottom:14px; font-weight:600; }
-.flag { color:#e3b341; font-weight:700; }
-button, .btn { background:#20406b; color:#dbe7ff; border:1px solid #2f5488; padding:5px 11px;
+.flag { color:var(--amber); font-weight:700; }
+button, .btn { background:var(--btn-bg); color:var(--btn-fg); border:1px solid var(--accent-border); padding:5px 11px;
         border-radius:6px; cursor:pointer; font-size:13px; }
-button:hover { background:#295084; }
+button:hover { background:var(--btn-hover); }
 .cal { display:grid; grid-template-columns:repeat(7,1fr); gap:5px; max-width:520px; }
-.cal .h { text-align:center; color:#8093b0; font-size:11px; font-weight:700; }
-.cal .day { min-height:46px; border:1px solid #24304a; border-radius:6px; padding:4px; cursor:pointer;
-            background:#131a28; position:relative; }
-.cal .day:hover { border-color:#3d68a8; }
+.cal .h { text-align:center; color:var(--muted); font-size:11px; font-weight:700; }
+.cal .day { min-height:46px; border:1px solid var(--cal-border); border-radius:6px; padding:4px; cursor:pointer;
+            background:var(--surface); position:relative; }
+.cal .day:hover { border-color:var(--hover-border); }
 .cal .day.empty { background:transparent; border:none; cursor:default; }
-.cal .day.has { background:#16243a; }
-.cal .day.sel { outline:2px solid #6cb6ff; }
-.cal .day .n { font-size:11px; color:#9db2d6; }
-.cal .day .c { position:absolute; right:4px; bottom:3px; font-size:11px; font-weight:700; color:#6cb6ff; }
+.cal .day.has { background:var(--has-bg); }
+.cal .day.sel { outline:2px solid var(--link); }
+.cal .day .n { font-size:11px; color:var(--h2); }
+.cal .day .c { position:absolute; right:4px; bottom:3px; font-size:11px; font-weight:700; color:var(--link); }
 .two { display:grid; grid-template-columns:540px 1fr; gap:18px; align-items:start; }
-@media(max-width:1000px){ .two{grid-template-columns:1fr;} }
-.thread .msg { border-left:3px solid #2f5488; padding:5px 10px; margin:7px 0; background:#131a28; border-radius:0 6px 6px 0; }
+/* Task 336: the detail/conversation panel follows the scroll (History + Lineage
+   reuse .two + #detail). Sticky is scoped to the two-column context, so Status's
+   full-width #detail is unaffected; align-self:start keeps the grid child from
+   stretching (which would defeat sticky). */
+.two > #detail { position:sticky; top:64px; align-self:start; }
+@media(max-width:1000px){ .two{grid-template-columns:1fr;} .two > #detail{ position:static; } }
+.thread .msg { border-left:3px solid var(--accent-border); padding:5px 10px; margin:7px 0; background:var(--surface); border-radius:0 6px 6px 0; }
 .thread .msg.in { border-left-color:#3fb950; }
 .lin { list-style:none; padding-left:0; } .lin li { padding:3px 0; }
-.lin .arrow { color:#8093b0; } .lin .cur { font-weight:700; color:#e3b341; }
+.lin .arrow { color:var(--muted); } .lin .cur { font-weight:700; color:var(--amber); }
 .small { font-size:12px; } .nowrap{white-space:nowrap;}
-code.cmd{ display:block; white-space:pre-wrap; word-break:break-all; background:#0d1320; padding:6px 8px;
-          border-radius:5px; border:1px solid #22304a; color:#b9c7e0; }
+code.cmd{ display:block; white-space:pre-wrap; word-break:break-all; background:var(--surface2); padding:6px 8px;
+          border-radius:5px; border:1px solid var(--code-border); color:var(--code-fg); }
 /* ---- lineage forest ---- */
-.legend { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin:4px 0 14px; font-size:12px; color:#9db2d6; }
+.legend { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin:4px 0 14px; font-size:12px; color:var(--h2); }
 .legend .k { display:inline-flex; align-items:center; gap:7px; }
 .cbar { width:4px; height:15px; border-radius:1px; flex:none; display:inline-block; }
-.cbar.bh{background:#3fb950;} .cbar.bm{background:#e3b341;} .cbar.bl{background:#8a94a6;} .cbar.broot{background:#6cb6ff;}
+.cbar.bh{background:#3fb950;} .cbar.bm{background:var(--amber);} .cbar.bl{background:#8a94a6;} .cbar.broot{background:var(--link);}
 details.tree, details.singles { margin-bottom:6px; }
 details.tree > summary, details.singles > summary { cursor:pointer; list-style:none; padding:5px 2px; outline:none; }
 details.tree > summary::-webkit-details-marker, details.singles > summary::-webkit-details-marker { display:none; }
-details.tree > summary::before, details.singles > summary::before { content:'▾'; color:#8093b0; margin-right:6px; }
+details.tree > summary::before, details.singles > summary::before { content:'▾'; color:var(--muted); margin-right:6px; }
 details.tree:not([open]) > summary::before, details.singles:not([open]) > summary::before { content:'▸'; }
-ul.tree-ul { list-style:none; margin:0; padding-left:15px; border-left:1px solid #24304a; }
+ul.tree-ul { list-style:none; margin:0; padding-left:15px; border-left:1px solid var(--cal-border); }
 ul.tree-ul.root { border-left:none; padding-left:0; }
 .tnode { display:flex; align-items:center; gap:8px; padding:2px 0; }
-a.tlink { color:#cdd7ea; } a.tlink:hover { color:#6cb6ff; }
-.bchip { font-size:10px; padding:1px 6px; border-radius:9px; background:#20293d; color:#8fa3c7; white-space:nowrap; }
-.wchip { font-size:10px; color:#7f8ba3; white-space:nowrap; font-family:ui-monospace,monospace; }
+a.tlink { color:var(--tlink); } a.tlink:hover { color:var(--link); }
+.bchip { font-size:10px; padding:1px 6px; border-radius:9px; background:var(--chip-bg); color:var(--th); white-space:nowrap; }
+.wchip { font-size:10px; color:var(--muted2); white-space:nowrap; font-family:ui-monospace,monospace; }
 .singlewrap { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
-a.schip { font-size:12px; padding:1px 7px; border-radius:5px; background:#1b2740; color:#9db2d6; font-family:ui-monospace,monospace; }
-a.schip:hover { background:#20406b; color:#dbe7ff; text-decoration:none; }
-.empty-state { text-align:center; color:#6b7688; padding:34px 16px; font-style:italic; }
+a.schip { font-size:12px; padding:1px 7px; border-radius:5px; background:var(--chip2-bg); color:var(--h2); font-family:ui-monospace,monospace; }
+a.schip:hover { background:var(--btn-bg); color:var(--btn-fg); text-decoration:none; }
+.empty-state { text-align:center; color:var(--empty); padding:34px 16px; font-style:italic; }
 /* ---- day-lineage mini-trees (History) ---- */
 .daytrees .mtree { padding:6px 0; }
-.daytrees .mtree + .mtree { border-top:1px solid #1e273b; }
-.tnode.onday > a.tlink { color:#f0d48a; font-weight:700; }
+.daytrees .mtree + .mtree { border-top:1px solid var(--border-soft); }
+.tnode.onday > a.tlink { color:var(--onday); font-weight:700; }
 .tnode.offday { opacity:.6; }
-.bchip.ctx { background:#1b2233; color:#7f8ba3; font-style:italic; }
+.bchip.ctx { background:var(--ctx-bg); color:var(--muted2); font-style:italic; }
 /* ---- full conversation body + inline attachments (Task detail) ---- */
 .msgbody { white-space:pre-wrap; word-break:break-word; max-height:360px; overflow:auto;
-           background:#0d1320; border:1px solid #22304a; border-radius:5px;
+           background:var(--surface2); border:1px solid var(--code-border); border-radius:5px;
            padding:7px 9px; margin-top:5px; font-size:13px; }
 .atts { margin-top:8px; display:flex; flex-direction:column; gap:7px; }
-img.attimg { max-width:100%; height:auto; border:1px solid #263049; border-radius:6px; background:#0d1320; }
+img.attimg { max-width:100%; height:auto; border:1px solid var(--border); border-radius:6px; background:var(--surface2); }
 a.attfile { display:inline-block; }
 /* ---- deliverables section (Task detail) ---- */
-.deliv { margin-top:12px; padding-top:8px; border-top:1px solid #263049; }
+.deliv { margin-top:12px; padding-top:8px; border-top:1px solid var(--border); }
 .deliv .job { margin:5px 0; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
-.deliv a { color:#6cb6ff; }
+.deliv a { color:var(--link); }
 """
 
 _NAV = """
@@ -101,17 +140,40 @@ _NAV = """
   <nav><a href="/">Status</a><a href="/history">History</a><a href="/lineage">Lineage</a></nav>
   <span id="daemons" class="small muted"></span>
   <span class="spacer"></span>
+  <button id="themebtn" class="small" title="Toggle day / night mode" onclick="toggleTheme()"
+          style="margin-right:12px;padding:2px 9px;line-height:1.3">&#9790;</button>
   <a href="/logout" class="small">Logout</a>
 </header>
 """
+
+# Applied in <head> BEFORE the stylesheet so the saved theme is on <html> before
+# first paint (no flash-of-dark). Night is the default: with nothing stored, no
+# class is added and :root (the original dark palette) applies unchanged.
+_THEME_PREPAINT = (
+    "try{if(localStorage.getItem('infra-theme')==='day')"
+    "document.documentElement.classList.add('theme-day');}catch(e){}"
+)
+# Defined once (end of <body>, present on every _shell page): flip the class,
+# persist it, and swap the nav glyph (moon = night active, sun = day active).
+_THEME_JS = (
+    "function _setThemeGlyph(){var b=document.getElementById('themebtn');"
+    "if(b)b.textContent=document.documentElement.classList.contains('theme-day')?'\\u2600':'\\u263e';}"
+    "function toggleTheme(){var d=document.documentElement.classList.toggle('theme-day');"
+    "try{localStorage.setItem('infra-theme',d?'day':'night');}catch(e){}_setThemeGlyph();}"
+    "_setThemeGlyph();"
+)
 
 
 def _shell(title, body, script=""):
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        f"<title>{html.escape(title)}</title><style>{_CSS}</style></head>"
-        f"<body>{_NAV}<main>{body}</main><script>{script}</script></body></html>"
+        f"<title>{html.escape(title)}</title>"
+        f"<script>{_THEME_PREPAINT}</script>"
+        f"<style>{_CSS}</style></head>"
+        f"<body>{_NAV}<main>{body}</main>"
+        f"<script>{_THEME_JS}</script>"
+        f"<script>{script}</script></body></html>"
     )
 
 
