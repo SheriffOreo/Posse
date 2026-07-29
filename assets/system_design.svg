@@ -1,181 +1,192 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1520 1044" width="1520" height="1044" font-family="Helvetica,Arial,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1660 1214" width="1660" height="1214" font-family="Helvetica,Arial,sans-serif">
 <defs>
-<marker id="ah_g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3fb950"/></marker>
-<marker id="ah_b" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#6cb6ff"/></marker>
-<marker id="ah_a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#e3b341"/></marker>
-<marker id="ah_r" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#f85149"/></marker>
-<marker id="ah_m" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8093b0"/></marker>
-<marker id="ah_p" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#c58bff"/></marker>
-<linearGradient id="tower" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8cc6ff"/><stop offset="1" stop-color="#4f93d6"/></linearGradient>
-<radialGradient id="bg" cx="0.5" cy="0.35" r="0.9"><stop offset="0" stop-color="#141d2e"/><stop offset="1" stop-color="#0f1420"/></radialGradient>
+<marker id="ah_s" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5f6b80"/></marker>
+<marker id="ah_b" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1560c4"/></marker>
+<marker id="ah_g" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#1a7a33"/></marker>
+<marker id="ah_a" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9a6f12"/></marker>
+<marker id="ah_r" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#c0392b"/></marker>
+<marker id="ah_p" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7b3fb8"/></marker>
+<marker id="ah_m" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7a8699"/></marker>
+<marker id="ah_st" viewBox="0 0 10 10" refX="8.4" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9aa6ba"/></marker>
+<filter id="sh" x="-8%" y="-8%" width="116%" height="132%"><feDropShadow dx="0" dy="2.2" stdDeviation="3.0" flood-color="#1b2740" flood-opacity="0.16"/></filter>
+<linearGradient id="towerL" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a90d9"/><stop offset="1" stop-color="#1f6fc0"/></linearGradient>
+<linearGradient id="baseL" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f6fc0"/><stop offset="1" stop-color="#175aa0"/></linearGradient>
+<radialGradient id="beaconL" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#f3c766" stop-opacity="0.85"/><stop offset="0.5" stop-color="#e0a52e" stop-opacity="0.35"/><stop offset="1" stop-color="#e0a52e" stop-opacity="0"/></radialGradient>
 </defs>
-<rect x="0" y="0" width="1520" height="1044" fill="url(#bg)"/>
-<g transform="translate(34,20) scale(0.108)"><circle cx="256" cy="118" r="19" fill="#f0d48a"/><circle cx="256" cy="118" r="19" fill="none" stroke="#e3b341" stroke-width="6"/><g fill="none" stroke="#e3b341" stroke-width="9" stroke-linecap="round"><path d="M228 96 Q256 70 284 96"/></g><path d="M168 360 h176 a10 10 0 0 1 10 10 v22 a10 10 0 0 1 -10 10 h-176 a10 10 0 0 1 -10 -10 v-22 a10 10 0 0 1 10 -10 z" fill="#3d6ea5"/><rect x="196" y="214" width="120" height="150" fill="url(#tower)"/><path d="M176 214 v-46 h28 v-24 h16 v24 h24 v-24 h16 v24 h24 v-24 h16 v24 h28 v46 z" fill="url(#tower)"/></g>
-<text x="92" y="42" font-size="30" font-weight="700" fill="#e6e9ef">Rookery</text>
-<text x="92" y="66" font-size="16" fill="#9db2d6">system architecture — email in → orchestrate → run → observe</text>
-<g font-size="13" fill="#8093b0">
-<line x1="783" y1="46" x2="805" y2="46" stroke="#3fb950" stroke-width="3" marker-end="url(#ah_g)"/>
-<text x="811" y="50">email in</text>
-<line x1="881" y1="46" x2="903" y2="46" stroke="#6cb6ff" stroke-width="3" marker-end="url(#ah_b)"/>
-<text x="909" y="50">email out · control</text>
-<line x1="1058" y1="46" x2="1080" y2="46" stroke="#e3b341" stroke-width="3" marker-end="url(#ah_a)"/>
-<text x="1086" y="50">interrupt · wake</text>
-<line x1="1213" y1="46" x2="1235" y2="46" stroke="#f85149" stroke-width="3" stroke-dasharray="5 4" marker-end="url(#ah_r)"/>
-<text x="1241" y="50">watchdog relaunch</text>
-<line x1="1375" y1="46" x2="1397" y2="46" stroke="#8093b0" stroke-width="3" stroke-dasharray="5 4" marker-end="url(#ah_m)"/>
-<text x="1403" y="50">state I∕O</text>
+<rect x="0" y="0" width="1660" height="1214" fill="#ffffff"/>
+<g transform="translate(30,20) scale(0.132)"><circle cx="256" cy="118" r="52" fill="url(#beaconL)"/><g fill="none" stroke="#d99a1e" stroke-linecap="round"><path d="M228 96 Q256 70 284 96" stroke-width="7"/></g><circle cx="256" cy="118" r="19" fill="#eab637"/><circle cx="256" cy="118" r="19" fill="none" stroke="#c98a12" stroke-width="4"/><path d="M168 360 h176 a10 10 0 0 1 10 10 v22 a10 10 0 0 1 -10 10 h-176 a10 10 0 0 1 -10 -10 v-22 a10 10 0 0 1 10 -10 z" fill="url(#baseL)"/><rect x="196" y="214" width="120" height="150" fill="url(#towerL)"/><path d="M176 214 v-46 h28 v-24 h16 v24 h24 v-24 h16 v24 h24 v-24 h16 v24 h28 v46 z" fill="url(#towerL)"/><path d="M236 364 v-40 a20 20 0 0 1 40 0 v40 z" fill="#eaf1fb"/></g>
+<text x="82" y="46" font-size="32" font-weight="700" fill="#1b2330">Rookery</text>
+<text x="83" y="73" font-size="15.5" fill="#33456a">Email-driven orchestration for a flock of headless Claude workers</text>
+<g font-size="13" fill="#46536b">
+<line x1="690" y1="52" x2="716" y2="52" stroke="#5f6b80" stroke-width="3" marker-end="url(#ah_s)"/>
+<text x="724" y="56.5">Main flow (1–7)</text>
+<line x1="875.0" y1="52" x2="901.0" y2="52" stroke="#9a6f12" stroke-width="3" marker-end="url(#ah_a)"/>
+<text x="909.0" y="56.5">Interrupt / wake</text>
+<line x1="1067.4" y1="52" x2="1093.4" y2="52" stroke="#c0392b" stroke-width="3" stroke-dasharray="6 4" marker-end="url(#ah_r)"/>
+<text x="1101.4" y="56.5">Watchdog relaunch</text>
+<line x1="1267.2" y1="52" x2="1293.2" y2="52" stroke="#9aa6ba" stroke-width="3" stroke-dasharray="2 5" marker-end="url(#ah_st)"/>
+<text x="1301.2" y="56.5">Reads / writes state</text>
 </g>
-<rect x="24" y="92" width="1472" height="166" rx="14" fill="#121a2b" stroke="#263049" stroke-width="1"/>
-<text x="42" y="116" font-size="13" font-weight="700" letter-spacing="1.5" fill="#9db2d6">USER · EMAIL</text>
-<rect x="24" y="276" width="1472" height="324" rx="14" fill="#111827" stroke="#263049" stroke-width="1"/>
-<text x="42" y="300" font-size="13" font-weight="700" letter-spacing="1.5" fill="#9db2d6">ORCHESTRATION ENGINE</text>
-<rect x="24" y="618" width="1472" height="158" rx="14" fill="#141322" stroke="#263049" stroke-width="1"/>
-<text x="42" y="642" font-size="13" font-weight="700" letter-spacing="1.5" fill="#9db2d6">JOBS · GPU</text>
-<rect x="24" y="794" width="1472" height="178" rx="14" fill="#101a24" stroke="#263049" stroke-width="1"/>
-<text x="42" y="818" font-size="13" font-weight="700" letter-spacing="1.5" fill="#9db2d6">OBSERVABILITY · DASHBOARD</text>
-<polyline points="208,182 242,182 242,178 256,178" fill="none" stroke="#3fb950" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_g)"/>
-<rect x="210" y="150" width="45" height="36" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="232" y="162" font-size="11.5" fill="#9db2d6" text-anchor="middle">reply</text>
-<text x="232" y="177" font-size="11.5" fill="#9db2d6" text-anchor="middle">email</text>
-<polyline points="484,178 520,178" fill="none" stroke="#8093b0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_m)"/>
-<polyline points="340,238 340,287 374,287 374,336" fill="none" stroke="#e3b341" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
-<rect x="350" y="261" width="52" height="36" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="376" y="273" font-size="11.5" fill="#9db2d6" text-anchor="middle">live</text>
-<text x="376" y="288" font-size="11.5" fill="#9db2d6" text-anchor="middle">worker</text>
-<polyline points="618,238 618,287 638,287 638,336" fill="none" stroke="#6cb6ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_b)"/>
-<rect x="612" y="261" width="52" height="36" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="638" y="273" font-size="11.5" fill="#9db2d6" text-anchor="middle">task →</text>
-<text x="638" y="288" font-size="11.5" fill="#9db2d6" text-anchor="middle">spawn</text>
-<polyline points="492,401 643,401 643,403 794,403" fill="none" stroke="#e3b341" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
-<rect x="607" y="369" width="71" height="36" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="643" y="381" font-size="11.5" fill="#9db2d6" text-anchor="middle">interrupt</text>
-<text x="643" y="396" font-size="11.5" fill="#9db2d6" text-anchor="middle">&amp; resume</text>
-<polyline points="756,401 775,401 775,473 794,473" fill="none" stroke="#6cb6ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_b)"/>
-<rect x="749" y="483" width="52" height="21" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="775" y="495" font-size="11.5" fill="#9db2d6" text-anchor="middle">launch</text>
-<polyline points="220,346 504,346 504,371 520,371" fill="none" stroke="#8093b0" stroke-width="2.5" stroke-dasharray="6 5" opacity="0.4" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_m)"/>
-<polyline points="220,482 504,482 504,431 520,431" fill="none" stroke="#8093b0" stroke-width="2.5" stroke-dasharray="6 5" opacity="0.4" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_m)"/>
-<polyline points="1012,300 1012,260 1094,260 1094,226" fill="none" stroke="#6cb6ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_b)"/>
-<rect x="968" y="238" width="170" height="21" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="1053" y="250" font-size="11.5" fill="#9db2d6" text-anchor="middle">plan · milestone · FINAL</text>
-<polyline points="1094,138 1094,104 124,104 124,138" fill="none" stroke="#6cb6ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_b)"/>
-<polyline points="1172,366 1150,403" fill="none" stroke="#f85149" stroke-width="2.5" stroke-dasharray="6 5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_r)"/>
-<polyline points="1150,493 1172,506" fill="none" stroke="#8093b0" stroke-width="2.5" stroke-dasharray="6 5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_m)"/>
-<polyline points="852,586 852,614 418,614 418,642" fill="none" stroke="#e3b341" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
-<rect x="366" y="588" width="104" height="36" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="418" y="600" font-size="11.5" fill="#9db2d6" text-anchor="middle">submit ≥50 min</text>
-<text x="418" y="615" font-size="11.5" fill="#9db2d6" text-anchor="middle">(park + sleep)</text>
-<polyline points="536,701 596,701" fill="none" stroke="#e3b341" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
-<polyline points="720,642 720,624 1012,624 1012,586" fill="none" stroke="#e3b341" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
-<rect x="897" y="600" width="78" height="21" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="936" y="612" font-size="11.5" fill="#9db2d6" text-anchor="middle">event-wake</text>
-<polyline points="1092,586 1092,614 1030,614 1030,642" fill="none" stroke="#6cb6ff" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_b)"/>
-<rect x="1001" y="588" width="58" height="21" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="1030" y="600" font-size="11.5" fill="#9db2d6" text-anchor="middle">GPU job</text>
-<polyline points="720,760 720,794 559,794 559,828" fill="none" stroke="#8093b0" stroke-width="2.5" stroke-dasharray="6 5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_m)"/>
-<polyline points="742,887 838,887" fill="none" stroke="#8093b0" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_m)"/>
-<rect x="754" y="863" width="71" height="21" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="790" y="875" font-size="11.5" fill="#9db2d6" text-anchor="middle">read-only</text>
-<polyline points="40,182 15,182 15,998 904,998 904,962" fill="none" stroke="#3fb950" stroke-width="2.5" stroke-dasharray="6 5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_g)"/>
-<rect x="424" y="1002" width="91" height="21" rx="5" fill="#0d1320" stroke="#263049" stroke-width="1" opacity="0.96"/>
-<text x="470" y="1014" font-size="11.5" fill="#9db2d6" text-anchor="middle">browse :8787</text>
-<rect x="794" y="300" width="356" height="286" rx="12" fill="#101a2e" stroke="#6cb6ff" stroke-width="1.6"/>
-<text x="972" y="326" font-size="15" font-weight="700" fill="#e6e9ef" text-anchor="middle">Headless workers — the flock</text>
-<text x="972" y="346" font-size="12.5" fill="#9db2d6" text-anchor="middle">claude -p · run synchronously · chunked polls</text>
-<rect x="812" y="364" width="320" height="54" rx="8" fill="#141b29" stroke="#263049" stroke-width="1"/>
-<rect x="812" y="364" width="5" height="54" rx="2.5" fill="#3fb950"/>
-<circle cx="834" cy="391" r="7" fill="#3fb950"/>
-<text x="852" y="388" font-size="13.5" font-weight="600" fill="#e6e9ef">worker</text>
-<text x="852" y="406" font-size="12" fill="#8fa3c7">running</text>
-<rect x="812" y="430" width="320" height="54" rx="8" fill="#141b29" stroke="#263049" stroke-width="1"/>
-<rect x="812" y="430" width="5" height="54" rx="2.5" fill="#e3b341"/>
-<circle cx="834" cy="457" r="7" fill="#e3b341"/>
-<text x="852" y="454" font-size="13.5" font-weight="600" fill="#e6e9ef">worker</text>
-<text x="852" y="472" font-size="12" fill="#8fa3c7">parked — awaiting job</text>
-<rect x="812" y="496" width="320" height="54" rx="8" fill="#141b29" stroke="#263049" stroke-width="1"/>
-<rect x="812" y="496" width="5" height="54" rx="2.5" fill="#6cb6ff"/>
-<circle cx="834" cy="523" r="7" fill="#6cb6ff"/>
-<text x="852" y="520" font-size="13.5" font-weight="600" fill="#e6e9ef">worker</text>
-<text x="852" y="538" font-size="12" fill="#8fa3c7">relaunched by watchdog</text>
-<rect x="40" y="138" width="168" height="88" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="40" y="138" width="5" height="88" rx="2.5" fill="#3fb950"/>
-<text x="58" y="166" font-size="16" font-weight="700" fill="#e6e9ef">Analyst</text>
-<text x="58" y="186" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">you ✉ + browser</text>
-<text x="58" y="210" font-size="11.5" fill="#8093b0">sends replies · reads the dashboard</text>
-<rect x="256" y="118" width="228" height="120" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="256" y="118" width="5" height="120" rx="2.5" fill="#3fb950"/>
-<text x="274" y="146" font-size="16" font-weight="700" fill="#e6e9ef">Inbox router</text>
-<text x="274" y="166" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">scratch_inbox.py · _loop.sh</text>
-<text x="274" y="190" font-size="11.5" fill="#8093b0">allow-list · route by In-Reply-To</text>
-<rect x="520" y="118" width="236" height="120" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="520" y="118" width="5" height="120" rx="2.5" fill="#3fb950"/>
-<text x="538" y="146" font-size="16" font-weight="700" fill="#e6e9ef">Reply handler</text>
-<text x="538" y="166" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">scratch_inbox_handle.sh</text>
-<text x="538" y="190" font-size="11.5" fill="#8093b0">question → answer</text>
-<text x="538" y="205" font-size="11.5" fill="#8093b0">task → spawn a worker</text>
-<rect x="980" y="138" width="228" height="88" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="980" y="138" width="5" height="88" rx="2.5" fill="#6cb6ff"/>
-<text x="998" y="166" font-size="16" font-weight="700" fill="#e6e9ef">Email notifier</text>
-<text x="998" y="186" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">scratch_notify_email.py</text>
-<text x="998" y="210" font-size="11.5" fill="#8093b0">auto greeting + signature</text>
-<rect x="40" y="300" width="180" height="92" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="40" y="300" width="5" height="92" rx="2.5" fill="#8093b0"/>
-<text x="58" y="328" font-size="16" font-weight="700" fill="#e6e9ef">Auth switch</text>
-<text x="58" y="348" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">scratch_claude_auth.sh</text>
-<text x="58" y="372" font-size="11.5" fill="#8093b0">Max OAuth ∕ api-key</text>
-<rect x="40" y="436" width="180" height="92" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="40" y="436" width="5" height="92" rx="2.5" fill="#8093b0"/>
-<text x="58" y="464" font-size="16" font-weight="700" fill="#e6e9ef">Relaunch template</text>
-<text x="58" y="484" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">scratch_gen_relaunch.sh</text>
-<text x="58" y="508" font-size="11.5" fill="#8093b0">--resume ack script</text>
-<rect x="256" y="336" width="236" height="130" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="256" y="336" width="5" height="130" rx="2.5" fill="#e3b341"/>
-<text x="274" y="364" font-size="16" font-weight="700" fill="#e6e9ef">Mailbox · Interrupt</text>
-<text x="274" y="384" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">mailbox_append/read</text>
-<text x="274" y="400" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">interrupt_worker.sh</text>
-<text x="274" y="424" font-size="11.5" fill="#8093b0">inject → guard → kill → relaunch</text>
-<rect x="520" y="336" width="236" height="130" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="520" y="336" width="5" height="130" rx="2.5" fill="#6cb6ff"/>
-<text x="538" y="364" font-size="16" font-weight="700" fill="#e6e9ef">Worker spawner</text>
-<text x="538" y="384" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">scratch_spawn_worker.sh</text>
-<text x="538" y="408" font-size="11.5" fill="#8093b0">+ watchdog reg · relaunch · sentinel</text>
-<rect x="1172" y="306" width="248" height="120" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="1172" y="306" width="5" height="120" rx="2.5" fill="#f85149"/>
-<text x="1190" y="334" font-size="16" font-weight="700" fill="#e6e9ef">Watchdog</text>
-<text x="1190" y="354" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">scratch_watchdog.py</text>
-<text x="1190" y="378" font-size="11.5" fill="#8093b0">monitor · auto-relaunch</text>
-<text x="1190" y="393" font-size="11.5" fill="#8093b0">(crash ∕ usage-limit)</text>
-<rect x="1172" y="456" width="248" height="100" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="1172" y="456" width="5" height="100" rx="2.5" fill="#8093b0"/>
-<text x="1190" y="484" font-size="16" font-weight="700" fill="#e6e9ef">Registry</text>
-<text x="1190" y="504" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">scratch_agents_registry.json</text>
-<text x="1190" y="528" font-size="11.5" fill="#8093b0">worker → session · keywords</text>
-<rect x="300" y="642" width="236" height="118" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="300" y="642" width="5" height="118" rx="2.5" fill="#e3b341"/>
-<text x="318" y="670" font-size="16" font-weight="700" fill="#e6e9ef">Submit + sleep</text>
-<text x="318" y="690" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">submit_job.sh · job_sleep.sh</text>
-<text x="318" y="714" font-size="11.5" fill="#8093b0">&gt;50 min → park for event-wake</text>
-<rect x="596" y="642" width="248" height="118" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="596" y="642" width="5" height="118" rx="2.5" fill="#e3b341"/>
-<text x="614" y="670" font-size="16" font-weight="700" fill="#e6e9ef">Job manager</text>
-<text x="614" y="690" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">scratch_jobmgr.py</text>
-<text x="614" y="714" font-size="11.5" fill="#8093b0">tracks CPU+GPU jobs</text>
-<text x="614" y="729" font-size="11.5" fill="#8093b0">wakes the owner on DONE</text>
-<rect x="904" y="642" width="252" height="118" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="904" y="642" width="5" height="118" rx="2.5" fill="#c58bff"/>
-<text x="922" y="670" font-size="16" font-weight="700" fill="#e6e9ef">GPU manager + queue</text>
-<text x="922" y="690" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">gpu_manager.py · submit_gpu.py</text>
-<text x="922" y="714" font-size="11.5" fill="#8093b0">one GPU job at a time · gpu_queue/</text>
-<rect x="256" y="828" width="486" height="118" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="256" y="828" width="5" height="118" rx="2.5" fill="#8093b0"/>
-<text x="274" y="856" font-size="16" font-weight="700" fill="#e6e9ef">Runtime state (shared)</text>
-<text x="274" y="876" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">jobs/ · watchdog_jobs.json · gpu_queue/</text>
-<text x="274" y="892" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">usage-limit · sent_emails.jsonl</text>
-<text x="274" y="916" font-size="11.5" fill="#8093b0">daemons write · dashboard reads</text>
-<rect x="838" y="812" width="372" height="150" rx="10" fill="#141b29" stroke="#263049" stroke-width="1.4"/>
-<rect x="838" y="812" width="5" height="150" rx="2.5" fill="#6cb6ff"/>
-<text x="856" y="840" font-size="16" font-weight="700" fill="#e6e9ef">Dashboard</text>
-<text x="856" y="860" font-size="12.5" font-family="ui-monospace,Menlo,monospace" fill="#8fa3c7">claude_infra · stdlib HTTPS · :8787</text>
-<text x="856" y="884" font-size="11.5" fill="#8093b0">Status · History · Lineage</text>
-<text x="856" y="899" font-size="11.5" fill="#8093b0">login-gated · read-only</text>
+<rect x="22" y="150" width="1616" height="218" rx="16" fill="#f1f6fc" stroke="#dde6f2" stroke-width="1.2"/>
+<text x="44" y="182" font-size="15" font-weight="700" letter-spacing="1.6" fill="#33456a">USER · EMAIL</text>
+<text x="44" y="204" font-size="13.5" fill="#46536b">You email a task or a reply — a worker emails you back its plan, milestones and result.</text>
+<rect x="22" y="388" width="1616" height="384" rx="16" fill="#f7f9fc" stroke="#e2e7f0" stroke-width="1.2"/>
+<text x="44" y="420" font-size="15" font-weight="700" letter-spacing="1.6" fill="#33456a">ORCHESTRATION ENGINE</text>
+<text x="44" y="442" font-size="13.5" fill="#46536b">Spawn a worker, keep it alive, and steer it mid-task by email.</text>
+<rect x="22" y="792" width="1616" height="188" rx="16" fill="#fbf7ef" stroke="#eee2cc" stroke-width="1.2"/>
+<text x="44" y="824" font-size="15" font-weight="700" letter-spacing="1.6" fill="#33456a">JOBS · GPU</text>
+<text x="44" y="846" font-size="13.5" fill="#46536b">A long job sleeps cheaply and is woken the instant it finishes.</text>
+<rect x="22" y="1000" width="1616" height="188" rx="16" fill="#f5f3fb" stroke="#e6dff2" stroke-width="1.2"/>
+<text x="44" y="1032" font-size="15" font-weight="700" letter-spacing="1.6" fill="#33456a">OBSERVABILITY · DASHBOARD</text>
+<text x="44" y="1054" font-size="13.5" fill="#46536b">Watch the whole colony in a read-only web dashboard.</text>
+<polyline points="214.0,278.0 262.0,278.0" fill="none" stroke="#1a7a33" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_g)"/>
+<polyline points="514.0,278.0 562.0,278.0" fill="none" stroke="#5f6b80" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_s)"/>
+<polyline points="388.0,338.0 388.0,673.0 562.0,673.0" fill="none" stroke="#9a6f12" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
+<polyline points="705.0,338.0 705.0,456.0" fill="none" stroke="#5f6b80" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_s)"/>
+<polyline points="848.0,521.0 902.0,535.0" fill="none" stroke="#5f6b80" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_s)"/>
+<polyline points="848.0,673.0 902.0,641.0" fill="none" stroke="#9a6f12" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
+<polyline points="1278.0,456.0 1278.0,378.0 1504.0,378.0 1504.0,338.0" fill="none" stroke="#1560c4" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_b)"/>
+<polyline points="1504.0,218.0 1504.0,118.0 129.0,118.0 129.0,218.0" fill="none" stroke="#1560c4" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_b)"/>
+<polyline points="1517.0,456.0 1517.0,430.0 1318.0,430.0 1318.0,456.0" fill="none" stroke="#c0392b" stroke-width="2.6" stroke-dasharray="7 5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_r)"/>
+<polyline points="978.0,706.0 978.0,782.0 693.0,782.0 693.0,858.0" fill="none" stroke="#9a6f12" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
+<polyline points="824.0,914.0 872.0,914.0" fill="none" stroke="#9a6f12" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
+<polyline points="1003.0,858.0 1003.0,742.0 1278.0,742.0 1278.0,706.0" fill="none" stroke="#9a6f12" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_a)"/>
+<polyline points="1278.0,706.0 1278.0,768.0 1484.0,768.0 1484.0,858.0" fill="none" stroke="#7b3fb8" stroke-width="2.6" stroke-dasharray="7 5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_p)"/>
+<polyline points="1003.0,970.0 1003.0,990.0 917.0,990.0 917.0,1066.0" fill="none" stroke="#9aa6ba" stroke-width="2.6" stroke-dasharray="2 6" opacity="0.95" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_st)"/>
+<polyline points="1032.0,1121.0 1120.0,1121.0" fill="none" stroke="#9aa6ba" stroke-width="2.6" stroke-dasharray="2 6" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_st)"/>
+<polyline points="44.0,278.0 14.0,278.0 14.0,1198.0 1175.0,1198.0 1175.0,1176.0" fill="none" stroke="#1a7a33" stroke-width="2.6" stroke-dasharray="7 5" opacity="0.5" stroke-linejoin="round" stroke-linecap="round" marker-end="url(#ah_g)"/>
+<g filter="url(#sh)"><rect x="44" y="456" width="252" height="250" rx="12" fill="#f4f7fb" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="44" y="456" width="6" height="250" rx="3" fill="#7a8699"/>
+<text x="64" y="486" font-size="16" font-weight="700" fill="#1b2330">Supporting services</text>
+<text x="64" y="506" font-size="12" fill="#46536b">Keep every worker running &amp; routable.</text>
+<rect x="58" y="522" width="224" height="52" rx="8" fill="#ffffff" stroke="#d5dbe6" stroke-width="1"/>
+<text x="70" y="543" font-size="13.5" font-weight="700" fill="#1b2330">Auth switch</text>
+<text x="70" y="561" font-size="11.5" fill="#46536b">Claude-Max OAuth or API-key billing</text>
+<rect x="58" y="582" width="224" height="52" rx="8" fill="#ffffff" stroke="#d5dbe6" stroke-width="1"/>
+<text x="70" y="603" font-size="13.5" font-weight="700" fill="#1b2330">Relaunch template</text>
+<text x="70" y="621" font-size="11.5" fill="#46536b">the worker&#x27;s --resume ack script</text>
+<rect x="58" y="642" width="224" height="52" rx="8" fill="#ffffff" stroke="#d5dbe6" stroke-width="1"/>
+<text x="70" y="663" font-size="13.5" font-weight="700" fill="#1b2330">Registry</text>
+<text x="70" y="681" font-size="11.5" fill="#46536b">worker → session + routing keywords</text>
+<g filter="url(#sh)"><rect x="902" y="456" width="452" height="250" rx="14" fill="#ffffff" stroke="#1560c4" stroke-width="1.8"/></g>
+<text x="966" y="489" font-size="18" font-weight="700" fill="#1b2330">Headless workers — the flock</text>
+<text x="966" y="510" font-size="12.5" fill="#46536b">Each worker runs in the foreground, start to finish.</text>
+<rect x="920" y="530" width="416" height="46" rx="9" fill="#fbfcfe" stroke="#d5dbe6" stroke-width="1"/>
+<rect x="920" y="530" width="6" height="46" rx="3" fill="#1a7a33"/>
+<circle cx="946" cy="553" r="8" fill="#e6f4ea" stroke="#1a7a33" stroke-width="2"/>
+<text x="966" y="558" font-size="13.5" fill="#1b2330">A worker that is running</text>
+<rect x="920" y="586" width="416" height="46" rx="9" fill="#fbfcfe" stroke="#d5dbe6" stroke-width="1"/>
+<rect x="920" y="586" width="6" height="46" rx="3" fill="#9a6f12"/>
+<circle cx="946" cy="609" r="8" fill="#f6ecd0" stroke="#9a6f12" stroke-width="2"/>
+<text x="966" y="614" font-size="13.5" fill="#1b2330">A worker parked, asleep on a long job</text>
+<rect x="920" y="642" width="416" height="46" rx="9" fill="#fbfcfe" stroke="#d5dbe6" stroke-width="1"/>
+<rect x="920" y="642" width="6" height="46" rx="3" fill="#1560c4"/>
+<circle cx="946" cy="665" r="8" fill="#dde9fb" stroke="#1560c4" stroke-width="2"/>
+<text x="966" y="670" font-size="13.5" fill="#1b2330">A worker just relaunched by the watchdog</text>
+<g filter="url(#sh)"><rect x="44" y="218" width="170" height="120" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="44" y="218" width="6" height="120" rx="3" fill="#1a7a33"/>
+<text x="64" y="249" font-size="18" font-weight="700" fill="#1b2330">You</text>
+<text x="64" y="273" font-size="13" fill="#46536b">Email a task or a reply.</text>
+<text x="64" y="291" font-size="13" fill="#46536b">Read the dashboard.</text>
+<g filter="url(#sh)"><rect x="262" y="218" width="252" height="120" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="262" y="218" width="6" height="120" rx="3" fill="#1a7a33"/>
+<text x="282" y="249" font-size="18" font-weight="700" fill="#1b2330">Inbox router</text>
+<text x="282" y="273" font-size="13" fill="#46536b">Reads new mail, gates senders,</text>
+<text x="282" y="291" font-size="13" fill="#46536b">routes each reply to its thread.</text>
+<text x="282" y="324" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">scratch_inbox_loop.sh</text>
+<g filter="url(#sh)"><rect x="562" y="218" width="286" height="120" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="562" y="218" width="6" height="120" rx="3" fill="#1a7a33"/>
+<text x="582" y="249" font-size="18" font-weight="700" fill="#1b2330">Reply handler</text>
+<text x="582" y="273" font-size="13" fill="#46536b">New task → spec + new worker.</text>
+<text x="582" y="291" font-size="13" fill="#46536b">Question → answer inline.</text>
+<text x="582" y="324" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">scratch_inbox_handle.sh</text>
+<g filter="url(#sh)"><rect x="1392" y="218" width="224" height="120" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="1392" y="218" width="6" height="120" rx="3" fill="#1560c4"/>
+<text x="1412" y="249" font-size="18" font-weight="700" fill="#1b2330">Email notifier</text>
+<text x="1412" y="273" font-size="13" fill="#46536b">Sends a worker&#x27;s email</text>
+<text x="1412" y="291" font-size="13" fill="#46536b">to you (greeting +</text>
+<text x="1412" y="309" font-size="13" fill="#46536b">signature added).</text>
+<text x="1412" y="324" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">scratch_notify_email.py</text>
+<g filter="url(#sh)"><rect x="562" y="456" width="286" height="130" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="562" y="456" width="6" height="130" rx="3" fill="#1560c4"/>
+<text x="582" y="487" font-size="18" font-weight="700" fill="#1b2330">Worker spawner</text>
+<text x="582" y="511" font-size="13" fill="#46536b">Launches a persistent worker</text>
+<text x="582" y="529" font-size="13" fill="#46536b">(+ registers it with the watchdog).</text>
+<text x="582" y="572" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">scratch_spawn_worker.sh</text>
+<g filter="url(#sh)"><rect x="562" y="608" width="286" height="130" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="562" y="608" width="6" height="130" rx="3" fill="#9a6f12"/>
+<text x="582" y="639" font-size="18" font-weight="700" fill="#1b2330">Mailbox · Interrupt</text>
+<text x="582" y="663" font-size="13" fill="#46536b">Drops a reply into a live worker</text>
+<text x="582" y="681" font-size="13" fill="#46536b">and relaunches it to read it now.</text>
+<text x="582" y="724" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">scratch_interrupt_worker.sh</text>
+<g filter="url(#sh)"><rect x="1418" y="456" width="198" height="130" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="1418" y="456" width="6" height="130" rx="3" fill="#c0392b"/>
+<text x="1438" y="487" font-size="18" font-weight="700" fill="#1b2330">Watchdog</text>
+<text x="1438" y="511" font-size="13" fill="#46536b">Relaunches any worker that</text>
+<text x="1438" y="529" font-size="13" fill="#46536b">crashes or hits a usage limit.</text>
+<text x="1438" y="572" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">scratch_watchdog.py</text>
+<g filter="url(#sh)"><rect x="562" y="858" width="262" height="112" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="562" y="858" width="6" height="112" rx="3" fill="#9a6f12"/>
+<text x="582" y="889" font-size="18" font-weight="700" fill="#1b2330">Submit + sleep</text>
+<text x="582" y="913" font-size="13" fill="#46536b">Parks a &gt;50-min job and sleeps —</text>
+<text x="582" y="931" font-size="13" fill="#46536b">no more token-burning polling.</text>
+<text x="582" y="956" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">scratch_submit_job.sh</text>
+<g filter="url(#sh)"><rect x="872" y="858" width="262" height="112" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="872" y="858" width="6" height="112" rx="3" fill="#9a6f12"/>
+<text x="892" y="889" font-size="18" font-weight="700" fill="#1b2330">Job manager</text>
+<text x="892" y="913" font-size="13" fill="#46536b">Tracks every job; wakes the</text>
+<text x="892" y="931" font-size="13" fill="#46536b">owner the moment it finishes.</text>
+<text x="892" y="956" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">scratch_jobmgr.py</text>
+<g filter="url(#sh)"><rect x="1352" y="858" width="264" height="112" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="1352" y="858" width="6" height="112" rx="3" fill="#7b3fb8"/>
+<text x="1372" y="889" font-size="18" font-weight="700" fill="#1b2330">GPU manager + queue</text>
+<text x="1372" y="913" font-size="13" fill="#46536b">Runs one GPU job at a time</text>
+<text x="1372" y="931" font-size="13" fill="#46536b">from a file-backed queue.</text>
+<text x="1372" y="956" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">gpu_manager.py</text>
+<g filter="url(#sh)"><rect x="562" y="1066" width="470" height="110" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="562" y="1066" width="6" height="110" rx="3" fill="#7a8699"/>
+<text x="582" y="1097" font-size="18" font-weight="700" fill="#1b2330">Runtime state (shared)</text>
+<text x="582" y="1121" font-size="13" fill="#46536b">jobs · logs · mailboxes · GPU queue · registries.</text>
+<text x="582" y="1162" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">daemons write  ·  dashboard reads</text>
+<g filter="url(#sh)"><rect x="1120" y="1066" width="350" height="110" rx="12" fill="#ffffff" stroke="#d5dbe6" stroke-width="1.3"/></g>
+<rect x="1120" y="1066" width="6" height="110" rx="3" fill="#1560c4"/>
+<text x="1140" y="1097" font-size="18" font-weight="700" fill="#1b2330">Dashboard</text>
+<text x="1140" y="1121" font-size="13" fill="#46536b">Live Status · History · Lineage.</text>
+<text x="1140" y="1139" font-size="13" fill="#46536b">Read-only · login-gated · :8787.</text>
+<text x="1140" y="1162" font-size="11.5" font-family="ui-monospace,Menlo,monospace" fill="#7a8699">dashboard/  (pure-stdlib HTTPS)</text>
+<circle cx="238.0" cy="278.0" r="16" fill="#1a7a33" stroke="#ffffff" stroke-width="3"/>
+<text x="238.0" y="283.5" font-size="16.5" font-weight="800" fill="#ffffff" text-anchor="middle">1</text>
+<circle cx="538.0" cy="278.0" r="16" fill="#5f6b80" stroke="#ffffff" stroke-width="3"/>
+<text x="538.0" y="283.5" font-size="16.5" font-weight="800" fill="#ffffff" text-anchor="middle">2</text>
+<circle cx="705.0" cy="397.0" r="16" fill="#5f6b80" stroke="#ffffff" stroke-width="3"/>
+<text x="705.0" y="402.5" font-size="16.5" font-weight="800" fill="#ffffff" text-anchor="middle">3</text>
+<rect x="783" y="386" width="104" height="22" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="783" y="397" font-size="11.5" fill="#46536b" text-anchor="start" font-weight="600">spawn a worker</text>
+<rect x="346" y="474" width="85" height="37" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="388" y="486" font-size="11.5" fill="#9a6f12" text-anchor="middle" font-weight="600">steer a</text>
+<text x="388" y="500" font-size="11.5" fill="#9a6f12" text-anchor="middle" font-weight="600">live worker</text>
+<circle cx="936" cy="489" r="16" fill="#1560c4" stroke="#ffffff" stroke-width="3"/>
+<text x="936" y="494.5" font-size="16.5" font-weight="800" fill="#ffffff" text-anchor="middle">4</text>
+<circle cx="1278.0" cy="417.0" r="16" fill="#1560c4" stroke="#ffffff" stroke-width="3"/>
+<text x="1278.0" y="422.5" font-size="16.5" font-weight="800" fill="#ffffff" text-anchor="middle">5</text>
+<rect x="1139" y="406" width="111" height="22" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="1250" y="417" font-size="11.5" fill="#1560c4" text-anchor="end" font-weight="600">emails you back</text>
+<rect x="732" y="100" width="169" height="22" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="816" y="112" font-size="11.5" fill="#1560c4" text-anchor="middle" font-weight="600">plan · milestone · FINAL</text>
+<rect x="1327" y="413" width="180" height="22" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="1418" y="424" font-size="11" fill="#c0392b" text-anchor="middle" font-weight="600">relaunches on crash / limit</text>
+<circle cx="978.0" cy="782" r="16" fill="#9a6f12" stroke="#ffffff" stroke-width="3"/>
+<text x="978.0" y="787.5" font-size="16.5" font-weight="800" fill="#ffffff" text-anchor="middle">6</text>
+<rect x="744" y="770" width="130" height="22" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="874" y="782" font-size="11.5" fill="#9a6f12" text-anchor="end" font-weight="600">long job (&gt;50 min)</text>
+<circle cx="1003.0" cy="742" r="16" fill="#9a6f12" stroke="#ffffff" stroke-width="3"/>
+<text x="1003.0" y="747.5" font-size="16.5" font-weight="800" fill="#ffffff" text-anchor="middle">7</text>
+<rect x="1097" y="730" width="104" height="22" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="1097" y="742" font-size="11.5" fill="#9a6f12" text-anchor="start" font-weight="600">wake on finish</text>
+<rect x="1249" y="757" width="57" height="22" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="1278" y="768" font-size="11.0" fill="#7b3fb8" text-anchor="middle" font-weight="600">GPU job</text>
+<rect x="1054" y="1100" width="45" height="22" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="1076" y="1111" font-size="11.0" fill="#7a8699" text-anchor="middle" font-weight="600">reads</text>
+<rect x="298" y="1190" width="123" height="22" rx="6" fill="#ffffff" stroke="#d5dbe6" stroke-width="1" opacity="0.95"/>
+<text x="360" y="1202" font-size="11.5" fill="#7a8699" text-anchor="middle" font-weight="600">you browse  :8787</text>
 </svg>
