@@ -109,7 +109,7 @@ def fig_architecture():
     # person glyph
     b.append(f"<circle cx='{Cx-210}' cy='{hb_y+21}' r='9' fill='{NAVY2}'/>")
     b.append(f"<path d='M {Cx-224},{hb_y+44} Q {Cx-210},{hb_y+28} {Cx-196},{hb_y+44} Z' fill='{NAVY2}'/>")
-    b.append(txt(Cx - 20, hb_y + 24, "Human director  (Steven / Feng)", 16, NAVY, "bold"))
+    b.append(txt(Cx - 20, hb_y + 24, "Human operator", 16, NAVY, "bold"))
     # envelope
     b.append(box(Cx + 158, hb_y + 11, 80, 32, GOLD, GOLD_D, 1.5, 5))
     b.append(f"<path d='M {Cx+158},{hb_y+11} L {Cx+198},{hb_y+31} L {Cx+238},{hb_y+11}' fill='none' stroke='{GOLD_D}' stroke-width='1.5'/>")
@@ -133,14 +133,15 @@ def fig_architecture():
 
     # ---- Precincts (3 x 2) ----
     pc_top = 314
-    b.append(txt(Cx, pc_top - 6, "PRECINCTS  —  durable, bounded, auditable memory per domain", 15, NAVY, "bold"))
-    precincts = [("eval", "opus"), ("omp", "opus"), ("query", "opus"),
-                 ("paper", "fable"), ("infra", "opus"), ("receptionist", "fixed")]
+    b.append(txt(Cx, pc_top - 6, "PRECINCTS  —  user-defined domains, each with durable bounded auditable memory", 14, NAVY, "bold"))
+    # illustrative, user-created precincts; the framework ships only Sheriff + Receptionist
+    precincts = [("evaluation", "user"), ("development", "user"), ("research", "user"),
+                 ("data-ops", "user"), ("support", "user"), ("receptionist", "core")]
     pw, ph, gx, gy = 150, 92, 14, 16
     grid_w = 3 * pw + 2 * gx
     x0 = Cx - grid_w / 2
     y0 = pc_top + 8
-    dep_on = {"infra": "#400", "omp": None}
+    dep_on = {}
     for i, (name, model) in enumerate(precincts):
         col, row = i % 3, i // 3
         x = x0 + col * (pw + gx)
@@ -155,7 +156,7 @@ def fig_architecture():
         b.append(txt(x + 10, y + 55, "case log  (append-only)", 10.5, INK, "normal", "start"))
         b.append(txt(x + 10, y + 70, "case files  (per thread)", 10.5, INK, "normal", "start"))
         b.append(f"<rect x='{x+8}' y='{y+30}' width='4' height='46' rx='2' fill='{GOLD}'/>")
-    # a deputy chip attached to the infra precinct
+    # a deputy chip attached to one precinct (illustrative)
     dx = x0 + 1 * (pw + gx) + pw / 2
     dy = y0 + 1 * (ph + gy) + ph
     b.append(box(dx - 74, dy + 12, 148, 30, "#fbeede", P2, 1.8, 8))
@@ -163,7 +164,7 @@ def fig_architecture():
     b.append(arrow(dx, dy + 12, dx, dy, P2, 1.8))
     # arrow router -> precincts
     b.append(arrow(Cx, rt_y + 78, Cx, pc_top + 2, NAVY))
-    b.append(txt(Cx + 150, rt_y + 96, "a case = one numbered thread", 11, SLATE, "normal", "middle", italic=True))
+    b.append(txt(Cx + 150, rt_y + 96, "a thread = a sequence of cases", 11, SLATE, "normal", "middle", italic=True))
 
     # ---- Sheriff (left overseer column) ----
     sh_x, sh_y, sh_w, sh_h = 30, 314, 176, 300
@@ -194,7 +195,7 @@ def fig_architecture():
     b.append(box(db_x, db_y, db_w, db_h, "#eef2f8", NAVY, 2.4, 12))
     b.append(txt(db_x + db_w / 2, db_y + 28, "DASHBOARD", 16, NAVY, "bold"))
     b.append(txt(db_x + db_w / 2, db_y + 46, "read-only observability", 10.5, SLATE, "italic", "middle", italic=True))
-    for j, lab in enumerate(["case lineage", "active deputies", "GPU / jobs", "sheriff health", "precinct records"]):
+    for j, lab in enumerate(["case lineage", "active deputies", "jobs / resources", "sheriff health", "precinct records"]):
         yy = db_y + 66 + j * 40
         b.append(box(db_x + 12, yy, db_w - 24, 30, CARD, SLATE, 1.4, 7))
         b.append(txt(db_x + db_w / 2, yy + 20, lab, 11.5, NAVY, "normal"))
@@ -206,32 +207,31 @@ def fig_architecture():
     b.append(f"<rect x='{Cx-250}' y='{ds_y}' width='500' height='24' rx='12' fill='{P3}'/>")
     b.append(f"<rect x='{Cx-250}' y='{ds_y+12}' width='500' height='12' fill='{P3}'/>")
     b.append(txt(Cx, ds_y + 17, "ALWAYS-ON DAEMON SUBSTRATE  ·  no LLM calls", 13.5, "#fff", "bold"))
-    daemons = ["inbox", "watchdog", "jobmgr", "gpu_manager", "sheriff"]
+    daemons = ["inbox", "watchdog", "jobmgr", "resource-mgr", "sheriff"]
     dw = 88
     dx0 = Cx - (5 * dw + 4 * 8) / 2
     for k, dn in enumerate(daemons):
         x = dx0 + k * (dw + 8)
         b.append(box(x, ds_y + 34, dw, 30, "#eef3fb", P3, 1.5, 7))
         b.append(txt(x + dw / 2, ds_y + 54, dn, 11.5, NAVY, "bold"))
-    b.append(txt(Cx, ds_y + 82, "tmux-persistent · survive disconnects · relaunch + event-wake + serialize the one GPU", 11, SLATE, "normal", "middle", italic=True))
+    b.append(txt(Cx, ds_y + 82, "session-persistent · survive disconnects · relaunch + event-wake + serialize contended resources", 11, SLATE, "normal", "middle", italic=True))
     b.append(arrow(Cx, y0 + 2 * ph + gy + 6, Cx, ds_y, NAVY, 1.8, "4,4"))
 
-    # ---- Bottom legend: the four problems ----
+    # ---- Bottom legend: the three design principles ----
     lg_y = 752
     b.append(box(30, lg_y, W - 60, 62, "#fbf6ea", GOLD_D, 1.6, 10))
-    b.append(txt(48, lg_y + 22, "The four problems, and where they are solved:", 13, NAVY, "bold", "start"))
+    b.append(txt(48, lg_y + 22, "Three design principles (I1-I3), and where they live:", 13, NAVY, "bold", "start"))
     items = [
-        (P1, "P1 continuity of a thread", "case file + resume/reinject + mailbox + board"),
-        (P2, "P2 many threads at once", "precincts + case numbers + deputies + JTF"),
-        (P3, "P3 continuous autonomy", "relaunch + event-wake + routing + GPU"),
-        (P4, "P4 token efficiency", "cost-aware waits + zero-API control + compaction"),
+        (P1, "I1  identity decoupled from liveness", "durable case file + lineage map -> resume or re-brief"),
+        (P4, "I2  token cost is scheduled", "cache-aware waits + model tiering + event-wake"),
+        (P3, "I3  zero-cost mechanical control", "route, relaunch, wake, compact -> no LLM calls"),
     ]
-    colw = (W - 60) / 4
+    colw = (W - 60) / 3
     for i, (c, a, d) in enumerate(items):
         x = 48 + i * colw
         b.append(f"<rect x='{x}' y='{lg_y+32}' width='12' height='12' rx='3' fill='{c}'/>")
         b.append(txt(x + 18, lg_y + 42, a, 11, INK, "bold", "start"))
-        b.append(txt(x + 18, lg_y + 56, d, 9.5, SLATE, "normal", "start"))
+        b.append(txt(x + 18, lg_y + 56, d, 9.3, SLATE, "normal", "start"))
 
     return svg_wrap(W, H, "".join(b))
 
@@ -249,7 +249,7 @@ def fig_lifecycle():
     lane_y = 214            # deputy lane centre
     lh = 66
     b.append(box(150, lane_y - lh / 2, W - 320, lh, "#eef3fb", NAVY2, 2, 12))
-    b.append(txt(160, lane_y - lh / 2 - 8, "one deputy — a single linear LLM context (the thread)", 12.5, NAVY, "bold", "start", italic=True))
+    b.append(txt(160, lane_y - lh / 2 - 8, "one deputy — a single linear LLM context (one case of a thread)", 12.5, NAVY, "bold", "start", italic=True))
 
     # inbound: email -> router -> spawn/resume
     b.append(box(30, lane_y - 26, 96, 52, GOLD, GOLD_D, 1.6, 8))
