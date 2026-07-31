@@ -243,35 +243,68 @@ system can manage many threads (R3) yet lose each one's continuity on restart (R
 The families above are strong in their own regime and largely silent on R1--R7,
 because they assume a human is \emph{present} for a \emph{single} episode.
 
-\begin{itemize}[leftmargin=1.1em,itemsep=1.5pt,topsep=2pt]
-  \item \textbf{Identity is tied to a live process.} In most systems a ``thread'' is
-  a running object (a process, a graph run, a chat); when it ends, its identity and
-  live context end with it (fails R2). Server-side threads~\cite{assistants} and
-  durable-execution engines~\cite{temporal} are the exceptions, but for conversations
-  and generic workflows, not agent fleets with cost and memory concerns.
-  \item \textbf{No asynchronous interruption.} Graph frameworks do persist an
-  \code{interrupt} and resume it later~\cite{langgraph}, and durable-execution engines
-  deliver asynchronous \emph{signals} into a suspended workflow~\cite{temporal} --- the
-  closest mechanisms to what we need. But neither models a human absent for hours who
-  injects feedback into an \emph{LLM-agent} thread that has meanwhile been killed and
-  replaced by a fresh process: Posse's interrupt kills and relaunches the agent process
-  with a reply-first drain, where a workflow engine replays deterministically and runs a
-  signal handler (fails R4 for the agent case).
-  \item \textbf{No self-recovery over long horizons.} Frameworks retry a tool call;
-  none, as a system, detect that an agent died overnight or hit a weekly rate limit
-  and relaunch it after the reset (fails R1, R5).
-  \item \textbf{Cost is unmanaged.} Observability prices runs \emph{after} the fact;
-  no framework we surveyed \emph{schedules} around the provider's caching economics,
-  where the gap between two touches of a context decides whether you pay
-  $1\times$ or $\sim$12.5$\times$ (fails R6).
-  \item \textbf{Memory is trapped in a session.} In the common pattern, a single
-  agent accrues knowledge over a long session, so a \emph{different} agent cannot reuse
-  it and sharing is ad hoc; keeping that one agent alive for the whole horizon is
-  exactly the unbounded-context cost of R6. Standing-agent designs grow one context past
-  the window; per-episode designs forget at the end. AIOS/MemGPT address the
-  \emph{mechanism} of bounded memory but not the \emph{operational} question of a
-  separate, zero-cost manager compacting durable per-domain records that \emph{any} agent
-  can read (partially meets R7).
+\begin{itemize}[leftmargin=1.1em,itemsep=3pt,topsep=2pt]
+  \item \textbf{Identity is tied to a live process.} In most systems a ``thread'' is a
+  running object (a process, a graph run, a chat); when it ends, its identity and live
+  context end with it (fails R2). \emph{Example:} an analyst has an agent draft a report on
+  Monday; on Thursday they reply ``now break it down by region.'' If Monday's process has
+  exited, a \emph{fresh} agent takes the follow-up with no memory of the data sources,
+  caveats, and choices the first agent made, and must be re-briefed by a hand-written
+  summary that is inevitably lossy. \emph{Why it matters:} most real work is a
+  \emph{sequence} of follow-ups, not one shot, so an assistant that forgets on every
+  restart is perpetually amnesiac and taxes the human with a re-brief on each reply.
+  \emph{How existing systems fail:} AutoGPT, CrewAI, and AutoGen tie the thread to a run
+  that ends with the task; LangGraph can \emph{persist} a run's state, but only if the app
+  you built holds the \code{thread\,id} and reloads it --- nothing routes a later,
+  unprompted reply back to that state on its own. (Server-side threads~\cite{assistants}
+  and durable-execution engines~\cite{temporal} are the exceptions, but for conversations
+  and generic workflows, not agent fleets with cost and memory concerns.)
+  \item \textbf{No asynchronous interruption.} \emph{Example:} an agent is 40\,minutes into
+  an expensive job when the human realizes the spec was wrong and wants to redirect it
+  \emph{now} --- from a phone, while the agent's process may have been killed and relaunched
+  twice since it started. \emph{Why it matters:} humans supervise asynchronously; feedback
+  arrives whenever, and it must reach the \emph{right} thread and be applied without
+  discarding in-flight work. \emph{How existing systems fail:} LangGraph's
+  \code{interrupt()} \emph{pauses the run and waits} at a predetermined point for the human
+  to supply input~\cite{langgraph} --- it does not model a human who is absent and then
+  interrupts unprompted; AutoGen solicits input inline through a human proxy; Temporal can
+  deliver a \emph{signal} into a \emph{live} workflow~\cite{temporal} but has no notion of
+  ``the worker process died --- relaunch it, deliver the message, and have it re-read its
+  inbox first'' (fails R4 for the agent case).
+  \item \textbf{No self-recovery over long horizons.} \emph{Example:} an agent hits the
+  provider's weekly rate limit at 2\,a.m., or the machine reboots, or the process is
+  OOM-killed; without recovery the work silently stalls until a human notices --- perhaps
+  not until the next morning. \emph{Why it matters:} long-horizon autonomy \emph{requires}
+  surviving the routine failures of a metered, shared, single-machine deployment; a fleet
+  that must be babysat is not autonomous, and an unmonitored one can sit dead for hours.
+  \emph{How existing systems fail:} frameworks retry a failed tool \emph{call} within a
+  run, but as \emph{systems} none detect that an agent's \emph{process} has died or been
+  rate-limit-blocked and relaunch it --- immediately on a crash, after the reset on a limit
+  (fails R1, R5).
+  \item \textbf{Cost is unmanaged.} \emph{Example:} a fleet of agents each waits on
+  hour-long jobs, polling their (large) context every few minutes to check progress;
+  because a poll that lands after the provider's short cache window rewrites the
+  \emph{entire} context at $\sim$12.5$\times$ the cost of a cached read, a slightly-too-slow
+  cadence quietly multiplies the monthly bill by an order of magnitude. \emph{Why it
+  matters:} at fleet scale over weeks the dominant cost is \emph{touching} large contexts,
+  and whether each touch costs $1\times$ or $\sim$12.5$\times$ is decided by
+  \emph{scheduling}, not model choice --- ignore it and spend grows far faster than the
+  work does. \emph{How existing systems fail:} observability tools~\cite{langfuse,agentops}
+  \emph{measure} the spend after the fact; no orchestration framework we surveyed
+  \emph{schedules} the wait/park decision against the provider's cache economics (fails R6;
+  the incident behind \S\ref{sec:cost}).
+  \item \textbf{Memory is trapped in a session.} \emph{Example:} agent A spends a long
+  session learning a domain's quirks --- which data source is authoritative, which caveats
+  matter, what was tried and rejected; the next task in that domain gets a \emph{fresh}
+  agent B that knows none of it. Sharing A's knowledge means either replaying A's entire
+  transcript (expensive, and A's process may be long gone) or keeping A alive for the whole
+  horizon (an ever-growing context --- exactly the unbounded-cost problem of R6). \emph{Why
+  it matters:} a domain's hard-won knowledge should be a shared, reusable \emph{asset} any
+  agent can pick up cheaply, not something locked in one agent's head that every newcomer
+  re-learns from scratch. \emph{How existing systems fail:} standing-agent designs grow one
+  context past the window; per-episode designs forget at the end; MemGPT and AIOS give
+  \emph{one} agent bounded memory but not a separate, zero-cost manager that compacts
+  durable per-domain records \emph{any} agent can read (partially meets R7).
 \end{itemize}
 
 \begin{table*}[t]
