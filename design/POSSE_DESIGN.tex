@@ -1,0 +1,904 @@
+\documentclass[10pt,twocolumn]{article}
+
+% ----------------------------------------------------------------------
+% Posse: design document (Case 400, infra precinct)
+% Build: ~/.TinyTeX/bin/x86_64-linux/pdflatex POSSE_DESIGN (x2 for refs)
+% ----------------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=0.72in,columnsep=0.28in]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amssymb}
+\usepackage{caption}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{posseNavy}{HTML}{20293B}
+\definecolor{posseGold}{HTML}{B3841F}
+\definecolor{posseSlate}{HTML}{5B6B86}
+\definecolor{boxbg}{HTML}{F7F4EC}
+
+\hypersetup{colorlinks=true, linkcolor=posseNavy, citecolor=posseNavy, urlcolor=posseGold}
+
+\captionsetup{font=small,labelfont={bf,color=posseNavy},labelsep=period}
+\setlength{\parindent}{1em}
+\setlength{\columnsep}{0.28in}
+
+% section styling
+\titleformat{\section}{\color{posseNavy}\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\color{posseNavy}\normalsize\bfseries}{\thesubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.4ex plus .3ex}{0.7ex}
+\titlespacing*{\subsection}{0pt}{1.0ex plus .2ex}{0.5ex}
+
+% table support macros: yes / partial / no
+\newcommand{\yes}{{\color{posseNavy}\checkmark}}
+\newcommand{\prt}{{\color{posseSlate}$\circ$}}
+\newcommand{\no}{{\color{gray}\footnotesize$\times$}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+% a light callout box
+\newcommand{\insight}[2]{%
+  \par\vspace{0.6ex}\noindent\fcolorbox{posseGold}{boxbg}{%
+  \parbox{0.955\columnwidth}{\small\textbf{\color{posseNavy}#1}\;#2}}\par\vspace{0.6ex}}
+
+\title{\vspace{-3.2em}%
+  \color{posseNavy}\bfseries\Large Posse: A Cost-Aware Operating System for\\[1pt]
+  Long-Horizon, Human-Directed Multi-Agent Work\vspace{-0.2em}}
+\author{\normalsize infra precinct \;\textbullet\; \texttt{design\_doc\_and\_repo\_400}\\[-2pt]
+  \small\textit{time-series-omp / OMPGen orchestration}}
+\date{\small 2026-07-30 \;\textbullet\; design \& experience report}
+
+\begin{document}
+\twocolumn[
+\begin{@twocolumnfalse}
+\maketitle
+\vspace{-1.2em}
+\begin{abstract}
+\noindent
+Most LLM-agent frameworks are built for a \emph{single, supervised task}: a human
+starts a session, watches it run, and reads the result. The regime we actually
+operate in is different. Over weeks, one human asynchronously directs \emph{dozens}
+of independent work threads by email; each thread must run unattended, survive
+process death and provider rate limits, remember what it has done, and --- above all
+--- not waste money. Naively porting a session-based framework to this regime is how
+a single project ran up a monthly bill that reached $\sim$\$10k, much of it cold
+prompt-cache rewrites. This paper presents \textbf{Posse}, the ``Sheriff \& Deputies''
+system that runs our research group's autonomous work. Posse targets four problems
+session-based frameworks do not address: (i) \emph{continuity} of a single thread's
+logic across interruptions and process restarts; (ii) \emph{management} of many
+concurrent threads; (iii) \emph{continuous, autonomous} operation with self-recovery;
+and (iv) \emph{token efficiency} in long-lived threads. Its three design decisions
+are to \emph{decouple a thread's identity from process liveness}, \emph{treat token
+cost as a first-class scheduling resource}, and \emph{separate zero-cost mechanical
+control from paid cognition}. We describe each core module with the alternatives we
+considered and our rationale, marking honestly what is deployed versus
+designed-and-partly-realized, and report operational experience from a live deployment
+(six precincts, 400+ cases) --- including the naming pathology that motivated the
+identity work (259 accumulated single-use worker identities) and the incident behind
+the cost model. Posse is not a new reasoning method but a systems answer to a question
+the field has largely left open: how do you keep a crowd of agents working, cheaply,
+for a long time, with a human in the loop but not on the clock?
+\end{abstract}
+\vspace{0.6em}
+\end{@twocolumnfalse}
+]
+
+% ======================================================================
+\section{Introduction}
+% ======================================================================
+The last two years produced a rich toolkit for making a language model
+\emph{act}: reasoning-and-acting loops~\cite{react,reflexion}, autonomous
+task-list agents~\cite{autogpt,babyagi}, and multi-agent
+frameworks in which several role-specialized agents collaborate on one
+job~\cite{autogen,metagpt,crewai,langgraph}. Almost all of this work optimizes
+the \emph{inside} of a single task episode: how one agent, or one team of agents,
+reasons, uses tools, and coordinates from the moment a human presses ``go'' to the
+moment the task returns.
+
+We found that running agents \emph{in production for real research} stresses a
+different, mostly unaddressed layer --- the \emph{outside} of the task. In our
+group, a single human directs the work of many agents the way a professor directs
+students: by email, asynchronously, over weeks. A message arrives (``run the NOAA
+sweep,'' ``fix the dashboard bug,'' ``write this design doc''); an agent should pick
+it up, work it to completion (possibly over hours of GPU time), and email back a plan,
+milestones, and a result --- all while the human is asleep, in a meeting, or directing
+ten other threads. When the human replies mid-task, the agent
+must incorporate the feedback without losing its place. When the machine reboots or
+the provider imposes a rate limit, the work must resume, not vanish. And none of it
+may quietly cost a fortune.
+
+Concretely, four problems dominate this ``outside'' layer. They are the problems this
+document is organized around.
+
+\begin{description}[leftmargin=1.1em,itemsep=1pt,topsep=2pt]
+  \item[\color{posseNavy}P1. Continuity of a thread.] A single logical thread of
+  work --- one question and its follow-ups --- must retain its context and its logic
+  across interruptions, human feedback, crashes, and restarts, even when the
+  underlying process has died and been replaced.
+  \item[\color{posseNavy}P2. Managing many threads.] Dozens of threads run
+  concurrently. Each needs a stable identity, an owner, isolation from the others,
+  and a place in a structure a human can navigate.
+  \item[\color{posseNavy}P3. Continuous, autonomous operation.] The system must run
+  itself: route incoming work, keep workers alive, recover from crashes and rate
+  limits, serialize contended resources (one GPU), and wake a worker when a
+  long-running job finishes --- without a human babysitting a terminal.
+  \item[\color{posseNavy}P4. Token efficiency in long threads.] A thread that lives
+  for days accumulates a large context. Re-reading or rewriting that context is the
+  dominant cost, and the provider's caching economics make the difference between
+  cheap and ruinous a factor of $\sim$12.5$\times$. Long-horizon operation is only
+  viable if cost is engineered, not incurred.
+\end{description}
+
+\noindent\textbf{This work.} We present \textbf{Posse}\footnote{The system was
+previously branded ``Rookery''; ``Posse'' is the current name.}, a deployed
+orchestration system that treats these four problems as its primary design targets.
+Its organizing metaphor is a \emph{Sheriff} (a single autonomous system manager)
+supervising \emph{Deputies} (ephemeral worker agents), grouped into \emph{Precincts}
+(domains). Posse is deliberately \emph{not} a new agent reasoning method; the deputies
+inside it are ordinary tool-using LLM agents. It is the layer around them --- identity,
+memory, routing, recovery, and cost control --- that is the contribution.
+
+\noindent\textbf{Contributions.}
+\begin{enumerate}[leftmargin=1.3em,itemsep=1pt,topsep=2pt]
+  \item A \emph{requirements analysis} for long-horizon, human-directed,
+  multi-agent operation, and a comparison showing that popular frameworks --- built
+  for supervised single episodes --- systematically miss it (\S\ref{sec:bg}).
+  \item Three design principles that resolve the tensions among P1--P4:
+  \emph{identity decoupled from liveness}, \emph{cost as a scheduling resource}, and
+  \emph{zero-cost mechanical control separated from paid cognition}
+  (\S\ref{sec:overview}).
+  \item A modular design realizing these principles --- precinct memory
+  (\S\ref{sec:precincts}), deputy continuity (\S\ref{sec:deputies}), the email
+  control plane (\S\ref{sec:email}), the Sheriff (\S\ref{sec:sheriff}), cost-aware
+  scheduling (\S\ref{sec:cost}), multi-agent coordination (\S\ref{sec:jtf}), and
+  observability (\S\ref{sec:dash}) --- the core modules presented with the
+  alternatives we considered and why we chose as we did.
+  \item An \emph{experience report} from a live deployment, including a cost incident
+  (a monthly bill reaching $\sim$\$10k), its root cause in prompt-cache economics, and
+  the scheduling policy that fixed it (\S\ref{sec:cost}).
+\end{enumerate}
+
+This is a design-and-experience report, in the tradition of operational-systems
+papers: we argue that the design meets the requirements and back it with deployment
+evidence, rather than with a head-to-head benchmark against frameworks that target a
+different regime.
+
+% ======================================================================
+\section{Background and Limitations}
+\label{sec:bg}
+% ======================================================================
+
+\subsection{The landscape of agent frameworks}
+Existing systems cluster into four families.
+
+\noindent\textbf{(a) Autonomous single-agent loops.} AutoGPT and
+BabyAGI~\cite{autogpt,babyagi} wrap one LLM in a plan--act--observe loop with tool
+use and a scratch/vector memory, aiming to pursue a goal unsupervised. Reasoning
+scaffolds --- ReAct~\cite{react}, Reflexion~\cite{reflexion}, Tree of
+Thoughts~\cite{tot} --- improve the loop's decisions. Voyager~\cite{voyager} pushes
+toward \emph{lifelong} operation with a growing skill library, but in a single
+embodied environment. These target the quality of one agent's autonomous
+trajectory.
+
+\noindent\textbf{(b) Multi-agent collaboration.} AutoGen~\cite{autogen},
+CAMEL~\cite{camel}, MetaGPT and ChatDev~\cite{metagpt,chatdev}, and
+CrewAI~\cite{crewai} run several role-specialized agents (planner, coder, reviewer;
+or a simulated ``software company'') that converse or follow a standard operating
+procedure to complete one project. The contribution is division of labor within an
+episode.
+
+\noindent\textbf{(c) Graph / workflow orchestration.} LangGraph~\cite{langgraph}
+and similar libraries let a developer wire agents and tools into a stateful graph
+with checkpointing and human-in-the-loop interrupts. OpenAI's Swarm~\cite{swarm}
+offers minimal stateless routines with explicit hand-offs. These are
+\emph{construction kits}: they execute a graph when invoked.
+
+\noindent\textbf{(d) Agent operating systems and memory managers.} A recent line
+argues the LLM should be treated like a process under an OS. AIOS~\cite{aios}
+proposes a kernel that schedules agent ``processes'' and manages context, memory,
+and tools. MemGPT~\cite{memgpt} treats context like virtual memory, paging
+information between the prompt and external stores. Generative
+Agents~\cite{genagents} contribute a memory stream with reflection and retrieval.
+These are the closest in spirit to Posse and we return to them in
+\S\ref{sec:related}.
+
+\subsection{Requirements}
+\label{sec:reqs}
+From operating agents for real research we distilled seven requirements. They follow
+directly from P1--P4 plus the operational reality of one human, one machine, a
+metered API, and a work stream that never quite ends.
+
+\begin{description}[leftmargin=1.15em,itemsep=1pt,topsep=2pt,font=\normalfont\bfseries\color{posseNavy}]
+  \item[R1 Long-horizon continuous operation.] Run unattended for days to weeks, not
+  for one session.
+  \item[R2 Durable thread identity \& continuity.] A thread keeps one identity and
+  its context \emph{across process death} (P1).
+  \item[R3 Concurrent thread management.] Many independent threads, each isolated,
+  owned, and navigable (P2).
+  \item[R4 Asynchronous human-in-the-loop.] A human directs and \emph{interrupts}
+  threads asynchronously, without holding a session open (P1, P3).
+  \item[R5 Autonomous fault recovery.] Self-heal from crashes and provider rate
+  limits (P3).
+  \item[R6 Cost-aware scheduling.] Treat token/\$ cost as a scheduled resource, not
+  an afterthought (P4).
+  \item[R7 Bounded, auditable memory.] Long-term memory that stays within the model
+  window and is trustworthy enough to act on (P2, P4).
+\end{description}
+These are not fully orthogonal: R2, R3, and R7 are three facets of one
+\emph{durable-record substrate} (identity, ownership, and per-thread memory), and R1
+is unreachable without R5. We list them separately because prior systems fail them
+\emph{independently} --- a system can manage many threads (R3) yet lose each one's
+continuity on restart (R2). That Posse answers R2/R3/R7 with a \emph{single}
+durable-record mechanism is a feature of its design, not an artifact of the taxonomy.
+
+\subsection{Why existing approaches fall short}
+\label{sec:gap}
+The families above are excellent at what they target and largely silent on
+R1--R7. The mismatch is structural, not incidental: they assume a human is
+\emph{present} for the duration of a \emph{single} episode.
+
+\begin{itemize}[leftmargin=1.1em,itemsep=1.5pt,topsep=2pt]
+  \item \textbf{Identity is tied to a live process.} In every framework we know, a
+  ``thread'' is a running object (a Python process, a graph run, a chat). When it
+  ends --- normally or by crash --- its identity and live context end with it (fails
+  R2). Continuity across restarts is left to the application.
+  \item \textbf{No notion of asynchronous interruption.} Human-in-the-loop in
+  LangGraph or AutoGen means \emph{the run pauses and waits} for input. None models a
+  human who is absent for hours and then injects feedback into a thread that has
+  meanwhile been killed and restarted (fails R4).
+  \item \textbf{No self-recovery over long horizons.} Frameworks retry a tool call;
+  none, as a system, detect that a worker died at 3\,a.m.\ or hit a weekly rate
+  limit and relaunch it after the reset (fails R1, R5).
+  \item \textbf{Cost is unmanaged.} Cost appears, if at all, as a per-call token
+  count. No framework we surveyed schedules, as an orchestration-layer policy, around
+  the \emph{provider's caching economics},
+  where the gap between two touches of a context decides whether you pay
+  1$\times$ or $\sim$12.5$\times$ (fails R6). This is precisely where our \$10k
+  incident came from (\S\ref{sec:cost}).
+  \item \textbf{Memory is either unbounded or per-episode.} Standing-agent designs
+  grow one context without bound until it exceeds the window; per-episode designs
+  forget everything at the end. AIOS/MemGPT address the \emph{mechanism} of bounded
+  memory but not the \emph{operational} question of a separate, zero-cost manager
+  that compacts durable per-domain records (partially meets R7).
+\end{itemize}
+
+\begin{table*}[t]
+\centering
+\caption{\textbf{Design emphasis} in the operational regime of \S\ref{sec:reqs}
+(long-horizon, human-directed, multi-thread) --- \emph{not} a quality ranking; every
+system excels in the regime it targets. Rubric: \yes\ = a first-class system property;
+\prt\ = partial, or present but left to the application; \no\ = not a concern of the
+design. Cells reflect published/observed features; borderline cases are marked \prt.
+We give ourselves an honest \prt\ where a mechanism is designed but only partly
+deployed (\S\ref{sec:deputies}).}
+\label{tab:compare}
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}l l ccccccc@{}}
+\toprule
+ & \textbf{Type} & \textbf{R1} & \textbf{R2} & \textbf{R3} & \textbf{R4} & \textbf{R5} & \textbf{R6} & \textbf{R7}\\
+ & & \scriptsize horizon & \scriptsize identity & \scriptsize threads & \scriptsize async H-in-loop & \scriptsize recovery & \scriptsize cost & \scriptsize memory\\
+\midrule
+AutoGPT / BabyAGI~\cite{autogpt,babyagi}      & auton.\ loop        & \prt & \no  & \no  & \no  & \no  & \no  & \prt \\
+ReAct / Reflexion~\cite{react,reflexion}      & reasoning loop      & \no  & \no  & \no  & \no  & \no  & \no  & \prt \\
+Voyager~\cite{voyager}                        & lifelong single     & \yes & \prt & \no  & \no  & \prt & \no  & \prt \\
+Generative Agents~\cite{genagents}            & memory / sim        & \yes & \prt & \prt & \no  & \no  & \no  & \yes \\
+AutoGen~\cite{autogen}                        & multi-agent chat    & \no  & \no  & \prt & \prt & \no  & \no  & \no  \\
+CrewAI / MetaGPT~\cite{crewai,metagpt}        & role crew / SOP     & \no  & \no  & \prt & \no  & \no  & \no  & \no  \\
+LangGraph~\cite{langgraph}                    & graph orchestration & \prt & \prt & \prt & \prt & \prt & \no  & \prt \\
+OpenAI Swarm~\cite{swarm}                     & hand-off routines   & \no  & \no  & \prt & \no  & \no  & \no  & \no  \\
+OpenAI Assistants~\cite{assistants}           & server threads      & \prt & \yes & \prt & \prt & \no  & \no  & \prt \\
+Claude Code subagents~\cite{claudecode}       & in-session spawn    & \no  & \no  & \yes & \prt & \no  & \prt & \no  \\
+Hosted SWE agents (Devin-style)               & hosted autonomous   & \prt & \prt & \prt & \prt & \prt & \no  & \prt \\
+Durable exec.\ (Temporal/\,Step)~\cite{temporal,stepfns} & workflow engine & \yes & \yes & \yes & \prt & \yes & \no  & \no  \\
+AIOS~\cite{aios}                              & agent OS (kernel)   & \prt & \prt & \yes & \no  & \prt & \prt & \yes \\
+MemGPT~\cite{memgpt}                          & memory OS           & \prt & \prt & \no  & \no  & \no  & \prt & \yes \\
+\midrule
+\textbf{Posse (this work)}                    & \textbf{agent ops}  & \yes & \prt & \yes & \yes & \yes & \yes & \yes \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Table~\ref{tab:compare} maps where each design puts its effort. Two rows deserve
+comment. \emph{Durable-execution engines} (Temporal, AWS Step Functions) are the
+closest true prior art for R1--R3/R5 --- durable identity and resume-across-crash are
+exactly their business --- but they schedule \emph{compute} durability, with no notion
+of LLM \emph{token} cost (R6) or bounded LLM \emph{memory} (R7), and the absent,
+asynchronous human (R4) is not their model. \emph{OpenAI Assistants} give durable
+server-side thread identity (R2) but leave management, recovery, cost, and memory to
+the application. The gap Posse targets is the \emph{conjunction} of R4, R6, and R7
+with the durable-identity substrate --- reusing the reasoning and multi-agent ideas of
+families (a)--(c) \emph{inside} its deputies, the durable-thread idea of workflow
+engines, and the OS/memory stance that families (d) point toward. Posse's own \prt\ on
+R2 is deliberate: the durable-identity substrate ships, but the automatic
+continuity switch does not yet (\S\ref{sec:deputies}).
+
+% ======================================================================
+\section{Design Overview}
+\label{sec:overview}
+% ======================================================================
+
+\subsection{Three insights}
+The requirements pull against each other. Full continuity (R2) wants one
+long-lived context; cost (R6) and the finite model window punish exactly that.
+Autonomy (R1, R5) wants always-on processes; the same always-on-ness is what a
+naive design bills you for. Posse rests on three decisions that resolve these
+tensions.
+
+\insight{I1. Decouple identity from liveness.}{A thread's identity is a
+\emph{durable record}, not a running process. Continuity (R2) is provided by
+persisted case files and a lineage map, so a thread can be resumed --- or rebuilt
+into a fresh process under the same identity --- long after its original process
+died. This is the single idea that unties P1 from P3.}
+
+\insight{I2. Make token cost a first-class scheduling resource.}{Every waiting
+decision (poll vs.\ sleep), every memory decision (keep vs.\ compact), and every
+model choice (cheap vs.\ capable) is taken against an explicit cost model derived
+from the provider's cache economics (R6). Cost is scheduled, not discovered on the
+invoice.}
+
+\insight{I3. Separate zero-cost mechanical control from paid cognition.}{The
+control plane --- routing, liveness, recovery, waking, resource serialization,
+compaction \emph{triggers} --- makes \emph{no} LLM calls. The LLM is invoked only
+for actual work and for a handful of genuinely judgment-bearing manager decisions.
+This is what makes always-on operation (R1) affordable (R6).}
+
+\subsection{System overview}
+Figure~\ref{fig:arch} shows the result. Work is organized into
+\textbf{precincts} (domains: \code{eval}, \code{omp}, \code{query}, \code{paper},
+\code{infra}, and a \code{receptionist} front desk). Each precinct owns durable
+\emph{records}: a compacted \emph{ledger} (big-picture digest), an append-only
+\emph{case log} (index of finished work), and per-thread \emph{case files}
+(\S\ref{sec:precincts}). We distinguish a \emph{thread} --- the durable identity and
+lineage of a line of work --- from a \emph{case} --- one numbered unit of work on it;
+a thread is a sequence of cases. Each case is worked by a \textbf{deputy}: an
+ephemeral LLM worker that lives for the duration of one case, emails the human a
+plan/milestones/final, and closes the case by appending to the records
+(\S\ref{sec:deputies}).
+
+The human's channel is \textbf{email} (Fig.~\ref{fig:arch}, top). An always-on
+\emph{inbox router} maps each message --- mechanically, with no LLM --- to an
+existing thread (reply), a new deputy in a tagged precinct, or the receptionist
+(\S\ref{sec:email}). Overseeing everything is the \textbf{Sheriff}
+(Fig.~\ref{fig:arch}, left): a single \emph{system manager} that supervises deputy
+liveness and precinct-records health. The Sheriff's monitoring is zero-API (I3); it
+spends tokens only to compact a ledger or to decide a deputy's change-request.
+Underneath sit the always-on daemons that provide routing, relaunch, job event-wakes,
+and GPU serialization --- three (inbox, watchdog, job manager) supervised as the core
+control plane, the Sheriff and GPU manager self-restarting via idempotent scripts; a
+read-only \textbf{dashboard} (right, a separate process) observes it all.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.98\textwidth]{fig/fig_architecture.pdf}
+\caption{The Posse architecture. Work flows down the center (human $\to$ email $\to$
+router $\to$ precincts $\to$ deputies), with the always-on daemon substrate underneath
+it. The \emph{Sheriff} (left) manages the system with zero-API monitoring, spending
+tokens only on ledger compaction and change-request decisions; the \emph{dashboard}
+(right) observes read-only. The bottom band maps the four problems (P1--P4) to the
+modules that solve them.}
+\label{fig:arch}
+\end{figure*}
+
+\subsection{Life of a case}
+Figure~\ref{fig:life} traces one case end to end. An email arrives and is routed;
+a deputy is spawned or an existing identity resumed. The deputy emails a plan, works
+in small chunks, offloads compute ($>$2\,min) to a detached job, and --- for a long
+job ($>$50\,min) --- \emph{submits it to the job manager and sleeps}, to be woken by an
+event rather than by polling (\S\ref{sec:cost}). It emails milestones. If the human
+replies mid-case, the deputy is \emph{surgically interrupted}: its process is killed
+and relaunched with the new message injected, while its detached jobs keep running
+(\S\ref{sec:email}); on resume it reads its mailbox \emph{first}. Finally it emails a
+result and \emph{closes} the case: one ledger paragraph, one case-log line, and a
+done-sentinel. Throughout, continuity (the dashed band) is carried not by the
+process --- which may have died and been replaced --- but by the durable case file
+and a resume-or-reinject decision (\S\ref{sec:deputies}). Underneath, the Sheriff and
+daemons keep the deputy alive and wake it, all without an LLM call.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.98\textwidth]{fig/fig_lifecycle.pdf}
+\caption{Life of a case. A deputy is one linear LLM context. Continuity survives the
+interrupt (top dashed band) via the durable case file plus session resume or an
+injected brief; the always-on Sheriff/daemon layer (bottom) relaunches, event-wakes,
+and compacts --- with no LLM calls.}
+\label{fig:life}
+\end{figure*}
+
+The remaining sections detail each module: what it does, the design alternatives, and
+why we chose as we did.
+
+% ======================================================================
+\section{Precincts and Bounded Memory}
+\label{sec:precincts}
+% ======================================================================
+\textbf{Role (R7, R2, P2/P4).} A precinct is a domain of work with durable,
+structured memory. Its three record types form a memory hierarchy from most- to
+least-compacted:
+\begin{itemize}[leftmargin=1.1em,itemsep=1pt,topsep=2pt]
+  \item \textbf{Ledger} --- a bounded, big-picture digest of the precinct (the
+  ``standing knowledge''), rewritten by compaction as it grows.
+  \item \textbf{Case log} --- an append-only index, one line per finished case.
+  Never rewritten (except by the Sheriff's surgical retraction), so attribution
+  stays honest.
+  \item \textbf{Case files} --- the full per-thread record, the least-compacted and
+  the source of truth a resumed thread reads.
+\end{itemize}
+All access goes through a single concurrency-safe \emph{records manager}
+(\code{scratch\_records.py}), never raw files. This is the deliberate choke point
+that makes the append-only contract enforceable: a deputy may only \emph{append}
+(one ledger paragraph and one case-log line, at close); only the Sheriff may compact
+a ledger, retract a log line, or create/delete a precinct.
+
+\insight{Why a manager, not a database?}{The records are human-readable Markdown/TSV
+so a human (or a resumed deputy) can read a precinct's history directly, and so the
+dashboard can render it without a query layer. The manager gives us atomicity and
+role enforcement (flock + atomic replace) without the operational weight of a DB ---
+appropriate for a single-machine deployment.}
+
+\noindent\textbf{Design alternatives for long-term memory.} The crux is R7 vs.\ the
+model window and R6:
+\begin{enumerate}[leftmargin=1.3em,itemsep=1pt,topsep=2pt]
+  \item \emph{One growing context per domain} (the ``standing agent'' design).
+  Maximal continuity, but the context grows without bound, eventually exceeds the
+  window, and --- per I2 --- becomes the most expensive thing to touch. This is
+  exactly why our long-lived \code{paper} thread had to be pinned to a
+  smaller/cheaper model.
+  \item \emph{Per-episode memory only.} Cheap and bounded, but forgets everything
+  between cases; every follow-up must be re-briefed by hand (fails R2, R7).
+  \item \emph{Retrieval over a vector store.} Scales, but retrieval is lossy and
+  opaque, and it is hard for a human to audit ``what does this domain know?''
+  \item \textbf{Chosen: a compacted ledger + append-only log + full case files},
+  managed by a separate zero-cost process. The ledger stays within a token budget
+  (bounded, cheap to load); nothing is silently lost because the case log and case
+  files are never compacted away; and the whole thing is plain text a human can
+  read. Compaction (an LLM ``reflection'' over the domain, \S\ref{sec:sheriff}) is a
+  coarse, operations-level analog of MemGPT's paging~\cite{memgpt} and Generative
+  Agents' reflection~\cite{genagents}, but performed by the manager, not the worker,
+  and at domain granularity.
+\end{enumerate}
+Each precinct also carries a \emph{default model} (e.g.\ the capable \code{opus} for
+most, the cheaper-but-capable \code{fable} for the token-heavy \code{paper} precinct),
+so cost/capability tiering is a per-domain policy (\S\ref{sec:cost}).
+
+% ======================================================================
+\section{Deputies and Thread Continuity}
+\label{sec:deputies}
+% ======================================================================
+\textbf{Role (P1, R2).} A deputy is an ordinary tool-using LLM agent that owns
+\emph{one case}. The hard part is not what it does but how its \emph{thread}
+survives everything that happens to the process running it.
+
+\noindent\textbf{The failure we started from.} Early on, a thread's identity
+\emph{was} its process. A worker that finished touched a done-sentinel, which ended
+its session; the next follow-up therefore could not find it alive and spawned a
+brand-new worker with a fresh name and blank context, re-briefed by a hand-written
+spec. The result was 259 mostly single-use identities\footnote{The current registry
+count; the pathology grew from $\sim$235 at the time of an earlier internal analysis.
+Both are high-water marks of the same accumulation.} and a project like the
+dashboard scattered across seven differently-named agents --- continuity tied to
+\emph{process liveness} rather than to the work. Exactly one thread (\code{paper})
+escaped this, via a hard-coded fixed-session id, and alone spanned dozens of cases
+under one identity --- the historical proof that stable identity was achievable.
+(That special case has since been \emph{retired}: \code{paper} is now an ordinary
+precinct-routed deputy, so the general mechanism below --- not a hard-coded
+exception --- is what must carry continuity.)
+
+\insight{The principle (I1).}{Route every follow-up to a \emph{stable, meaningful
+identity} recorded in a persisted map --- not to whatever process happens to be
+alive. Continue that identity by \emph{context budget}: while its context is cheap,
+\code{--resume} the same session (full live context, warm cache); once it grows past
+budget, spawn a fresh process under the \emph{same} identity and inject a compact
+brief (prior case numbers, keywords, pointers to the prior prompt, emails, and
+deliverables). Identity is stable either way; context stays bounded; the expensive
+cold revive of a giant context is avoided.}
+
+\noindent\textbf{Design alternatives (continuity policy).} We considered five points
+on the continuity--cost spectrum:
+\begin{enumerate}[leftmargin=1.3em,itemsep=1pt,topsep=2pt]
+  \item[A.] \emph{Status quo} (reuse-if-alive, else new agent). Simplest, naturally
+  parallel, bounded per-agent context --- but continuity is accidental and naming is
+  chaotic.
+  \item[B.] \emph{Standing domain agents} (never die). Strong continuity and one
+  obvious identity per domain, but one unbounded context: window pressure, cross-task
+  interference, and serialization.
+  \item[C.] \emph{Per-lineage persistent agent} (resume the exact session on
+  demand). Precise continuity and a stable per-thread identity, but inherits B's
+  unbounded growth on long threads.
+  \item[D.] \emph{Fresh agent per task + injected context.} Always bounded and cheap,
+  lineage explicit, but the injected brief is a summary, not the live session, and
+  naming multiplies unless paired with a stable name.
+  \item[E.] \textbf{Chosen direction: hybrid.} Stable per-thread \emph{name} (like
+  C/D), and a \emph{resume-if-cheap-else-reinject} switch (C when cheap, D when not),
+  with the map persisted at creation. Among the five, only E avoids a \emph{severe}
+  weakness on the first three axes (continuity, identity, cost) by our qualitative
+  assessment, and it subsumes \code{paper}'s retired special case as one instance of a
+  general mechanism rather than a hard-coded exception.
+\end{enumerate}
+The trade-off E accepts is a policy knob (the context-size threshold) and slightly
+more moving parts, all additive. We judged that worthwhile: it makes the
+continuity/cost trade-off \emph{explicit} instead of an accident of which process is
+alive.
+
+\insight{Deployment status (honest accounting).}{The \emph{durable} half of E is
+shipped: a persisted \code{task\,$\to$\,parent\,$\to$\,precinct} lineage map records
+each thread's identity and precinct at creation, and the active-deputies board (next)
+makes the current owner authoritative. The \emph{context-budget switch} --- metering a
+thread's context size to choose resume-vs-reinject automatically --- is designed but
+only \emph{partly realized}: today the handler resumes a thread's recorded session
+when it is still valid and otherwise spawns a fresh process under a routed identity,
+without yet measuring context size to drive the choice. So E is our chosen direction
+and its identity substrate is live; the automatic cost-threshold is future work. We
+flag this rather than imply more maturity than exists.}
+
+\noindent\textbf{The board.} A deputy's current case is published to an
+\emph{active-deputies board} (\code{active\_deputies.json}) that the dashboard trusts
+over any stale launch-time default --- so ``who is working what, right now'' is a
+single authoritative read (R3), independent of process state.
+
+% ======================================================================
+\section{The Email Control Plane}
+\label{sec:email}
+% ======================================================================
+\textbf{Role (R4, P1/P3).} Email is Posse's human interface and, crucially, its
+\emph{interrupt} mechanism. We chose it deliberately: it is asynchronous by nature
+(the human is never blocked and never blocking), it is durable (the mailbox is the
+queue), it threads (a reply carries its lineage), and it needs no bespoke UI.
+
+\noindent\textbf{Routing.} The routing \emph{decision} is mechanical --- zero-LLM
+(I3) --- on two signals: (1) a reply threaded to a deputy's earlier email $\to$ that
+deputy's \emph{mailbox}; (2) an explicit \code{[precinct]} tag $\to$ a new deputy in
+that precinct (a reply to an already-\emph{dead} deputy is attributed to its precinct
+via the persisted parent\,$\to$\,precinct map --- a third mechanical lookup). Only
+genuinely \emph{unaddressed} mail falls to the receptionist, whose disposition
+(answer inline, or write a spec and spawn a deputy) is the one routing path that
+spends an LLM turn. An earlier design instead scored message text against all workers
+with a keyword matcher; we removed it after it hijacked, for example, query mail to a
+long-dead agent. Deterministic routing is cheaper and more predictable, at the cost
+of an occasional receptionist hand-off (\S\ref{sec:related}, L4).
+
+\noindent\textbf{Interruption.} When a reply targets a \emph{live} deputy, the
+message is appended to its mailbox under a lock and the deputy is
+\emph{surgically interrupted}: only its LLM process is killed and immediately
+relaunched with the mailbox injected; its detached CPU/GPU jobs --- separate
+processes --- keep running and are reconciled on resume. On \emph{any} resume the
+deputy's first action is to drain its mailbox and reply (the ``reply-first'' rule),
+so human feedback is never processed on a stale plan. The delivery guarantee is
+\emph{at-least-once with an idempotent drain}: the append and a boot marker are
+flock-serialized, so a burst of replies is appended in order and drained
+\emph{together} on the next boot rather than lost or double-processed, and a job that
+finishes \emph{during} the interrupt window is reconciled from its result file on
+resume, never re-submitted.
+
+\noindent\textbf{Design alternatives.}
+\begin{itemize}[leftmargin=1.1em,itemsep=1pt,topsep=2pt]
+  \item \emph{Kill everything vs.\ surgical kill.} Killing the whole session would
+  kill in-flight GPU jobs (hours of compute). We kill only the claude process and
+  let jobs survive as orphans with their output still streaming --- the single most
+  important robustness property of the interrupt path.
+  \item \emph{Debounce vs.\ immediate.} We removed an anti-churn cooldown: every
+  human email interrupts \emph{immediately}, with boot-marker coalescing so a burst
+  of replies is drained together rather than lost. Latency of feedback matters more
+  than avoiding a few extra relaunches.
+  \item \emph{Prompt via argv vs.\ stdin.} A subtle self-kill bug (\code{pkill}
+  matching an agent's own resume prompt embedded in its argv) taught us to pass
+  prompts via \emph{stdin}, never the command line --- a reminder that at this scale
+  the control plane's own mechanics are a source of faults.
+\end{itemize}
+
+% ======================================================================
+\section{The Sheriff: Autonomous System Management}
+\label{sec:sheriff}
+% ======================================================================
+\textbf{Role (R1, R5, R7).} The Sheriff is the system's single ``manager''
+\emph{role}, presented as one but implemented today as \emph{two} cooperating
+always-on loops: a battle-tested liveness \emph{watchdog} (deputy supervision ---
+crash and rate-limit recovery) and a records daemon (precinct-records health ---
+ledger compaction, the change-request queue, and precinct lifecycle). We deliberately
+unified the \emph{model} (one manager, one dashboard panel) while keeping the two
+proven loops physically separate; folding them into a single process is a deferred
+option (see \emph{Design alternatives} below).
+
+\insight{The hard guarantee (I3).}{The Sheriff's \emph{monitoring is zero-API}. It
+scans sentinels, tmux liveness, and ledger token-lengths mechanically; it makes an
+LLM call \emph{only} to (a) compact a ledger that crossed its soft limit, or (b)
+approve/deny a deputy's change-request. An idle pass costs nothing. This is what lets
+the manager run forever without being a cost center.}
+
+\noindent\textbf{Compaction.} When a ledger crosses a soft token budget (A =
+20{,}000) the Sheriff compacts it toward a target (B = 10{,}000) with one LLM call on
+a cheap global model (\code{fable}), given the whole-system context (all precincts'
+ledgers) and a fixed system prompt that forbids inventing or silently dropping a
+case. On any failure or rate limit it falls back to a mechanical truncation, so the
+ledger is \emph{always} bounded and the daemon never crashes. Compaction is the
+system's ``reflection'' step --- but performed by the manager, off the worker's
+critical path.
+
+\noindent\textbf{Change-requests \& authority.} Records mutations that are not simple
+appends (retract a log line, edit a ledger, allocate a case number, create/delete a
+precinct) are \emph{sheriff-only}. A deputy requests them via a queue; the Sheriff
+verifies the requester's identity by matching its \code{(deputy, session)} against the
+live registry --- the session UUID minted at spawn \emph{is} the shared secret, so a
+forged deputy or a wrong session is rejected \emph{before} any LLM call --- then
+decides with one LLM call returning strict JSON, performs the op, and journals it. A
+failed or rate-limited decision \emph{defers}: it never auto-approves and never
+deletes by default. Destructive operations add real-world gates: deleting a precinct
+requires no active deputies, an emailed ``reply YES'' confirmation with a timeout
+(matched \emph{mechanically} by the zero-API daemon, not routed to an LLM), and a
+14-day recoverable trash before hard purge.
+
+\noindent\textbf{Design alternatives.}
+\begin{itemize}[leftmargin=1.1em,itemsep=1pt,topsep=2pt]
+  \item \emph{Merge the watchdog into the Sheriff, or keep them separate?} We chose
+  to \emph{present} them as one manager but keep the battle-tested liveness loop
+  physically separate (a staged ``rebrand-first'' path), because the relaunch logic
+  is the most safety-critical code in the system --- it is what prevents repeats of
+  the \$10k incident and a past 42-hour dead-worker gap. Unifying the model without
+  rewriting the mechanism captured the clarity at near-zero risk.
+  \item \emph{Mechanical vs.\ LLM compaction.} Mechanical truncation is free and
+  deterministic but loses the ``big picture''; an LLM rewrite preserves it but can
+  fail. We use LLM-by-default with a mechanical fallback --- quality when possible,
+  safety always.
+  \item \emph{Who may edit records?} Letting deputies edit their own history would
+  destroy attribution. Concentrating all non-append authority in one identity, gated
+  by verified requests and a journal, keeps the record trustworthy.
+\end{itemize}
+
+% ======================================================================
+\section{Cost-Aware Scheduling}
+\label{sec:cost}
+% ======================================================================
+\textbf{Role (R6, P4).} This is where Posse most departs from prior frameworks:
+\emph{token cost is scheduled}. The policy is grounded in an incident.
+
+\noindent\textbf{The \$10{,}000 incident.} Early in the deployment, workers waiting
+on long jobs polled their result files on a $\sim$10-minute cadence, sleeping between
+checks and re-reading their (large) context each time. The monthly bill reached
+$\sim$\$10k, roughly \$6k of it traced to these cold rewrites. The root cause was not
+the number of polls but their \emph{spacing} relative to the provider's prompt
+cache~\cite{promptcache}. The cache has a \textbf{300-second TTL}: a touch within
+300\,s of the last is a warm \emph{read}; a touch after is a cold \emph{rewrite} of
+the whole context, at roughly \textbf{12.5$\times$} the read (for our backend and
+context sizes; Fig.~\ref{fig:cost}a). A 10-minute cadence guaranteed every single poll
+was a cold rewrite of a growing context.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.99\columnwidth]{fig/fig_costmodel.pdf}
+\caption{The cost model behind Posse's wait policy (a \emph{schematic} of the
+economics, not a trace of measured traffic). (a) A poll within the 300\,s cache TTL is
+a warm read; past it, a cold rewrite at $\sim$12.5$\times$. (b) Cumulative cost of
+waiting: repeated warm polls grow with duration, one event-wake is a single cold
+rewrite; they cross at $\sim$50\,min --- the threshold between the two strategies.}
+\label{fig:cost}
+\end{figure}
+
+\noindent\textbf{The policy.} From this model, two rules fall out:
+\begin{enumerate}[leftmargin=1.3em,itemsep=1pt,topsep=2pt]
+  \item \textbf{Short waits ($\le$50\,min): poll, but under the TTL.} Sleep in chunks
+  of \emph{at most 240\,s} so every wake is a warm read. The old 10-minute chunks
+  were the entire problem.
+  \item \textbf{Long waits ($>$50\,min): submit and sleep.} Hand the wait to a
+  zero-API job manager and \emph{end the turn}; the manager wakes the deputy by
+  \emph{event} when the job finishes (one cold rewrite, once), rather than paying a
+  warm read every few minutes for an hour.
+\end{enumerate}
+The 50-minute threshold is the break-even (Fig.~\ref{fig:cost}b): at the 4-minute cap,
+warm polling costs \emph{at most} $\sim$15 reads/hour of context; an event-wake costs
+one rewrite ($\approx$12.5 reads). The break-even is therefore
+$t^\star \approx m / r$ (rewrite-multiplier over polls-per-hour) $= 12.5/15\,\mathrm{h}
+\approx 50$\,min; below it, polling is cheaper; above it, event-wake wins. Crucially,
+the \emph{context size cancels} --- both a read and a rewrite scale with it --- so
+$t^\star$ is independent of how large the thread has grown, which is what makes a
+single threshold correct for every deputy.
+
+\noindent\textbf{Two more cost levers.}
+\begin{itemize}[leftmargin=1.1em,itemsep=1pt,topsep=2pt]
+  \item \emph{Zero-API control plane (I3).} Every always-on daemon --- router,
+  liveness, job manager, GPU serializer, and the Sheriff's monitoring --- runs
+  without an LLM call. Only real work and rare manager decisions are billed.
+  \item \emph{Model tiering.} Cheap-but-capable models (\code{fable}) run the
+  token-heavy long threads (the \code{paper} precinct) and every Sheriff call;
+  capable models (\code{opus}) run the rest. Tiering is a per-precinct default,
+  overridable per case.
+\end{itemize}
+
+\insight{Why this generalizes.}{The constants (300\,s, 12.5$\times$, 50\,min) are
+provider-specific, but the \emph{principle} generalizes to any backend with a
+\emph{TTL-bounded} read/rewrite discount: there is a break-even $m/r$ between
+``keep the context warm'' and ``tear down and event-wake.'' (Backends with a
+persistent KV cache or a per-write surcharge change or remove it, and need the model
+re-derived.) Provider- and serving-layer prompt caching is of course well
+known~\cite{promptcache}; what we have not seen elsewhere is an agent-\emph{orchestration}
+layer that lifts this break-even into the scheduler's \emph{wait/park} decision.}
+
+% ======================================================================
+\section{Multi-Agent Coordination}
+\label{sec:jtf}
+% ======================================================================
+\textbf{Role (P2, R3).} Most cases are one deputy, but three coordination
+primitives handle work that is not.
+
+\noindent\textbf{Sub-deputies.} A deputy may spawn a \emph{tracked} sub-deputy for a
+sub-task (numbered as a child of the parent case, e.g.\ \code{400a}). Sub-deputies
+file their own records and appear on the board, so a large effort decomposes into a
+visible tree rather than an opaque recursion.
+
+\noindent\textbf{Sheriff-wake on completion.} A parent that must wait for
+sub-deputies does \emph{not} busy-wait (which would burn context per I2). It registers
+``wake me when X finishes'' and parks; the Sheriff detects the sub-deputies' done
+sentinels and wakes the parent with a ``subtasks done'' message. This is the
+event-wake idea (\S\ref{sec:cost}) applied to inter-agent dependencies.
+
+\noindent\textbf{Joint Task Forces (JTF).} For work needing several agents at once, a
+JTF names a \emph{lead} plus collaborators (and an optional critic). Each slot is
+either a \emph{precinct} (spawn a fresh deputy there) or a \emph{specific deputy}
+(a ``must-take'' assignment). The interesting case is assigning work to a deputy that
+is already busy on another case: interleaving two live cases in one linear context is
+unsafe. Our rule (chosen over ``refuse if busy'' and ``context-switch now'') is
+\emph{stop, hand over, then take}: the busy deputy hands its current case to a new
+deputy with full context injected (reusing the continuity machinery of
+\S\ref{sec:deputies}), notifies the Sheriff, and only then takes the JTF role as a
+fresh case. The must-take assignment rides the \emph{same} mailbox-and-interrupt
+machinery as an email reply, so it is never lost or duplicated even under a
+simultaneous human interrupt.
+
+\noindent\textbf{Anonymous helpers.} For a throwaway helper whose result only the
+spawning deputy consumes --- most often a \emph{critic} that reviews a draft --- a
+deputy may spawn an unregistered \emph{anonymous} worker it owns and monitors itself.
+It files no paperwork and is invisible to the Sheriff, keeping the tracked record
+clean while still enabling the adversarial-critic pattern (a deputy reviewing its own
+draft with independent, disposable critics).
+
+% ======================================================================
+\section{Observability}
+\label{sec:dash}
+% ======================================================================
+\textbf{Role (R3, P2).} A read-only web dashboard renders the system for the human:
+the case-lineage forest (which case followed which), the active-deputies board,
+GPU/job state, Sheriff health, and each precinct's records. It is deliberately
+\emph{read-only over the same records the system runs on} --- it computes nothing the
+system does not already persist --- so it can never disagree with reality or perturb
+it. Where earlier versions \emph{reconstructed} lineage heuristically after the fact,
+the persisted lineage map (\S\ref{sec:deputies}) now makes that view authoritative.
+The dashboard is how one human keeps dozens of threads legible.
+
+% ======================================================================
+\section{Discussion, Related Work, and Limitations}
+\label{sec:related}
+% ======================================================================
+\textbf{Positioning.} Posse borrows freely: its deputies are ReAct-style
+tool-agents~\cite{react}; its JTFs echo role-based multi-agent
+work~\cite{autogen,metagpt,crewai}; its ledger compaction is a coarse cousin of
+MemGPT's paging~\cite{memgpt} and Generative Agents' reflection~\cite{genagents}; and
+its ``LLM-as-managed-process'' stance is the one AIOS~\cite{aios} argues for. Its
+\emph{systems} lineage is older still: the Sheriff's supervise-and-relaunch loop is a
+supervision tree in the Erlang/OTP ``let it crash'' tradition~\cite{otp,actor}; the
+read-only dashboard over the same records the system runs on is a reconciliation /
+desired-state pattern in the spirit of cluster controllers~\cite{borg}; and durable
+identity that survives process death is exactly what durable-execution engines
+(Temporal, Step Functions, Airflow)~\cite{temporal,stepfns,airflow} give ordinary
+workflows, while server-side threads~\cite{assistants} give it to conversations. What
+is new is the \emph{operational synthesis} for long-horizon, human-directed
+\emph{LLM} work: those engines schedule compute durability, not \emph{token} cost,
+and none of them models a human who is \emph{absent by default}, reachable only
+through an \emph{email} control-and-interrupt plane. The one piece we have not seen
+elsewhere is scheduling an agent's wait/park decisions against the provider's
+\emph{cache-TTL} economics (\S\ref{sec:cost}) --- provider caching itself is well
+known~\cite{promptcache}, but not, to our knowledge, as an orchestrator policy. Where
+AIOS proposes a kernel and MemGPT a memory manager, Posse is a deployed system whose
+scheduler's scarce resource is dollars, not GPU cycles.
+
+\noindent\textbf{Failure modes and open risks.} Distinct from the scoping
+limitations below, four risks are inherent to the design. (i) \emph{The Sheriff is a
+single point of failure} --- \emph{quis custodiet ipsos custodes?} It is a root daemon
+restarted only by an idempotent supervisor script (as the other daemons are), not
+itself watched by a peer; a silently-dead Sheriff halts compaction and recovery until
+a human notices. (ii) \emph{Unsupervised work quality.} Posse keeps deputies alive and
+cheap; it does not judge whether their output is \emph{correct}. A deputy can do the
+wrong thing for hours before the human reads its email --- quality gating is orthogonal
+and out of scope here. (iii) \emph{Interrupt-race correctness.} The at-least-once
+idempotent drain (\S\ref{sec:email}) is the invariant that makes concurrent human
+interrupts safe; a bug there (we hit one --- an agent that \code{pkill}-ed itself by
+matching its own resume prompt in \code{argv}, fixed by passing prompts via stdin)
+reintroduces lost or duplicated feedback, so this path needs the care of any lock
+protocol. (iv) \emph{Compaction fidelity.} LLM ledger compaction can drop or distort a
+case despite a prompt forbidding it; the mechanical-truncation fallback bounds
+\emph{availability} but not \emph{fidelity}, with the never-compacted case log as the
+backstop of record. We observed one compaction fault (a cache false-positive that
+misclassified a success as a rate limit), contained by the fallback.
+
+\noindent\textbf{Limitations.} (1) Posse is a single-machine, single-human,
+single-provider system; the cost constants are provider-specific and multi-tenant
+fairness is out of scope. (2) We report operational \emph{experience}, not a
+controlled benchmark against other frameworks --- a fair comparison is hard precisely
+because they target a different regime, so our claims are about \emph{design fit},
+not measured speedups. (3) The continuity threshold and several policies are
+hand-tuned; learning them is future work. (4) Mechanical routing (I3) is less
+flexible than an LLM router for genuinely ambiguous mail --- we accept occasional
+receptionist hand-offs as the price of predictability. (5) \emph{Artifact.} The
+system runs on private research infrastructure; the design, scripts, and this
+document are internal, so we offer this as an experience report rather than a released,
+reproducible artifact.
+
+\noindent\textbf{Experience.} The design has run our group's autonomous work across
+six precincts and 400+ cases; the cost incident that motivated \S\ref{sec:cost} has
+not recurred in the months since the policy shipped (an operational observation, not a
+controlled measurement). The naming pathology that motivated \S\ref{sec:deputies} ---
+259 accumulated single-use identities --- is being retired as threads migrate to
+durable identities. We offer these less as results than as evidence that the
+requirements in \S\ref{sec:reqs} are the right ones to design against.
+
+% ======================================================================
+\section{Conclusion}
+% ======================================================================
+Agent frameworks have largely solved the inside of a task. Posse targets the outside:
+keeping many agents working, cheaply, for a long time, under a human who directs but
+does not supervise. Three decisions carry the design --- identity decoupled from
+process liveness, token cost as a scheduled resource, and a zero-cost mechanical
+control plane separated from paid cognition. Together they turn four problems that
+sink a naive port of a session-based framework --- thread continuity, many-thread
+management, continuous autonomy, and token efficiency --- into ordinary, engineered
+system properties. The Sheriff watches; the deputies work; the records remember; and
+the invoice stays sane.
+
+% ----------------------------------------------------------------------
+\begin{thebibliography}{99}
+\small
+\bibitem{autogpt} Significant Gravitas. \emph{AutoGPT: An Autonomous GPT-4
+Experiment}. 2023. \url{https://github.com/Significant-Gravitas/AutoGPT}.
+\bibitem{babyagi} Y.\ Nakajima. \emph{BabyAGI}. 2023.
+\url{https://github.com/yoheinakajima/babyagi}.
+\bibitem{react} S.\ Yao et al. \emph{ReAct: Synergizing Reasoning and Acting in
+Language Models}. ICLR, 2023.
+\bibitem{reflexion} N.\ Shinn et al. \emph{Reflexion: Language Agents with Verbal
+Reinforcement Learning}. NeurIPS, 2023.
+\bibitem{tot} S.\ Yao et al. \emph{Tree of Thoughts: Deliberate Problem Solving with
+Large Language Models}. NeurIPS, 2023.
+\bibitem{voyager} G.\ Wang et al. \emph{Voyager: An Open-Ended Embodied Agent with
+Large Language Models}. arXiv:2305.16291, 2023.
+\bibitem{genagents} J.\ S.\ Park et al. \emph{Generative Agents: Interactive
+Simulacra of Human Behavior}. UIST, 2023.
+\bibitem{autogen} Q.\ Wu et al. \emph{AutoGen: Enabling Next-Gen LLM Applications via
+Multi-Agent Conversation}. arXiv:2308.08155, 2023.
+\bibitem{camel} G.\ Li et al. \emph{CAMEL: Communicative Agents for ``Mind''
+Exploration of Large Language Model Society}. NeurIPS, 2023.
+\bibitem{metagpt} S.\ Hong et al. \emph{MetaGPT: Meta Programming for a Multi-Agent
+Collaborative Framework}. ICLR, 2024.
+\bibitem{chatdev} C.\ Qian et al. \emph{Communicative Agents for Software
+Development (ChatDev)}. ACL, 2024.
+\bibitem{crewai} J.\ Moura et al. \emph{CrewAI: Framework for Orchestrating
+Role-Playing Autonomous AI Agents}. 2023. \url{https://github.com/crewAIInc/crewAI}.
+\bibitem{langgraph} LangChain. \emph{LangGraph: Building Stateful, Multi-Actor
+Applications with LLMs}. 2024. \url{https://github.com/langchain-ai/langgraph}.
+\bibitem{swarm} OpenAI. \emph{Swarm: Educational Framework for Lightweight
+Multi-Agent Orchestration}. 2024. \url{https://github.com/openai/swarm}.
+\bibitem{claudecode} Anthropic. \emph{Claude Code and the Claude Agent SDK}. 2024--2026.
+\bibitem{aios} K.\ Mei et al. \emph{AIOS: LLM Agent Operating System}.
+arXiv:2403.16971, 2024.
+\bibitem{memgpt} C.\ Packer et al. \emph{MemGPT: Towards LLMs as Operating Systems}.
+arXiv:2310.08560, 2023.
+\bibitem{assistants} OpenAI. \emph{Assistants API: Persistent Threads for Agents}.
+2023--2024. \url{https://platform.openai.com/docs/assistants}.
+\bibitem{temporal} Temporal Technologies. \emph{Temporal: Durable Execution.}
+2020--. \url{https://temporal.io}.
+\bibitem{stepfns} Amazon Web Services. \emph{AWS Step Functions.} 2016.
+\bibitem{airflow} M.\ Beauchemin et al. \emph{Apache Airflow.} 2015.
+\url{https://airflow.apache.org}.
+\bibitem{otp} J.\ Armstrong. \emph{Making Reliable Distributed Systems in the
+Presence of Software Errors}. PhD thesis, KTH, 2003.
+\bibitem{actor} C.\ Hewitt, P.\ Bishop, R.\ Steiger. \emph{A Universal Modular ACTOR
+Formalism for Artificial Intelligence}. IJCAI, 1973.
+\bibitem{borg} A.\ Verma et al. \emph{Large-scale Cluster Management at Google with
+Borg}. EuroSys, 2015.
+\bibitem{promptcache} Anthropic. \emph{Prompt Caching (cache-control, $\sim$5-minute
+TTL)}. 2024. \url{https://docs.anthropic.com}.
+\end{thebibliography}
+
+\end{document}

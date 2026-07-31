@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-label="Posse">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#20293b"/><stop offset="1" stop-color="#141a26"/></linearGradient><linearGradient id="goldgrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6d873"/><stop offset="0.55" stop-color="#e8bb44"/><stop offset="1" stop-color="#b3841f"/></linearGradient></defs>
+<rect x="3" y="3" width="1194" height="294" rx="28" fill="url(#bg)" stroke="#33405c" stroke-width="2"/>
+<path d="M 152.00,12.00 L 198.00,70.33 L 271.51,81.00 L 244.00,150.00 L 271.51,219.00 L 198.00,229.67 L 152.00,288.00 L 106.00,229.67 L 32.49,219.00 L 60.00,150.00 L 32.49,81.00 L 106.00,70.33 Z" fill="url(#goldgrad)" stroke="#8a6314" stroke-width="3" stroke-linejoin="round"/>
+<path d="M 152.00,20.00 L 195.00,75.52 L 264.58,85.00 L 238.00,150.00 L 264.58,215.00 L 195.00,224.48 L 152.00,280.00 L 109.00,224.48 L 39.42,215.00 L 66.00,150.00 L 39.42,85.00 L 109.00,75.52 Z" fill="none" stroke="#f6d873" stroke-width="2.5" opacity="0.55"/>
+<circle cx="152" cy="150" r="80" fill="#20293b" stroke="#b3841f" stroke-width="3"/>
+<defs><clipPath id="discC"><circle cx="152" cy="150" r="79"/></clipPath></defs>
+<g clip-path="url(#discC)"><path d="M 119.8,156.0 L 104.2,120.2 L 96.8,152.4 Z" fill="#b8a488" stroke="#6f5c44" stroke-width="1.4" stroke-linejoin="round"/>
+<path d="M 115.2,148.7 L 106.0,128.4 L 102.3,146.8 Z" fill="#e78ea1"/>
+<path d="M 184.2,156.0 L 199.8,120.2 L 207.2,152.4 Z" fill="#b8a488" stroke="#6f5c44" stroke-width="1.4" stroke-linejoin="round"/>
+<path d="M 188.8,148.7 L 198.0,128.4 L 201.7,146.8 Z" fill="#e78ea1"/>
+<ellipse cx="152" cy="168" rx="51.5" ry="47.8" fill="#b8a488" stroke="#6f5c44" stroke-width="1.4"/>
+<path d="M 138.2,143.2 L 141.4,124.3 L 152.0,137.6 L 162.6,124.3 L 165.8,143.2" stroke="#6f5c44" stroke-width="3.0" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.9"/>
+<path d="M 107.8,154.2 l -8.3,-2.8" stroke="#6f5c44" stroke-width="2.8" stroke-linecap="round" fill="none" opacity="0.8"/>
+<path d="M 106.5,164.3 l -8.3,0.0" stroke="#6f5c44" stroke-width="2.8" stroke-linecap="round" fill="none" opacity="0.8"/>
+<path d="M 196.2,154.2 l 8.3,-2.8" stroke="#6f5c44" stroke-width="2.8" stroke-linecap="round" fill="none" opacity="0.8"/>
+<path d="M 197.5,164.3 l 8.3,0.0" stroke="#6f5c44" stroke-width="2.8" stroke-linecap="round" fill="none" opacity="0.8"/>
+<ellipse cx="152" cy="184.6" rx="26.7" ry="20.2" fill="#f4e7cd"/>
+<ellipse cx="132.7" cy="165.2" rx="12.4" ry="12.9" fill="#f2a91e" stroke="#cf8410" stroke-width="1.2"/>
+<ellipse cx="132.7" cy="166.2" rx="5.1" ry="7.8" fill="#2b2118"/>
+<circle cx="129.5" cy="161.1" r="3.0" fill="#ffffff"/>
+<circle cx="135.0" cy="170.8" r="1.4" fill="#ffffff" opacity="0.7"/>
+<ellipse cx="171.3" cy="165.2" rx="12.4" ry="12.9" fill="#f2a91e" stroke="#cf8410" stroke-width="1.2"/>
+<ellipse cx="171.3" cy="166.2" rx="5.1" ry="7.8" fill="#2b2118"/>
+<circle cx="174.5" cy="161.1" r="3.0" fill="#ffffff"/>
+<circle cx="169.0" cy="170.8" r="1.4" fill="#ffffff" opacity="0.7"/>
+<path d="M 146.0,178.1 L 158.0,178.1 L 152.0,184.6 Z" fill="#e78ea1" stroke="#c96b80" stroke-width="0.9" stroke-linejoin="round"/>
+<path d="M 152.0,184.6 L 152.0,190.1 M 152.0,190.1 q -6.4,4.6 -11.0,-0.9 M 152.0,190.1 q 6.4,4.6 11.0,-0.9" fill="none" stroke="#6f5c44" stroke-width="1.4" stroke-linecap="round"/>
+<path d="M 138.2,179.0 q -21.2,-7.8 -38.6,-8.7" fill="none" stroke="#6f5c44" stroke-width="1.1" stroke-linecap="round" opacity="0.7"/>
+<path d="M 165.8,179.0 q 21.2,-7.8 38.6,-8.7" fill="none" stroke="#6f5c44" stroke-width="1.1" stroke-linecap="round" opacity="0.7"/>
+<path d="M 138.2,184.6 q -21.2,4.2 -38.6,10.5" fill="none" stroke="#6f5c44" stroke-width="1.1" stroke-linecap="round" opacity="0.7"/>
+<path d="M 165.8,184.6 q 21.2,4.2 38.6,10.5" fill="none" stroke="#6f5c44" stroke-width="1.1" stroke-linecap="round" opacity="0.7"/>
+<path d="M 119.8,206.6 Q 152.0,209.4 184.2,206.6 L 175.9,225.0 Q 152.0,233.3 128.1,225.0 Z" fill="#38538a" stroke="#26386a" stroke-width="1.2" stroke-linejoin="round"/>
+<circle cx="136.4" cy="212.2" r="1.9" fill="#6e8bc0"/>
+<circle cx="134.5" cy="210.3" r="0.8" fill="#6e8bc0"/>
+<circle cx="136.4" cy="209.6" r="0.8" fill="#6e8bc0"/>
+<circle cx="138.2" cy="210.3" r="0.8" fill="#6e8bc0"/>
+<circle cx="152.9" cy="216.8" r="1.9" fill="#6e8bc0"/>
+<circle cx="151.1" cy="214.9" r="0.8" fill="#6e8bc0"/>
+<circle cx="152.9" cy="214.2" r="0.8" fill="#6e8bc0"/>
+<circle cx="154.8" cy="214.9" r="0.8" fill="#6e8bc0"/>
+<circle cx="167.6" cy="212.2" r="1.9" fill="#6e8bc0"/>
+<circle cx="165.8" cy="210.3" r="0.8" fill="#6e8bc0"/>
+<circle cx="167.6" cy="209.6" r="0.8" fill="#6e8bc0"/>
+<circle cx="169.5" cy="210.3" r="0.8" fill="#6e8bc0"/>
+<circle cx="144.6" cy="223.2" r="1.9" fill="#6e8bc0"/>
+<circle cx="142.8" cy="221.4" r="0.8" fill="#6e8bc0"/>
+<circle cx="144.6" cy="220.7" r="0.8" fill="#6e8bc0"/>
+<circle cx="146.5" cy="221.4" r="0.8" fill="#6e8bc0"/>
+<circle cx="161.2" cy="223.2" r="1.9" fill="#6e8bc0"/>
+<circle cx="159.4" cy="221.4" r="0.8" fill="#6e8bc0"/>
+<circle cx="161.2" cy="220.7" r="0.8" fill="#6e8bc0"/>
+<circle cx="163.0" cy="221.4" r="0.8" fill="#6e8bc0"/>
+<circle cx="179.6" cy="209.4" r="5.5" fill="url(#goldgrad)" stroke="#8a6314" stroke-width="0.9"/>
+<path d="M 179.60,205.72 L 180.52,208.13 L 183.10,208.26 L 181.09,209.88 L 181.76,212.38 L 179.60,210.96 L 177.44,212.38 L 178.11,209.88 L 176.10,208.26 L 178.68,208.13 Z" fill="#20293b"/></g>
+<path d="M 119.0,120.0 L 126.0,76.0 Q 141.1,69.0 152.0,80.0 Q 162.9,69.0 178.0,76.0 L 185.0,120.0 Z" fill="#d99f5c" stroke="#a9713a" stroke-width="1.0"/>
+<path d="M 152.0,81.0 L 152.0,109.0" fill="none" stroke="#a9713a" stroke-width="2.0" stroke-linecap="round" opacity="0.5"/>
+<path d="M 120.0,120.0 Q 152.0,123.5 184.0,120.0 L 184.0,112.0 Q 152.0,115.5 120.0,112.0 Z" fill="#38538a" stroke="#26386a" stroke-width="0.8"/>
+<path d="M 152.00,111.50 L 153.18,114.38 L 156.28,114.61 L 153.90,116.62 L 154.65,119.64 L 152.00,118.00 L 149.35,119.64 L 150.10,116.62 L 147.72,114.61 L 150.82,114.38 Z" fill="url(#goldgrad)" stroke="#8a6314" stroke-width="1"/>
+<path d="M 76.0,119.0 Q 152.0,137.0 228.0,119.0 Q 152.0,127.0 76.0,119.0 Z" fill="#d99f5c" stroke="#a9713a" stroke-width="1.0" stroke-linejoin="round"/>
+<path d="M 91.2,120.0 Q 152.0,125.0 212.8,120.0" fill="none" stroke="#eab979" stroke-width="1.2" opacity="0.6"/>
+<text x="330" y="188" font-family="Georgia,'Times New Roman',serif" font-size="112" font-weight="700" fill="#f4e7cd" letter-spacing="2">Posse</text>
+<path d="M 305.00,126.00 L 310.00,139.12 L 324.02,139.82 L 313.08,148.63 L 316.76,162.18 L 305.00,154.50 L 293.24,162.18 L 296.92,148.63 L 285.98,139.82 L 300.00,139.12 Z" fill="url(#goldgrad)" stroke="#8a6314" stroke-width="2" stroke-linejoin="round"/>
+<path d="M 305.00,134.00 L 306.47,143.98 L 316.41,142.29 L 307.38,146.77 L 312.05,155.71 L 305.00,148.50 L 297.95,155.71 L 302.62,146.77 L 293.59,142.29 L 303.53,143.98 Z" fill="none" stroke="#f6d873" stroke-width="2.5" opacity="0.55"/>
+<rect x="332" y="208" width="470" height="5" rx="2.5" fill="url(#goldgrad)"/>
+<text x="333" y="242" font-family="Helvetica,Arial,sans-serif" font-size="26" fill="#f4e7cd" opacity="0.92">Sheriff &amp; Deputies for a fleet of headless Claude workers</text>
+</svg>
