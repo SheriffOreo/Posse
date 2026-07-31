@@ -154,7 +154,7 @@ the precincts that fit their domain.
   agent-fleet management, and a comparison showing that popular systems --- built for
   supervised single episodes or for adjacent concerns --- cover it only partially
   (\S\ref{sec:bg}).
-  \item Three design principles that resolve the tensions among the requirements
+  \item Four design principles that resolve the tensions among the requirements
   (\S\ref{sec:overview}).
   \item A modular design realizing them --- precinct memory (\S\ref{sec:precincts}),
   deputy continuity (\S\ref{sec:deputies}), the control plane (\S\ref{sec:email}), the
@@ -230,82 +230,108 @@ for managing a long-horizon agent fleet.
   \item[R5 Autonomous fault recovery.] Self-heal from crashes and provider rate limits.
   \item[R6 Cost-aware scheduling.] Treat token/\$ cost as a scheduled resource, not an
   afterthought.
-  \item[R7 Bounded, auditable memory.] Long-term memory that stays within the model
-  window and is trustworthy enough to act on.
+  \item[R7 Bounded, shared, faithful memory.] What the fleet learns must outlive the
+  process that learned it, be readable by \emph{any} agent, fit the model window when
+  recalled, and come back as written, with its source --- not as an approximate
+  reconstruction the agent must second-guess.
 \end{description}
 These are not fully orthogonal: R2, R3, and R7 are facets of one \emph{durable-record
-substrate} (identity, ownership, per-thread memory), and R1 is unreachable without R5.
+substrate} (identity, ownership, shared memory), and R1 is unreachable without R5.
 We list them separately because prior systems fail them \emph{independently} --- a
 system can manage many threads (R3) yet lose each one's continuity on restart (R2).
 
-\subsection{Why existing approaches fall short}
+\subsection{The gap, requirement by requirement}
 \label{sec:gap}
-The families above are strong in their own regime and largely silent on R1--R7,
-because they assume a human is \emph{present} for a \emph{single} episode.
+The families above are strong in their own regimes, and several already meet R3's
+concurrency half --- many units of work at once, though rarely as isolated, owned,
+navigable threads. The rest of the list goes largely unmet, for reasons that split by
+family. The families that build, run, or orchestrate agents treat each run as a
+self-contained episode --- one task, one run, one project --- with a human close at
+hand whenever input is needed; observability platforms are read-only by design; and
+durable-execution engines run for months unattended, but over conventional code,
+where windows, contexts, and token bills do not exist. Five failures follow.
 
-\begin{itemize}[leftmargin=1.1em,itemsep=3pt,topsep=2pt]
-  \item \textbf{Identity is tied to a live process.} In most systems a ``thread'' is a
-  running object (a process, a graph run, a chat); when it ends, its identity and live
-  context end with it (fails R2). \emph{Example:} an analyst has an agent draft a report on
-  Monday; on Thursday they reply ``now break it down by region.'' If Monday's process has
-  exited, a \emph{fresh} agent takes the follow-up with no memory of the data sources,
-  caveats, and choices the first agent made, and must be re-briefed by a hand-written
-  summary that is inevitably lossy. \emph{Why it matters:} most real work is a
-  \emph{sequence} of follow-ups, not one shot, so an assistant that forgets on every
-  restart is perpetually amnesiac and taxes the human with a re-brief on each reply.
-  \emph{How existing systems fail:} AutoGPT, CrewAI, and AutoGen tie the thread to a run
-  that ends with the task; LangGraph can \emph{persist} a run's state, but only if the app
-  you built holds the \code{thread\,id} and reloads it --- nothing routes a later,
-  unprompted reply back to that state on its own. (Server-side threads~\cite{assistants}
-  and durable-execution engines~\cite{temporal} are the exceptions, but for conversations
-  and generic workflows, not agent fleets with cost and memory concerns.)
-  \item \textbf{No asynchronous interruption.} \emph{Example:} an agent is 40\,minutes into
-  an expensive job when the human realizes the spec was wrong and wants to redirect it
-  \emph{now} --- from a phone, while the agent's process may have been killed and relaunched
-  twice since it started. \emph{Why it matters:} humans supervise asynchronously; feedback
-  arrives whenever, and it must reach the \emph{right} thread and be applied without
-  discarding in-flight work. \emph{How existing systems fail:} LangGraph's
-  \code{interrupt()} \emph{pauses the run and waits} at a predetermined point for the human
-  to supply input~\cite{langgraph} --- it does not model a human who is absent and then
-  interrupts unprompted; AutoGen solicits input inline through a human proxy; Temporal can
-  deliver a \emph{signal} into a \emph{live} workflow~\cite{temporal} but has no notion of
-  ``the worker process died --- relaunch it, deliver the message, and have it re-read its
-  inbox first'' (fails R4 for the agent case).
-  \item \textbf{No self-recovery over long horizons.} \emph{Example:} an agent hits the
-  provider's weekly rate limit at 2\,a.m., or the machine reboots, or the process is
-  OOM-killed; without recovery the work silently stalls until a human notices --- perhaps
-  not until the next morning. \emph{Why it matters:} long-horizon autonomy \emph{requires}
-  surviving the routine failures of a metered, shared, single-machine deployment; a fleet
-  that must be babysat is not autonomous, and an unmonitored one can sit dead for hours.
-  \emph{How existing systems fail:} frameworks retry a failed tool \emph{call} within a
-  run, but as \emph{systems} none detect that an agent's \emph{process} has died or been
-  rate-limit-blocked and relaunch it --- immediately on a crash, after the reset on a limit
-  (fails R1, R5).
-  \item \textbf{Cost is unmanaged.} \emph{Example:} a fleet of agents each waits on
-  hour-long jobs, polling their (large) context every few minutes to check progress;
-  because a poll that lands after the provider's short cache window rewrites the
-  \emph{entire} context at $\sim$12.5$\times$ the cost of a cached read, a slightly-too-slow
-  cadence quietly multiplies the monthly bill by an order of magnitude. \emph{Why it
-  matters:} at fleet scale over weeks the dominant cost is \emph{touching} large contexts,
-  and whether each touch costs $1\times$ or $\sim$12.5$\times$ is decided by
-  \emph{scheduling}, not model choice --- ignore it and spend grows far faster than the
-  work does. \emph{How existing systems fail:} observability tools~\cite{langfuse,agentops}
-  \emph{measure} the spend after the fact; no orchestration framework we surveyed
-  \emph{schedules} the wait/park decision against the provider's cache economics (fails R6;
-  the incident behind \S\ref{sec:cost}).
-  \item \textbf{Memory is trapped in a session.} \emph{Example:} agent A spends a long
-  session learning a domain's quirks --- which data source is authoritative, which caveats
-  matter, what was tried and rejected; the next task in that domain gets a \emph{fresh}
-  agent B that knows none of it. Sharing A's knowledge means either replaying A's entire
-  transcript (expensive, and A's process may be long gone) or keeping A alive for the whole
-  horizon (an ever-growing context --- exactly the unbounded-cost problem of R6). \emph{Why
-  it matters:} a domain's hard-won knowledge should be a shared, reusable \emph{asset} any
-  agent can pick up cheaply, not something locked in one agent's head that every newcomer
-  re-learns from scratch. \emph{How existing systems fail:} standing-agent designs grow one
-  context past the window; per-episode designs forget at the end; MemGPT and AIOS give
-  \emph{one} agent bounded memory but not a separate, zero-cost manager that compacts
-  durable per-domain records \emph{any} agent can read (partially meets R7).
-\end{itemize}
+\noindent\textbf{Identity dies with the process.} In most systems a ``thread'' is a
+running object --- a process, a graph run, a chat --- so when the object ends, the
+thread's identity and accumulated context end with it (fails R2). The loss is not
+exotic. An analyst has an agent draft a report on Monday and on Thursday replies,
+``now break it down by region''; real work arrives exactly this way, as a sequence of
+follow-ups. But if Monday's process has exited, Thursday's reply lands on a
+\emph{fresh} agent that knows nothing of the data sources, caveats, and choices behind
+the draft, and the human must re-brief it with a hand-written summary that is
+inevitably lossy. AutoGPT~\cite{autogpt}, CrewAI~\cite{crewai}, and
+AutoGen~\cite{autogen} tie the thread to a run that ends with the task.
+LangGraph~\cite{langgraph} can persist a run's state, but only if the application
+holds the \code{thread\_id} and reloads it --- nothing routes a reply that arrives
+days later back to that state on its own. Server-side threads~\cite{assistants}
+persist the conversation itself, and durable-execution
+engines~\cite{temporal,stepfns} the workflow --- but a persisted transcript is not a
+routed thread: nothing watches for Thursday's reply, matches it to Monday's thread,
+and relaunches an agent on it.
+
+\noindent\textbf{What an agent learns is trapped in its session.} The same coupling
+leaves knowledge stranded along with identity. Suppose agent A spends a long session
+learning a domain's quirks: which tools are reliable, which apparent shortcuts
+dead-end, what was tried and rejected. The next task in that domain gets a new
+agent that knows none of it, and existing designs offer only unattractive ways to
+pass the knowledge on. Replaying A's transcript violates R7's bounded-recall clause
+--- and presumes the transcript was persisted at all. Keeping A alive for the whole
+horizon violates it too: one context growing without bound, the very pathology a
+finite window and a metered bill forbid. Bolting retrieval onto an external store
+scales, but what it returns is whichever fragments similarity search surfaces --- the
+lesson comes back piecemeal, never guaranteed whole, not as it was written. What a
+domain's agents have learned should be a shared, reusable asset that any newcomer
+picks up cheaply and can rely on. MemGPT~\cite{memgpt} comes closest by bounding a
+single agent's context, and AIOS~\cite{aios} by managing per-agent memory in its
+kernel, but per-agent memory is still trapped memory --- neither turns what one agent
+learned into records \emph{any} agent can read (each meets R7 only in part).
+
+\noindent\textbf{Steering assumes a waiting human.} In a fleet the human is absent by
+design, but their feedback cannot wait for the next session. An agent forty minutes
+into an expensive job may be working from a specification the human has since realized
+is wrong; the correction is useful only if it reaches \emph{that} agent promptly and
+redirects it \emph{without} discarding the forty minutes of computation already done.
+Existing designs invert the relationship. LangGraph's \code{interrupt()} pauses the
+run at a predetermined point and \emph{waits} for the human to supply input --- the
+graph, not the human, decides when feedback may arrive. AutoGen likewise solicits
+input inline, through a human proxy. In both, a correction arriving from outside the
+script has no path into a run in flight; the operator's recourse is to stop the job
+and restart it corrected --- forfeiting the very computation the correction was meant
+to save. Temporal narrows the gap: a signal is durable and needs no live worker
+process. But it must name a still-open workflow
+execution~\cite{temporal}, and what it updates is the program's state --- redirecting
+an agent means reaching its \emph{reasoning}, folding the correction into a context
+mid-flight, which no workflow signal models (meets R4 for code, not for agents).
+
+\noindent\textbf{Nothing keeps the fleet alive.} Over a horizon of weeks, the routine
+failures of a shared, pay-per-token deployment are a certainty rather than a tail
+risk: the
+provider's weekly rate limit trips at 2\,a.m., the machine reboots, a process is
+OOM-killed. Without recovery, the affected work silently stalls until a human notices
+--- perhaps not until morning --- and a fleet that needs a minder is not autonomous
+in any useful sense. Agent frameworks retry a failed tool \emph{call} inside a run
+--- LangGraph attaches retry policies to graph nodes~\cite{langgraph} --- and
+durable-execution engines~\cite{temporal,stepfns} restart crashed \emph{workflows}.
+Secured runtimes~\cite{nemoclaw,openhands} host the agent's process and will restart
+a dead container, but leave rate-limit-aware detection and timing to the application.
+None treats the agent's \emph{process} as the thing to supervise: noticing that it
+has died or been rate-limit-blocked, then relaunching it --- immediately after a
+crash, at the reset after a limit. Durable engines earn their R1 and R5 for what they
+run; nothing yet extends either to the agent's own process.
+
+\noindent\textbf{Cost is observed, never scheduled.} At fleet scale the dominant cost
+is \emph{touching} large contexts, and whether each touch is a warm cached read or a
+cold full-context rewrite is decided by scheduling rather than by model choice.
+Consider a fleet whose agents each wait on hour-long jobs, checking progress every few
+minutes: a check that lands after the short cache window rewrites the \emph{entire}
+context at roughly $12.5\times$ the price of a cached read (one major provider's
+published caching prices~\cite{promptcache}), so a cadence only slightly too slow can
+quietly multiply that fleet's monthly bill by an order of magnitude. Observability
+tools~\cite{langfuse,agentops} \emph{measure} this spend after the fact, and
+AIOS~\cite{aios} schedules LLM calls for latency rather than for tokens, but no
+orchestration framework we surveyed \emph{schedules} the poll-versus-park decision ---
+keep the context warm, or sleep until an event wakes the agent --- against the
+provider's cache economics (fails R6; \S\ref{sec:cost} derives the break-even).
 
 \begin{table*}[t]
 \centering
@@ -313,13 +339,13 @@ because they assume a human is \emph{present} for a \emph{single} episode.
 \S\ref{sec:reqs} --- \emph{not} a quality ranking; each system excels in the regime it
 targets. Rubric: \yes\ = a first-class system property; \prt\ = partial, or present but
 left to the application; \no\ = not a concern of the design. Cells reflect each system's
-\emph{default, first-class} stance, not what is achievable with custom code. We mark
-ourselves \prt\ where a mechanism is designed but only partly deployed
-(\S\ref{sec:deputies}). ``Cost \emph{sched.}'' is cost-aware \emph{scheduling}, distinct
-from the cost \emph{tracking} that observability tools do well.}
+\emph{default, first-class} stance, not what is achievable with custom code. ``Cost
+\emph{sched.}'' is cost-aware \emph{scheduling}, distinct from the cost \emph{tracking}
+that observability tools do well.}
 \label{tab:compare}
 \small
 \renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{2.5pt}
 \begin{tabular}{@{}l l ccccccc@{}}
 \toprule
  & \textbf{Type} & \textbf{R1} & \textbf{R2} & \textbf{R3} & \textbf{R4} & \textbf{R5} & \textbf{R6} & \textbf{R7}\\
@@ -334,35 +360,42 @@ LangGraph~\cite{langgraph}                    & graph orchestration  & \prt & \p
 Omnigent~\cite{omnigent} / exo~\cite{exo}     & meta-harness         & \prt & \prt & \yes & \prt & \prt & \no  & \no  \\
 NemoClaw~\cite{nemoclaw} / OpenHands~\cite{openhands} & secured runtime & \prt & \prt & \prt & \prt & \prt & \no  & \prt \\
 Langfuse / AgentOps~\cite{langfuse,agentops}  & observability        & \no  & \no  & \prt & \no  & \no  & \prt & \no  \\
-Durable exec.\ (Temporal)~\cite{temporal,stepfns} & workflow engine  & \yes & \yes & \yes & \yes & \yes & \no  & \no  \\
-AIOS / MemGPT~\cite{aios,memgpt}              & agent OS / memory OS  & \prt & \prt & \prt & \no  & \prt & \prt & \yes \\
+Durable exec.\ (Temporal)~\cite{temporal,stepfns} & workflow engine  & \yes & \yes & \yes & \prt & \yes & \no  & \no  \\
+AIOS / MemGPT~\cite{aios,memgpt}              & agent OS / memory OS  & \prt & \prt & \prt & \no  & \prt & \prt & \prt \\
 \midrule
-\textbf{Posse (this work)}                    & \textbf{agent ops}   & \yes & \prt & \yes & \yes & \yes & \yes & \yes \\
+\textbf{Posse (this work)}                    & \textbf{agent ops}   & \yes & \yes & \yes & \yes & \yes & \yes & \yes \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-Table~\ref{tab:compare} maps where each design puts its effort. \emph{Meta-harnesses}
-manage many agents (R3) but treat each run as transient; \emph{secured runtimes} host
-them safely; \emph{observability} prices them; \emph{durable-execution engines} are the
-closest true prior art for R1--R3/R5 but schedule \emph{compute} durability, with no
-notion of LLM \emph{token} cost (R6), bounded LLM \emph{memory} (R7), or an absent
-human (R4). The gap Posse targets is the \emph{conjunction} of R4, R6, and R7 with a
-durable-identity substrate --- reusing the reasoning and multi-agent ideas of families
-(a)--(c) \emph{inside} its deputies, the harness/runtime ideas of (d) to run them, and
-the OS/memory stance of (f). Posse's own \prt\ on R2 is deliberate: the durable-identity
-substrate ships, but the automatic continuity switch does not yet (\S\ref{sec:deputies}).
+Table~\ref{tab:compare} maps where each design puts its effort. Durable-execution
+engines come closest on identity and recovery, but what they make durable is
+\emph{compute} --- code state, not an agent's context --- and their model has no
+notion of a token bill. The gap Posse targets is the \emph{conjunction}: asynchronous
+steering (R4), scheduled cost (R6), and shared, faithful memory (R7), on a substrate
+that gives agent threads durable identity (R2), ownership and navigability at fleet
+scale (R3), and process-level supervision (R1, R5) --- while reusing the reasoning
+and multi-agent ideas of families (a)--(c) \emph{inside} its deputies, the
+harness/runtime ideas of (d) to run them, observability's read-only view (e) as its
+dashboard, and the OS/memory stance of (f) in its precinct records. One \yes\ in the
+Posse row warrants a word. On R2 the design hands the user a \emph{continuity dial}
+per \emph{case}, Posse's term for one thread of work; the dial currently has two
+settings. Replying to a case, even a finished one, relaunches its original deputy on
+its recorded session, identity and context intact. Opening a new case gets a fresh
+deputy briefed from the durable records. Only the cost-aware policy that would set
+the dial automatically remains future work (\S\ref{sec:deputies}).
 
 % ======================================================================
 \section{Design Overview}
 \label{sec:overview}
 % ======================================================================
 
-\subsection{Three principles}
+\subsection{Four principles}
 The requirements pull against each other. Full continuity (R2) wants one long-lived
 context; cost (R6) and the finite window punish exactly that. Autonomy (R1, R5) wants
-always-on processes; always-on-ness is what a naive design bills you for. Posse rests
-on three decisions.
+always-on processes; always-on-ness is what a naive design bills you for. Shared
+knowledge (R7) wants to accumulate inside one agent's context, where it is neither
+durable nor legible to a second agent. Posse rests on four decisions.
 
 \insight{I1. Decouple identity from liveness.}{A thread's identity is a \emph{durable
 record}, not a running process. Continuity (R2) is provided by persisted per-thread
@@ -379,6 +412,14 @@ plane --- routing, liveness, recovery, waking, resource serialization, compactio
 \emph{triggers} --- makes \emph{no} LLM calls. The model is invoked only for actual
 work and a handful of manager decisions. This is what makes always-on operation (R1)
 affordable (R6).}
+
+\insight{I4. Treat memory as a shared record, not a private context.}{Knowledge that a
+naive design traps inside one long-lived context --- legible only while that process,
+and its bill, stays alive --- is instead externalized into per-precinct durable records
+(R7): a compacted ledger, an append-only case log, and per-case files. Every deputy
+reads them at spawn, so handing context to a second agent costs a file read rather than
+a kept-alive session. Continuity becomes a property of the \emph{precinct}, not of any
+one agent: any deputy can pick up where another left off.}
 
 \subsection{System overview}
 Figure~\ref{fig:arch} shows the result. Work is organized into \textbf{precincts} ---
@@ -422,7 +463,10 @@ Receptionist; the other precincts are illustrative and user-created.}
 
 \subsection{Life of a case}
 Figure~\ref{fig:life} traces one case. A message arrives and is routed; a deputy is
-spawned or an existing identity resumed. The deputy messages a plan, works in small
+spawned or an existing identity resumed. At spawn the deputy is handed its precinct's
+\emph{ledger} --- injected into its opening context --- so it starts already knowing the
+domain's big picture and the state of related work (I4), rather than rediscovering it.
+The deputy messages a plan, works in small
 chunks, offloads compute to a detached job, and --- for a long job --- \emph{submits it
 to a job manager and sleeps}, to be woken by an event rather than by polling
 (\S\ref{sec:cost}). If the human replies mid-case, the deputy is \emph{surgically
@@ -610,9 +654,9 @@ re-submitted.
 \label{sec:sheriff}
 % ======================================================================
 \textbf{Role (R1, R5, R7).} The Sheriff is the fleet's single ``manager'' \emph{role},
-presented as one but implemented as two cooperating always-on loops: a liveness
-\emph{watchdog} (deputy supervision --- crash and rate-limit recovery) and a records
-daemon (precinct-records health --- ledger compaction, a change-request queue, precinct
+presented as one but implemented as two cooperating always-on loops: a
+\emph{deputy-supervision} loop (liveness monitoring --- crash and rate-limit recovery)
+and a records daemon (precinct-records health --- ledger compaction, a change-request queue, precinct
 lifecycle). We unify the \emph{model} (one manager, one dashboard panel) while keeping
 the two proven loops physically separate; folding them into one process is a deferred
 option.
@@ -645,11 +689,11 @@ purge.
 
 \noindent\textbf{Design alternatives.}
 \begin{itemize}[leftmargin=1.1em,itemsep=1pt,topsep=2pt]
-  \item \emph{Merge the watchdog into the Sheriff, or keep them separate?} We
-  \emph{present} them as one manager but keep the battle-tested liveness loop physically
-  separate, because the relaunch logic is the most safety-critical code in the system.
-  Unifying the model without rewriting the mechanism captured the clarity at near-zero
-  risk.
+  \item \emph{Present the liveness loop as one facet of the Sheriff, or as a separate
+  service?} We \emph{present} it as part of the single manager but keep the battle-tested
+  liveness loop physically separate, because the relaunch logic is the most
+  safety-critical code in the system. Unifying the model without rewriting the mechanism
+  captured the clarity at near-zero risk.
   \item \emph{Mechanical vs.\ LLM compaction.} We use LLM-by-default with a mechanical
   fallback --- quality when possible, safety always.
   \item \emph{Who may edit records?} Concentrating all non-append authority in one
@@ -853,10 +897,11 @@ hand-offs as the price of predictability.
 Agent frameworks have largely solved the inside of a task. As deployments grow into
 long-running fleets, the binding constraint moves outside it: keeping many agents
 working, cheaply, for a long time, under a human who steers but cannot supervise. Posse
-is an operating system for that regime. Three decisions carry it --- identity decoupled
-from process liveness, token cost as a scheduled resource, and a zero-cost mechanical
-control plane separated from paid cognition --- and together they turn continuity,
-concurrency, autonomy, and cost from failure modes into engineered system properties.
+is an operating system for that regime. Four decisions carry it --- identity decoupled
+from process liveness, token cost as a scheduled resource, a zero-cost mechanical
+control plane separated from paid cognition, and memory as a shared record rather than a
+private context --- and together they turn continuity, concurrency, autonomy, cost, and
+cross-agent knowledge transfer from failure modes into engineered system properties.
 The Sheriff watches; the deputies work; the records remember; and the cost stays bounded
 by design.
 
