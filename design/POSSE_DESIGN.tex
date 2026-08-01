@@ -75,10 +75,11 @@ agent reads them to pick up a line of work cheaply, instead of the expensive hab
 keeping one agent alive for the whole horizon; runs each unit of work as a \emph{deputy}
 whose identity survives process death; steers and interrupts deputies through an
 asynchronous message channel; and supervises the whole fleet with a single always-on
-\emph{Sheriff}. Three
+\emph{Sheriff}. Four
 principles carry the design: identity decoupled from process liveness, token cost
-treated as a first-class scheduling resource, and a zero-cost mechanical control plane
-separated from paid model cognition. From the last principle we derive a
+treated as a first-class scheduling resource, a zero-cost mechanical control plane
+separated from paid model cognition, and memory externalized as a shared record rather
+than a private context. From the last principle we derive a
 provider-parameterized, cache-aware scheduling policy whose poll-versus-park break-even we
 give in closed form. Posse is released as open source; the framework ships the Sheriff
 and a Receptionist front desk, and users define the precincts that fit their domain.
@@ -137,10 +138,11 @@ management layer (\S\ref{sec:bg}).
 metaphor is a \emph{Sheriff} (a single autonomous system manager) supervising
 \emph{Deputies} (ephemeral worker agents), grouped into \emph{Precincts} (domains).},
 an operating system for long-horizon agent fleets. Posse distills the difficulties
-above into seven requirements (R1--R7, \S\ref{sec:reqs}) and meets them with three
+above into seven requirements (R1--R7, \S\ref{sec:reqs}) and meets them with four
 principles: (I1) a thread's identity is a durable \emph{record}, decoupled from any
-live process; (I2) token cost is a first-class \emph{scheduling} resource; and (I3) a
-zero-cost mechanical control plane is separated from paid model cognition. Concretely,
+live process; (I2) token cost is a first-class \emph{scheduling} resource; (I3) a
+zero-cost mechanical control plane is separated from paid model cognition; and (I4)
+memory is a shared, durable record rather than a private context. Concretely,
 Posse organizes work into user-defined \emph{precincts} with durable, bounded memory;
 runs each unit of work as an ephemeral \emph{deputy} whose identity outlives its
 process; steers deputies through an asynchronous message channel that can interrupt
@@ -532,8 +534,11 @@ model window and R6:
   most expensive thing to touch.
   \item \emph{Per-episode memory only.} Cheap and bounded, but forgets between cases;
   every follow-up is re-briefed by hand (fails R2, R7).
-  \item \emph{Retrieval over a vector store.} Scales, but retrieval is lossy and hard
-  for a human to audit (``what does this domain know?'').
+  \item \emph{Index all past work and fetch the most relevant snippets on demand}
+  (similarity search over stored text). Scales to unbounded history, but a query returns
+  a best-guess subset rather than the whole picture --- so it can silently miss relevant
+  context --- and the index is not something a human can read to answer ``what does this
+  domain know?''
   \item \textbf{Chosen: a compacted ledger + append-only log + full case files},
   managed by a separate zero-cost process. The ledger stays within a token budget
   (bounded, cheap to load); nothing is silently lost, because the log and case files
@@ -564,12 +569,12 @@ continuity tied to \emph{process liveness} rather than to the work.
 
 \insight{The principle (I1).}{Route every follow-up to a \emph{stable, meaningful
 identity} recorded in a persisted map --- not to whatever process happens to be alive.
-Continue that identity by \emph{context budget}: while its context is cheap,
-\code{resume} the same session (full live context, warm cache); once it grows past
-budget, spawn a fresh process under the \emph{same} identity and inject a compact brief
-(prior case numbers, keywords, pointers to the prior transcript and deliverables).
-Identity is stable either way; context stays bounded; the expensive cold revive of a
-giant context is avoided.}
+That identity can be continued two ways: \code{resume} the \emph{same} live session
+(full context, warm cache, maximal continuity), or spawn a fresh process under the
+\emph{same} identity with a compact brief injected (prior case numbers, keywords,
+pointers to the transcript and deliverables). Identity is stable either way; which
+continuation applies is a \emph{steerable policy choice} about how much continuity the
+task needs (below), never a side effect of which process happens to be alive.}
 
 \noindent\textbf{Design alternatives (continuity policy).} We considered five points on
 the continuity--cost spectrum:
@@ -586,19 +591,22 @@ the continuity--cost spectrum:
   lineage explicit, but the injected brief is a summary, not the live session, and
   naming multiplies unless paired with a stable name.
   \item[E.] \textbf{Chosen direction: hybrid.} A stable per-thread \emph{name} (like
-  C/D) plus a \emph{resume-if-cheap-else-reinject} switch (C when cheap, D when not),
-  with the map persisted at creation. Among the five, only E avoids a \emph{severe}
-  weakness on continuity, identity, and cost.
+  C/D) plus a \emph{continue-or-reinject} choice --- resume the same session (C) when a
+  task needs strong continuity, or spawn fresh under the same name with an injected brief
+  (D) otherwise --- with the map persisted at creation. Among the five, only E avoids a
+  \emph{severe} weakness on continuity, identity, and cost.
 \end{enumerate}
 
-\insight{Deployment status (honest accounting).}{The \emph{durable} half of E is
-shipped: a persisted lineage map records each thread's identity at creation, and an
-active-deputies board makes the current owner authoritative. The \emph{context-budget
-switch} --- metering context size to choose resume-vs-reinject automatically --- is
-designed but only \emph{partly realized}: today the router resumes a thread's recorded
-session when valid and otherwise spawns fresh under a routed identity, without yet
-measuring context size to drive the choice. E is our chosen direction and its identity
-substrate is live; the automatic cost-threshold is future work.}
+\insight{Who decides: continuity vs.\ cost.}{The continue-or-reinject choice is
+\emph{steerable}, not a fixed automatic threshold. Today the signal is mechanical --- a
+threaded reply resumes the live session, a new case starts fresh under the same identity
+(\S\ref{sec:email}) --- and the design extends this so the \emph{user} can require that a
+hard, tightly-coupled task stay in one continuous session and the \emph{deputy} can flag
+that its case needs the live context; an \emph{automatic} cost-threshold that sets the
+dial without being told remains future work (\S\ref{sec:reqs}). Absent a stated need, the
+default favors the bounded, cost-efficient path --- a fresh process under the same
+identity with a compact brief. The philosophy: spend on strong continuity exactly where
+the task genuinely needs it, and stay cheap everywhere else.}
 
 % ======================================================================
 \section{The Control Plane}
@@ -617,9 +625,8 @@ deputy's earlier message $\to$ that deputy's \emph{mailbox}; (2) an explicit
 already-\emph{dead} deputy is attributed to its precinct via the persisted lineage
 map). Only genuinely \emph{unaddressed} messages reach the Receptionist, whose
 disposition (answer, or write a spec and spawn a deputy) is the one routing path that
-spends an LLM turn. An earlier design scored message text against all agents with a
-keyword matcher; we removed it after it mis-routed under ambiguity. Deterministic
-routing is cheaper and more predictable.
+spends an LLM turn. Deterministic routing on these two signals is cheap, predictable,
+and cannot mis-route under ambiguity.
 
 \noindent\textbf{Interruption.} When a reply targets a \emph{live} deputy, the message
 is appended to its mailbox under a lock and the deputy is \emph{surgically interrupted}:
@@ -642,11 +649,6 @@ re-submitted.
   \item \emph{Debounce vs.\ immediate.} We interrupt \emph{immediately} on every human
   message, with boot-marker coalescing so a burst is drained together. Feedback latency
   matters more than avoiding a few extra relaunches.
-  \item \emph{Prompt via argv vs.\ stdin.} One subtle failure mode illustrates the risk:
-  if the resume prompt is embedded in the process command line, a broad process-kill
-  signal can match the agent's own argv and cause a self-kill; passing prompts via
-  \emph{stdin} avoids it. The control plane's own mechanics become a fault source at
-  scale.
 \end{itemize}
 
 % ======================================================================
@@ -670,10 +672,16 @@ the manager run forever without being a cost center.}
 \noindent\textbf{Compaction.} When a ledger crosses a soft token budget the Sheriff
 compacts it toward a target with one LLM call on a cheap model, given whole-system
 context (all precincts' ledgers) and a fixed prompt that forbids inventing or silently
-dropping a case. On any failure or rate limit it falls back to a mechanical truncation,
-so the ledger is \emph{always} bounded and the daemon never crashes. Compaction is the
-system's ``reflection'' step --- performed by the manager, off the worker's critical
-path.
+dropping a case. On a failure or rate limit it does \emph{not} truncate mechanically; it
+waits and retries. The two outcomes are asymmetric: a ledger sitting slightly over
+budget for a while costs almost nothing, whereas a rushed, low-quality compaction that
+drops or garbles a case is expensive and hard to undo. The soft budget is a
+\emph{trigger}, not a hard ceiling, so tolerating a brief overage while a good
+compaction succeeds is the safe trade. The ledger is therefore \emph{bounded in normal
+operation}, not unconditionally: a \emph{sustained} provider outage lets it grow past
+budget until compaction next succeeds --- a temporarily larger ledger, never a lost case
+(the never-compacted case log is the durable record). Compaction is the system's
+``reflection'' step --- performed by the manager, off the worker's critical path.
 
 \noindent\textbf{Change-requests \& authority.} Records mutations that are not simple
 appends (retract a log line, edit a ledger, allocate an identifier, create/delete a
@@ -689,13 +697,10 @@ purge.
 
 \noindent\textbf{Design alternatives.}
 \begin{itemize}[leftmargin=1.1em,itemsep=1pt,topsep=2pt]
-  \item \emph{Present the liveness loop as one facet of the Sheriff, or as a separate
-  service?} We \emph{present} it as part of the single manager but keep the battle-tested
-  liveness loop physically separate, because the relaunch logic is the most
-  safety-critical code in the system. Unifying the model without rewriting the mechanism
-  captured the clarity at near-zero risk.
-  \item \emph{Mechanical vs.\ LLM compaction.} We use LLM-by-default with a mechanical
-  fallback --- quality when possible, safety always.
+  \item \emph{On a failed compaction: truncate mechanically, or wait and retry?} We wait
+  and retry. A ledger briefly over budget is cheap; a bad compaction that loses a case is
+  expensive --- so we never trade compaction quality for a hard bound the soft budget
+  does not actually require.
   \item \emph{Who may edit records?} Concentrating all non-append authority in one
   identity, gated by verified requests and a journal, keeps the record trustworthy;
   letting deputies edit their own history would destroy attribution.
@@ -708,17 +713,32 @@ purge.
 \textbf{Role (R6).} This is where Posse most departs from prior systems: \emph{token
 cost is scheduled}, against a model of the provider's cache economics.
 
+\noindent\textbf{Background: prompt caching.} Modern LLM providers cache the
+\emph{prefix} of a request so that a later call sharing that prefix skips recomputing it.
+The cache entry has a short time-to-live (TTL): a call that reuses a still-live prefix
+pays a discounted \emph{cache-read} rate for those tokens, while a call that arrives
+after the entry expired must re-establish the prefix at the full \emph{cache-write} rate.
+The two rates differ sharply, and it is their \emph{ratio}, not the absolute price, that
+a scheduler must reason about. For example, on Anthropic's Claude models a short (5-minute)
+TTL cache \emph{write} is priced at $1.25\times$ the base input-token rate and a cache
+\emph{read} at $0.1\times$~\cite{promptcache}, so re-establishing an expired prefix costs
+$m \approx 12.5\times$ what reusing a live one does. The exact constant is
+provider- and model-specific --- OpenAI publishes a comparable read
+discount~\cite{openaicache} --- but every major provider exposes some version of this
+cheap-read / expensive-rewrite gap; Posse is built for the general shape, not one price
+list.
+
 \noindent\textbf{The cost model.} Long-running deputies wait on long jobs. The naive
 policy --- poll the result on a coarse cadence, re-reading a large context each time ---
-is ruinous, and the reason is caching, not the number of polls. Providers cache the
-prompt prefix with a short time-to-live (TTL): a touch within the TTL is a warm
-\emph{read}; a touch after is a cold \emph{rewrite} of the whole context, at roughly
-$m \approx 12.5\times$ the read (Fig.~\ref{fig:cost}a). A coarse cadence makes every
+is ruinous, and the reason is this caching asymmetry, not the number of polls. A poll
+that lands within the TTL is a warm \emph{read}; a poll that lands after it is a cold
+\emph{rewrite} of the whole context, at $m\times$ the read (Fig.~\ref{fig:cost}a; $m
+\approx 12.5$ for the Claude example above). A coarse cadence makes every
 poll a cold rewrite of a growing context. Our analytical model
 (\S\ref{sec:eval}, Fig.~\ref{fig:eval}) predicts that a coarse cadence inflates a
-fleet's aggregate spend $\sim$8.9$\times$; in an unmanaged deployment we observed, a
-policy of this kind produced a cost regression consistent with that prediction, until
-the scheduler below replaced it.
+fleet's aggregate spend $\sim$8.9$\times$ (\S\ref{sec:eval}). Separately, an unmanaged
+deployment of this kind exhibited a large cost regression of the same character --- an
+uncontrolled observation, not a measurement --- until the scheduler below replaced it.
 
 \begin{figure}[t]
 \centering
@@ -879,8 +899,11 @@ its message --- quality gating is orthogonal and out of scope. (iii)
 is the invariant that makes concurrent interrupts safe; a bug there reintroduces lost or
 duplicated feedback, so this path needs the care of any lock protocol. (iv)
 \emph{Compaction fidelity.} LLM compaction can drop or distort a case despite a
-forbidding prompt; the mechanical fallback bounds \emph{availability} but not
-\emph{fidelity}, with the never-compacted case log as the backstop of record.
+forbidding prompt; on a failed compaction the Sheriff waits and retries rather than
+truncating, so a bad compaction is never \emph{committed} mechanically --- but a
+successful-yet-imperfect one can still lose fidelity, with the never-compacted case log
+as the backstop of record. The price is that a \emph{prolonged} compaction outage lets
+the ledger sit over budget until a clean compaction succeeds (\S\ref{sec:sheriff}).
 
 \noindent\textbf{Limitations.} (1) Posse targets a single-provider, single-operator
 deployment; the cost constants are provider-specific and multi-tenant fairness is out of
@@ -966,8 +989,10 @@ of Software Errors}. PhD thesis, KTH, 2003.
 Artificial Intelligence}. IJCAI, 1973.
 \bibitem{borg} A.\ Verma et al. \emph{Large-scale Cluster Management at Google with
 Borg}. EuroSys, 2015.
-\bibitem{promptcache} Anthropic. \emph{Prompt Caching (cache-control, $\sim$5-minute
-TTL)}. 2024. \url{https://docs.anthropic.com}.
+\bibitem{promptcache} Anthropic. \emph{Prompt caching} --- a 5-minute-TTL cache write is
+priced at $1.25\times$ base input tokens (1-hour TTL $2\times$) and a cache read at
+$0.1\times$. Claude Developer Platform documentation, 2024--2026.
+\url{https://platform.claude.com/docs/en/build-with-claude/prompt-caching}.
 \bibitem{openaicache} OpenAI. \emph{Prompt Caching in the API}. 2024.
 \url{https://platform.openai.com/docs/guides/prompt-caching}.
 \bibitem{gimcache} I.\ Gim et al. \emph{Prompt Cache: Modular Attention Reuse for
