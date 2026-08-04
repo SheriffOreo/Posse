@@ -43,16 +43,20 @@ CSS custom properties, so night mode is unchanged from before.
 
 ## Run it
 
+> Full first-time setup is in the repo-root [`../ONBOARDING.md`](../ONBOARDING.md).
+
 ```bash
 cd dashboard
-# 1) set a login password (stored only as a salted PBKDF2 hash under instance/)
-python3 set_password.py                 # or: INFRA_DASH_PASSWORD=... python3 set_password.py --env
-#    (first-time bootstrap without the CLI: python3 make_register_link.py → open the URL)
+# 1) register the operator account — your EMAIL is the username; you set the password
+#    via a one-time link (no password typed on the CLI):
+python3 make_register_link.py --email you@example.com --name "Your Name"   # open the printed URL
+#    (or set/reset a password directly: python3 set_password.py [--email you@example.com])
 # 2a) localhost only (reach via SSH tunnel):
 bash start_dashboard.sh                  # http://127.0.0.1:8787
 # 2b) public host, no tunnel — binds 0.0.0.0 AND enables TLS (encrypted login):
 INFRA_DASH_PUBLIC=1 bash start_dashboard.sh
-#     → https://<this-host>:8787   (self-signed cert generated once into instance/)
+#     → https://<this-host>:8787   (CA-signed leaf from gen_ca_cert.sh, generated once
+#       into instance/; trust instance/rootCA.pem once on the browsing device — see below)
 ```
 
 `start_dashboard.sh` runs the server in its own auto-restarting `infra_dashboard`
@@ -67,10 +71,20 @@ ssh -L 8787:localhost:8787 <this-host>
 ```
 
 **Public mode** (`INFRA_DASH_PUBLIC=1`) — browse `https://<this-host>:8787`
-directly on the LAN. The cert is self-signed, so the browser shows a one-time
-"not private" warning → **Advanced → Proceed**. To bind publicly over plain HTTP
-instead (password travels **cleartext** on the LAN — not recommended), use
+directly on the LAN. The cert is a **CA-signed leaf** minted once by
+`gen_ca_cert.sh` (a small local Root CA, `instance/rootCA.pem`, signs the host's
+leaf `instance/cert.pem`). To make the browser show a normal padlock, install
+`instance/rootCA.pem` **once** on the viewing device (macOS: double-click →
+Keychain Access → *Always Trust*); after that no warning appears. Until the root is
+trusted, the connection is still encrypted but the browser shows a one-time "not
+private" warning → **Advanced → Proceed**. To bind publicly over plain HTTP instead
+(password travels **cleartext** on the LAN — not recommended), use
 `INFRA_DASH_HOST=0.0.0.0 INFRA_DASH_TLS=0 bash start_dashboard.sh`.
+
+> Rotating the cert: delete `instance/cert.pem` + `instance/key.pem` and re-run
+> `bash gen_ca_cert.sh` (keeps the same root, so already-trusting devices need no
+> action). Delete `instance/rootCA.*` too to rotate the root (devices must re-trust).
+> `instance/*.key` are private — never share them; only the `*.pem` certs are public.
 
 ## Configuration (env vars)
 
@@ -81,7 +95,7 @@ instead (password travels **cleartext** on the LAN — not recommended), use
 | `INFRA_DASH_PORT` | `8787` | port |
 | `INFRA_DASH_PUBLIC` | `0` | `1` = shortcut for host `0.0.0.0` + TLS on (public, encrypted) |
 | `INFRA_DASH_TLS` | `0` | `1` = wrap the socket with stdlib `ssl`; adds `Secure` to the cookie |
-| `INFRA_DASH_CERT` / `INFRA_DASH_KEY` | `instance/cert.pem` / `instance/key.pem` | TLS cert + key (self-signed, generated once by `start_dashboard.sh`) |
+| `INFRA_DASH_CERT` / `INFRA_DASH_KEY` | `instance/cert.pem` / `instance/key.pem` | TLS cert + key (CA-signed leaf from `gen_ca_cert.sh`; falls back to self-signed if that script is absent) |
 | `INFRA_DASH_INSTANCE` | `dashboard/instance` | where the password hash + cookie secret (+ TLS cert/key) live (git-ignored) |
 | `INFRA_DASH_PASSWORD` | — | one-shot, only read by `set_password.py --env` |
 
@@ -100,8 +114,9 @@ instead (password travels **cleartext** on the LAN — not recommended), use
   `output_path`) resolve against `INFRA_STATE_ROOT`, never the server's cwd.
 - **Public bind + TLS.** Default bind is localhost (reach via SSH tunnel). To serve
   on the LAN without a tunnel, use `INFRA_DASH_PUBLIC=1` — it binds `0.0.0.0` **and**
-  turns on TLS (stdlib `ssl`, self-signed cert in `instance/`), so the login password
-  is encrypted in transit and the session cookie gets the `Secure` flag. Plain-HTTP
+  turns on TLS (stdlib `ssl`, CA-signed leaf in `instance/`; trust `instance/rootCA.pem`
+  once per device for a clean padlock), so the login password is encrypted in transit
+  and the session cookie gets the `Secure` flag. Plain-HTTP
   public bind is possible (`INFRA_DASH_TLS=0`) but sends the password **cleartext** on
   the wire — keep this on the CMU LAN only; never internet-expose or port-forward it.
 - Security headers on every response: `nosniff`, `X-Frame-Options: DENY`,

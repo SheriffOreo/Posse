@@ -100,6 +100,13 @@ def run_job(job_path: Path, gpu: str):
         "stdout_tail": tail(out_log), "stderr_tail": tail(err_log),
         "finished_at": time.time(),
     }
+    # Task 325: carry the submit-side owner through into the DONE record so the
+    # claude_infra dashboard can attribute the job (it reads gpu_queue/done and
+    # renders owner_agent). .get() keeps pre-Task-325 pending JSONs — which have
+    # no owner field — running exactly as before.
+    owner = job.get("owner_agent") or job.get("owner")
+    if owner:
+        result["owner_agent"] = owner
     # atomic publish: tmp then rename
     tmp = DONE / f".{jid}.json.tmp"
     tmp.write_text(json.dumps(result, indent=2))

@@ -12,14 +12,24 @@ tsomp; any cutover is a separate, explicitly-approved step.
 
 | | What | Where it lives | In git? |
 | --- | --- | --- | --- |
-| **CODE** | the ~26 daemon + helper files (`scratch_watchdog.py`, `scratch_jobmgr.py`, `gpu_manager.py`, `scratch_inbox*.{py,sh}`, spawn/relaunch/interrupt/detach/snapshot/auth/submit/sleep helpers) + 2 companions (`scratch_spawn_paper_worker.sh`, `submit_gpu.py`) | `claude_infra/infra/` | **yes** |
-| **DOCS + DASHBOARD** | this file, READMEs, `.gitignore`, `infra_env.sh`, `dashboard/`, `proposed_patches/` | `claude_infra/` | **yes** |
+| **CODE** | the full daemon + helper set (~51 files): routing/liveness (`scratch_inbox*.{py,sh}`, `scratch_watchdog.py`, `scratch_jobmgr.py`, `gpu_manager.py`, spawn/relaunch/interrupt/detach/snapshot/auth/submit/sleep helpers) **plus** the Sheriff & Deputies system (`scratch_sheriff*.py/.sh`, `scratch_records.py`, `scratch_precinct.py`, `scratch_case_seq.py`, `scratch_deputy_state.py`, `scratch_jtf.py`, `scratch_web_case.py`, `scratch_subtask_wake.py`, `scratch_task_parent.py`, `scratch_spawn_anon.sh`) and their unit tests | `claude_infra/infra/` | **yes** |
+| **DOCS + DASHBOARD** | this file, `ONBOARDING.md`, READMEs, `.gitignore`, `infra_env.sh`, `dashboard/`, `proposed_patches/` | `claude_infra/` | **yes** |
 | **RUNTIME STATE** | `scratch_full_logs/` (2.3 GB: logs, per-worker prompts + relaunch scripts, mailboxes, receipts, `sent_emails.jsonl`, `watchdog_jobs.json`, `jobs/`), `gpu_queue/` (93 MB), `scratch_agents_registry.json`, `inbox_blocked.json` | tsomp working dir (`INFRA_STATE_ROOT`) | **no** — git-ignored |
 | **SECRETS** | `~/.smtp_env`, `~/.anthropic_key`, `~/.claude/.credentials.json`, the PAT in the git remote URL | outside any repo (chmod 600) | **no** — never |
 
 Rationale: the state is large, machine-local, and rewritten continuously by the live
 daemons; versioning it is pointless and would bloat the repo. The repo is the
 **code** home. The daemons keep reading/writing state in place.
+
+> **Release generalizations (mirror ≠ live, by design).** The committed `infra/` copies
+> are de-identified and parameterized so a **new operator** can run them unedited: the
+> sender allow-list and default recipients are env-driven (`INFRA_MAIL_ALLOWED`,
+> `INFRA_OPERATOR_EMAIL`/`INFRA_OPERATOR_NAME`) instead of hardcoded addresses, and the
+> mail endpoints default to Gmail but honor `SMTP_HOST`/`IMAP_HOST` overrides. Defaults
+> are empty/fail-closed, so behavior is identical once configured. The **live** tsomp
+> daemons are untouched by these edits. Remaining tsomp couplings (a few `/home/steven`
+> paths in the shell starters, personal addresses in `*_test.py` fixtures) are the
+> `INFRA_STATE_ROOT` cutover surface below and harmless test data.
 
 ---
 

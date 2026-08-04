@@ -13,16 +13,20 @@ import http.cookies
 import json
 import mimetypes
 import os
+import re
 import ssl
+import subprocess
 import sys
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import auth
 import config
-import cowork
+import jtf
 import lineage
+import multipart
 import pages
 import state
 
@@ -76,7 +80,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Security-Policy",
                          "default-src 'self'; style-src 'self' 'unsafe-inline'; "
-                         "script-src 'self' 'unsafe-inline'; img-src 'self' data:")
+                         # Case 421: blob: lets the create-case form preview pasted /
+                         # dropped images via URL.createObjectURL (object URLs).
+                         "script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                         "font-src 'self' data:")
         for k, v in (extra or {}):
             self.send_header(k, v)
         self.end_headers()
@@ -122,7 +129,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._html(pages.register_page(
                     error="Invalid, used, or expired registration link.",
                     closed=True), 403)
-            return self._html(pages.register_page(token=tok))
+            info = auth.register_info()
+            return self._html(pages.register_page(
+                token=tok, email=info.get("email"), name=info.get("name")))
 
         if not self._authed():
             if path.startswith("/api/"):
@@ -134,12 +143,32 @@ class Handler(BaseHTTPRequestHandler):
             return self._html(pages.status_page())
         if path == "/history":
             return self._html(pages.history_page())
+        if path == "/precincts":
+            return self._html(pages.precincts_page())
+        if path == "/precinct":
+            return self._html(pages.precinct_detail_page((q.get("name") or [""])[0]))
         if path == "/lineage":
             return self._html(pages.lineage_page())
+        if path == "/jtf":
+            return self._html(pages.jtf_page())
         if path == "/cowork":
-            return self._html(pages.cowork_page())
+            # Phase E: "Cowork" was renamed "JTF" — keep the old link working
+            # (redirect, never 500) for any bookmark / in-flight page.
+            return self._redirect("/jtf")
         if path == "/api/status":
             return self._json(_api_status())
+        if path == "/api/gpu_stats":
+            # Task 377 #3: on-demand per-GPU stats (nvidia-smi run per request).
+            # Deliberately NOT part of _api_status — only the Status page Refresh
+            # button hits this, so nvidia-smi never runs on the 8s auto-poll.
+            return self._json(state.gpu_stats())
+        if path == "/api/precincts":
+            return self._json({"sheriff": state.sheriff_status(),
+                               "precincts": state.precincts()})
+        if path == "/api/precinct":
+            name = (q.get("name") or [""])[0]
+            d = state.precinct_detail(name)
+            return self._json(d or {"error": "not found"}, 200 if d else 404)
         if path == "/api/history/days":
             return self._json(state.history_day_counts())
         if path == "/api/history/day":
@@ -170,14 +199,47 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(lineage.build_forest())
         if path == "/api/agents":
             qs = (q.get("q") or [""])[0]
-            return self._json(cowork.agent_index(qs))
+            return self._json(jtf.agent_index(qs))
         if path == "/download":
             return self._download((q.get("path") or [""])[0])
         return self._json({"error": "not found"}, 404)
 
     # -- POST ---------------------------------------------------------------
+    # Whitelisted set for the model write path (mirrors scratch_records._MODELS).
+    _MODELS = ("fable", "opus", "sonnet", "haiku")
+
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
+        # Task 376: the dashboard's FIRST write — set a precinct's default model.
+        # Auth-gated, model whitelisted, only edits an EXISTING precinct, and
+        # delegates to the tsomp records manager (the single source of truth).
+        if u.path == "/precinct/model":
+            if not self._authed():
+                return self._redirect("/login")
+            return self._set_precinct_model()
+        # Task 384b / Phase C: set the ONE global sheriff model (system-wide, not
+        # per-precinct). Same auth-gated, whitelisted, records-manager-delegating
+        # pattern as the precinct model above.
+        if u.path == "/sheriff/model":
+            if not self._authed():
+                return self._redirect("/login")
+            return self._set_sheriff_model()
+        # Task 377 #4: the authed per-precinct "Create new case" upload. Submitted
+        # via fetch() with FormData, so it answers JSON (401 on unauth, not a
+        # redirect). Parses multipart itself, then returns before the urlencoded
+        # body read below.
+        if u.path == "/precinct/create_case":
+            if not self._authed():
+                return self._json({"ok": False, "error": "unauthorized"}, 401)
+            return self._create_web_case()
+        # Case 384e / Phase E: the authed JTF (Joint Task Force) submission. Submitted
+        # via fetch() with a JSON body, so it answers JSON (401 on unauth, not a
+        # redirect). Validates each slot (precinct-or-deputy) then drops a record the
+        # inbox-side scratch_jtf.py bridge materializes.
+        if u.path == "/api/jtf":
+            if not self._authed():
+                return self._json({"ok": False, "error": "unauthorized"}, 401)
+            return self._create_jtf()
         if u.path not in ("/login", "/register"):
             return self._json({"error": "not found"}, 404)
         ip = self._client_ip()
@@ -207,21 +269,239 @@ class Handler(BaseHTTPRequestHandler):
         tok = form.get("token", [""])[0]
         pw = form.get("password", [""])[0]
         pw2 = form.get("password2", [""])[0]
+        name = form.get("name", [""])[0]
         if not auth.check_register_token(tok):
             auth.record_fail(ip)
             return self._html(pages.register_page(
                 error="Invalid, used, or expired registration link.", closed=True), 403)
+        info = auth.register_info()
         if pw != pw2:
             return self._html(pages.register_page(
-                token=tok, error="Passwords did not match."), 400)
+                token=tok, email=info.get("email"), name=name or info.get("name"),
+                error="Passwords did not match."), 400)
         if len(pw) < auth.MIN_PW_LEN:
             return self._html(pages.register_page(
-                token=tok, error=f"Password too short (min {auth.MIN_PW_LEN} chars)."), 400)
-        if auth.consume_register_token(tok, pw):
+                token=tok, email=info.get("email"), name=name or info.get("name"),
+                error=f"Password too short (min {auth.MIN_PW_LEN} chars)."), 400)
+        if auth.consume_register_token(tok, pw, name=name):
             auth.record_success(ip)
             return self._redirect("/login")
         return self._html(pages.register_page(
             error="Registration failed — link invalid or already used.", closed=True), 403)
+
+    # -- authed write: set a precinct's default model (Task 376) -------------
+    def _set_precinct_model(self):
+        """Validate + persist a precinct's default model by delegating to the tsomp
+        records manager. Only edits an EXISTING precinct with a whitelisted model;
+        anything else is a no-op redirect. Never creates a precinct or writes
+        anything else — the dashboard stays otherwise read-only."""
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        data = self.rfile.read(n).decode("utf-8", "replace") if n else ""
+        form = urllib.parse.parse_qs(data)
+        name = (form.get("name") or [""])[0].strip()
+        model = (form.get("model") or [""])[0].strip().lower()
+        back = "/precinct?name=" + urllib.parse.quote(name)
+        known = {p["name"] for p in state.precincts()}
+        if name in known and model in self._MODELS:
+            # Delegate to the records manager (its precincts.json is the source of
+            # truth the dashboard reads). Force the LIVE records root by dropping any
+            # TSOMP_RECORDS_ROOT override the server might inherit.
+            env = {k: v for k, v in os.environ.items() if k != "TSOMP_RECORDS_ROOT"}
+            try:
+                subprocess.run(
+                    [sys.executable, str(config.STATE_ROOT / "scratch_records.py"),
+                     "directory", "register", "--name", name, "--model", model],
+                    cwd=str(config.STATE_ROOT), env=env, timeout=30,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            except Exception as ex:
+                sys.stderr.write(f"[infra-dash] set model failed: {ex}\n")
+        return self._redirect(back)
+
+    # -- authed write: set the GLOBAL sheriff model (Task 384b / Phase C) -----
+    def _set_sheriff_model(self):
+        """Validate + persist the ONE system-wide sheriff model by delegating to the
+        tsomp records manager (`scratch_records.py sheriff model --set`). Whitelisted
+        model only; anything else is a no-op redirect. The dashboard writes nothing
+        else — the records manager's sheriff_config.json is the single source of truth
+        the daemon reads."""
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        data = self.rfile.read(n).decode("utf-8", "replace") if n else ""
+        form = urllib.parse.parse_qs(data)
+        model = (form.get("model") or [""])[0].strip().lower()
+        if model in self._MODELS:
+            # Force the LIVE records root by dropping any TSOMP_RECORDS_ROOT override.
+            env = {k: v for k, v in os.environ.items() if k != "TSOMP_RECORDS_ROOT"}
+            try:
+                subprocess.run(
+                    [sys.executable, str(config.STATE_ROOT / "scratch_records.py"),
+                     "sheriff", "model", "--set", model, "--role", "sheriff"],
+                    cwd=str(config.STATE_ROOT), env=env, timeout=30,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            except Exception as ex:
+                sys.stderr.write(f"[infra-dash] set sheriff model failed: {ex}\n")
+        return self._redirect("/precincts")
+
+    # -- authed write: create a web case (Task 377 #4) -----------------------
+    def _allocate_case(self):
+        """Allocate a fresh case number from the tsomp allocator (the single source
+        of truth). Returns an int, or None on failure (the bridge then allocates its
+        own, so a failure here never blocks the submission)."""
+        env = {k: v for k, v in os.environ.items() if k != "TSOMP_RECORDS_ROOT"}
+        try:
+            out = subprocess.run(
+                [sys.executable, str(config.STATE_ROOT / "scratch_case_seq.py"), "allocate"],
+                cwd=str(config.STATE_ROOT), env=env, timeout=30,
+                capture_output=True, text=True, check=False)
+            lines = (out.stdout or "").strip().splitlines()
+            return int(lines[0]) if lines else None
+        except Exception as ex:
+            sys.stderr.write(f"[infra-dash] case allocate failed: {ex}\n")
+            return None
+
+    def _create_web_case(self):
+        """Validate + persist a per-precinct 'Create new case' submission as a
+        web-case record the inbox-handler bridge (scratch_web_case.py) consumes.
+        Multipart is parsed here; sizes are capped; the precinct is validated against
+        the live set and the model against the whitelist. The dashboard itself never
+        spawns anything — it only drops the record + files for the inbox pipeline."""
+        ct = self.headers.get("Content-Type", "")
+        boundary = multipart.boundary_of(ct)
+        if not boundary:
+            return self._json({"ok": False, "error": "expected multipart/form-data"}, 400)
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n <= 0:
+            return self._json({"ok": False, "error": "empty submission"}, 400)
+        if n > config.WEB_CASE_MAX_BODY:
+            return self._json({"ok": False, "error": "submission too large"}, 413)
+        try:
+            body = self.rfile.read(n)
+            fields, files = multipart.parse(body, boundary)
+        except Exception as ex:
+            return self._json({"ok": False, "error": f"could not parse form: {ex}"}, 400)
+
+        precinct = (fields.get("precinct") or "").strip()
+        model = (fields.get("model") or "").strip().lower()
+        parent = (fields.get("parent") or "").strip()
+        description = (fields.get("description") or "").strip()
+
+        known = {p["name"] for p in state.precincts()}
+        if precinct not in known:
+            return self._json({"ok": False, "error": f"unknown precinct '{precinct}'"}, 400)
+        if model and model not in self._MODELS:
+            return self._json({"ok": False, "error": f"invalid model '{model}'"}, 400)
+        if parent and not parent.isdigit():
+            return self._json({"ok": False, "error": "follow-up must be a task/case number"}, 400)
+        if not description:
+            return self._json({"ok": False, "error": "a task description is required"}, 400)
+
+        sid = time.strftime("%Y%m%d%H%M%S") + "_" + os.urandom(4).hex()
+        saved, skipped = [], 0
+        try:
+            att_dir = config.WEB_CASES / "att" / sid
+            att_dir.mkdir(parents=True, exist_ok=True)
+            for f in files[:config.WEB_CASE_MAX_FILES]:
+                content = f.get("content") or b""
+                if len(content) > config.WEB_CASE_MAX_FILE_BYTES:
+                    skipped += 1
+                    continue
+                safe = re.sub(r"[^\w.\-]+", "_", (f.get("filename") or "file")).strip("_") or "file"
+                dest = att_dir / safe
+                i = 1
+                while dest.exists():
+                    dest = att_dir / f"{i}_{safe}"
+                    i += 1
+                with open(dest, "wb") as fh:
+                    fh.write(content)
+                saved.append(str(dest))
+        except Exception as ex:
+            return self._json({"ok": False, "error": f"could not save uploads: {ex}"}, 500)
+
+        case = self._allocate_case()
+        record = {"id": sid, "ts": time.time(), "precinct": precinct,
+                  "model": model or None, "parent": parent or None,
+                  "description": description, "files": saved, "case": case,
+                  "source": "web", "requester": "fenghaod@andrew.cmu.edu"}
+        try:
+            pend = config.WEB_CASES / "pending"
+            pend.mkdir(parents=True, exist_ok=True)
+            tmp = pend / (sid + ".json.tmp")
+            tmp.write_text(json.dumps(record, indent=2))
+            os.replace(tmp, pend / (sid + ".json"))
+        except Exception as ex:
+            return self._json({"ok": False, "error": f"could not queue submission: {ex}"}, 500)
+        note = ("submitted — the inbox handler will spawn the deputy and email an ACK "
+                "with your form + uploads attached.")
+        if skipped:
+            note += f" ({skipped} oversized file(s) skipped.)"
+        return self._json({"ok": True, "case": case, "sid": sid,
+                           "files": len(saved), "note": note})
+
+    # -- authed write: create a JTF (Joint Task Force) (Case 384e) -----------
+    @staticmethod
+    def _valid_slot(slot, known):
+        """Normalize + validate ONE slot to {"kind","name"} or None. A precinct slot's
+        name must be a live precinct; a deputy slot just needs a non-empty name (the
+        must-take machinery no-ops safely if the deputy can't be revived)."""
+        if not isinstance(slot, dict):
+            return None
+        kind = str(slot.get("kind", "")).strip().lower()
+        name = str(slot.get("name", "")).strip()
+        if kind not in ("precinct", "deputy") or not name:
+            return None
+        if kind == "precinct" and name not in known:
+            return None
+        return {"kind": kind, "name": name}
+
+    def _create_jtf(self):
+        """Validate a JTF submission (a lead + >=1 collaborator, each slot a precinct or
+        a specific deputy) and drop a record the inbox-side scratch_jtf.py bridge
+        materializes. The dashboard itself never spawns anything — it only queues the
+        record, exactly like the web-case path."""
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n <= 0:
+            return self._json({"ok": False, "error": "empty submission"}, 400)
+        if n > config.JTF_MAX_BODY:
+            return self._json({"ok": False, "error": "submission too large"}, 413)
+        try:
+            payload = json.loads(self.rfile.read(n).decode("utf-8", "replace"))
+        except Exception:
+            return self._json({"ok": False, "error": "invalid JSON"}, 400)
+        if not isinstance(payload, dict):
+            return self._json({"ok": False, "error": "expected a JSON object"}, 400)
+
+        known = {p["name"] for p in state.precincts()}
+        lead = self._valid_slot(payload.get("lead"), known)
+        if not lead:
+            return self._json({"ok": False,
+                               "error": "lead must be a valid precinct or a specific deputy"}, 400)
+        collabs_in = payload.get("collaborators")
+        if not isinstance(collabs_in, list) or not collabs_in:
+            return self._json({"ok": False, "error": "add at least one collaborator"}, 400)
+        collabs = []
+        for c in collabs_in:
+            v = self._valid_slot(c, known)
+            if not v:
+                return self._json({"ok": False,
+                                   "error": "each collaborator must be a valid precinct or a specific deputy"}, 400)
+            collabs.append(v)
+        description = str(payload.get("description") or "").strip()
+        if not description:
+            return self._json({"ok": False, "error": "a task description is required"}, 400)
+
+        sid = time.strftime("%Y%m%d%H%M%S") + "_" + os.urandom(4).hex()
+        record = {"id": sid, "ts": time.time(), "lead": lead, "collaborators": collabs,
+                  "critic": bool(payload.get("critic")), "description": description,
+                  "source": "web", "requester": "fenghaod@andrew.cmu.edu"}
+        try:
+            pend = config.JTF / "pending"
+            pend.mkdir(parents=True, exist_ok=True)
+            tmp = pend / (sid + ".json.tmp")
+            tmp.write_text(json.dumps(record, indent=2))
+            os.replace(tmp, pend / (sid + ".json"))
+        except Exception as ex:
+            return self._json({"ok": False, "error": f"could not queue submission: {ex}"}, 500)
+        return self._json({"ok": True, "sid": sid,
+                           "note": "the inbox handler will materialize the JTF and email an ACK."})
 
     # -- guarded file download ---------------------------------------------
     def _download(self, req):

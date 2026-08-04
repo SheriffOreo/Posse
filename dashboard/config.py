@@ -59,6 +59,35 @@ REGISTRY = STATE_ROOT / "scratch_agents_registry.json"
 SENT_EMAILS = SCRATCH / "sent_emails.jsonl"
 LIMIT_STATE = JOBS / "limit_state.json"
 
+# Task 372 (Sheriff & Deputies precincts): the records room.
+RECORDS = SCRATCH / "records"
+PRECINCTS_JSON = RECORDS / "precincts.json"
+PRECINCTS_MD = RECORDS / "PRECINCTS.md"
+TASK_PRECINCT = RECORDS / "task_precinct.json"
+SHERIFF_LOG = SCRATCH / "sheriff" / "sheriff.log"
+# Task 384b / Phase C: the GLOBAL sheriff config (one value system-wide) the sheriff
+# daemon reads + the dashboard shows/sets. Today it holds the global SHERIFF MODEL
+# ({"model": "fable"}); an authed POST /sheriff/model writes it via the records manager.
+SHERIFF_CONFIG = RECORDS / "sheriff_config.json"
+# Task 382 #1: the active-deputies state file (deputy -> current case/description/
+# precinct) the Status board trusts over the launch-script defaults, so a relaunched
+# deputy that TAKES a new case shows the real current case (not its previous one).
+ACTIVE_DEPUTIES = RECORDS / "active_deputies.json"
+
+# Task 377 #4: the web "Create new case" drop dir the inbox-handler bridge
+# (scratch_web_case.py) consumes. The POST handler writes pending/<sid>.json +
+# att/<sid>/<uploads> here. Caps for the authed multipart upload.
+WEB_CASES = SCRATCH / "web_cases"
+WEB_CASE_MAX_BODY = 30 * 1024 * 1024   # total multipart body cap (bytes)
+WEB_CASE_MAX_FILES = 10                # max uploaded files per submission
+WEB_CASE_MAX_FILE_BYTES = 20 * 1024 * 1024   # per-file cap (bytes)
+
+# Case 384e / Phase E: the JTF (Joint Task Force) drop dir the inbox-side bridge
+# (tsomp scratch_jtf.py) materializes. The authed POST /api/jtf writes
+# pending/<sid>.json here; a small JSON body cap guards the endpoint.
+JTF = SCRATCH / "jtf"
+JTF_MAX_BODY = 256 * 1024               # JTF submission is small JSON (no uploads)
+
 # jobmgr job buckets
 JOB_BUCKETS = ["pending", "running", "wakes", "sleeping", "done"]
 GPU_BUCKETS = ["pending", "running", "done"]

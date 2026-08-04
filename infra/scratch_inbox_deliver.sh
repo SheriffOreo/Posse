@@ -9,7 +9,7 @@
 #   - Task 185: EVERY inbound email triggers an immediate surgical
 #     interrupt+relaunch (scratch_interrupt_worker.sh). The old INT_COOLDOWN
 #     branch — which parked mail arriving <120s after the last interrupt with a
-#     "read at its next checkpoint" ack — is GONE: it deferred reads (Steven's
+#     "read at its next checkpoint" ack — is GONE: it deferred reads (the operator's
 #     uid=183) and the parked mail could even be stolen by an orphaned poll
 #     loop of the killed claude (root cause, Task 185; scratch_read_mailbox.sh
 #     now also refuses orphan drains).
@@ -36,7 +36,7 @@ LOG=scratch_full_logs/inbox_agent.log
 IDIR=scratch_full_logs/inbox
 UNINT="${INBOX_UNINT_FILE:-$IDIR/uninterruptible.txt}"   # env-overridable for tests
 BOOT_FRESH_S=${BOOT_FRESH_S:-45}   # relaunching_<agent> older than this = crashed boot -> interrupt normally
-REQUESTER=fenghaod@andrew.cmu.edu
+REQUESTER="${INFRA_OPERATOR_EMAIL:-}"   # operator's address (set during onboarding)
 mkdir -p "$IDIR/receipts"
 
 log() { echo "[inbox] $(date) $*" >> "$LOG"; }

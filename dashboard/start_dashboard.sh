@@ -52,7 +52,16 @@ gen_cert() {
   chmod 644 "$CERT" 2>/dev/null || true
 }
 if [ "$INFRA_DASH_TLS" = "1" ] && { [ ! -s "$CERT" ] || [ ! -s "$KEY" ]; }; then
-  gen_cert || { echo "ERR: TLS requested but cert generation failed" >&2; exit 1; }
+  # Task 350: prefer a CA-signed leaf (a browser trusts it once instance/rootCA.pem
+  # is installed on the viewing device — no more "Not Secure") over a bare
+  # self-signed cert. gen_ca_cert.sh is idempotent and only fires HERE, when no cert
+  # is present; a cert already on disk (the CA-signed leaf) is left untouched, so a
+  # normal restart keeps serving it. gen_cert (self-signed) stays as the fallback.
+  if [ -f "$HERE/gen_ca_cert.sh" ]; then
+    bash "$HERE/gen_ca_cert.sh" || { echo "ERR: CA-signed cert generation failed" >&2; exit 1; }
+  else
+    gen_cert || { echo "ERR: TLS requested but cert generation failed" >&2; exit 1; }
+  fi
 fi
 export INFRA_DASH_CERT="${INFRA_DASH_CERT:-$CERT}"
 export INFRA_DASH_KEY="${INFRA_DASH_KEY:-$KEY}"

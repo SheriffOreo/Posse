@@ -8,7 +8,7 @@
 # Modes (env var TSOMP_CLAUDE_AUTH, read at source time):
 #   subscription  (DEFAULT, since 2026-07-22) — clear ANTHROPIC_API_KEY so the
 #                 CLI falls back to the Claude Max OAuth login stored in
-#                 ~/.claude/.credentials.json. Usage bills to Steven's Max
+#                 ~/.claude/.credentials.json. Usage bills to the operator's Max
 #                 subscription and shares its 5-hour / weekly limits with his
 #                 interactive sessions. The watchdog already knows how to defer a
 #                 limit-blocked worker until the reset.

@@ -23,18 +23,25 @@ Q = ROOT / "gpu_queue"
 PENDING, DONE = Q/"pending", Q/"done"
 
 
-def submit(cmd, cwd=None, timeout=3600, env=None, wait_timeout=None, poll=2.0):
+def submit(cmd, cwd=None, timeout=3600, env=None, wait_timeout=None, poll=2.0,
+           owner=None):
     """Enqueue cmd; block until the manager finishes it. Returns result dict.
 
     timeout      : per-job wall-clock limit enforced by the manager.
     wait_timeout : how long submit() waits for a result before giving up
                    (None => timeout + 600s slack).
+    owner        : agent that owns this job (for dashboard attribution). Resolved
+                   in order: explicit arg -> $GPU_JOB_OWNER -> $TSOMP_AGENT ->
+                   "unknown". Written into the job JSON as "owner_agent" so
+                   gpu_manager can carry it through to gpu_queue/done (Task 325).
     """
     PENDING.mkdir(parents=True, exist_ok=True)
     DONE.mkdir(parents=True, exist_ok=True)
+    owner = (owner or os.environ.get("GPU_JOB_OWNER")
+             or os.environ.get("TSOMP_AGENT") or "unknown")
     jid = f"{int(time.time()*1000)}_{secrets.token_hex(3)}"
     job = {"id": jid, "cmd": cmd, "cwd": cwd or str(ROOT),
-           "timeout": timeout, "env": env or {}}
+           "timeout": timeout, "env": env or {}, "owner_agent": owner}
     tmp = PENDING / f".{jid}.json.tmp"
     tmp.write_text(json.dumps(job))
     tmp.rename(PENDING / f"{jid}.json")           # atomic enqueue
@@ -64,9 +71,12 @@ def main():
     ap.add_argument("--cwd", default=None)
     ap.add_argument("--timeout", type=float, default=3600)
     ap.add_argument("--wait-timeout", type=float, default=None)
+    ap.add_argument("--owner", default=None,
+                    help="owning agent for dashboard attribution "
+                         "(default: $GPU_JOB_OWNER / $TSOMP_AGENT / 'unknown')")
     args = ap.parse_args()
     res = submit(args.cmd, cwd=args.cwd, timeout=args.timeout,
-                 wait_timeout=args.wait_timeout)
+                 wait_timeout=args.wait_timeout, owner=args.owner)
     print(f"=== job {res['id']} rc={res['exit_code']} "
           f"timed_out={res['timed_out']} dur={res['duration_s']}s ===")
     print("--- stdout tail ---\n" + (res.get("stdout_tail") or ""))

@@ -41,7 +41,11 @@ def is_configured() -> bool:
     return bool(d and d.get("pw_hash") and d.get("cookie_secret"))
 
 
-def set_password(pw: str):
+def set_password(pw: str, name: str = None, email: str = None):
+    """Set the login password. The single dashboard account also carries an
+    operator identity: `email` is the account username shown in the UI, `name` a
+    display label. Both are optional and only overwrite when a non-empty value is
+    passed, so callers that just reset a password keep the existing identity."""
     config.INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
     salt = secrets.token_bytes(16)
     h = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, _ITER)
@@ -51,11 +55,23 @@ def set_password(pw: str):
     d["iter"] = _ITER
     if not d.get("cookie_secret"):
         d["cookie_secret"] = secrets.token_hex(32)
+    if email:
+        d["account_email"] = email.strip()
+    if name:
+        d["account_name"] = name.strip()
     config.SECRET_FILE.write_text(json.dumps(d))
     try:
         os.chmod(config.SECRET_FILE, 0o600)
     except OSError:
         pass
+
+
+def account() -> dict:
+    """The operator identity for the single dashboard account: {"email", "name"}.
+    Either value may be None on older instances that predate identity capture (the
+    login/register UI degrades gracefully). Never returns any secret material."""
+    d = _load() or {}
+    return {"email": d.get("account_email"), "name": d.get("account_name")}
 
 
 def verify_password(pw: str) -> bool:
@@ -83,9 +99,15 @@ def _load_register():
         return None
 
 
-def create_register_token() -> str:
+def create_register_token(email: str = None, name: str = None) -> str:
     """Mint a fresh single-use token, persist its hash, return the raw token
-    (shown/emailed ONCE). Replaces any previous token."""
+    (shown/emailed ONCE). Replaces any previous token.
+
+    The operator binds the new account's identity to the link here: `email`
+    becomes the account username and `name` a display label. They are stored in
+    register.json (git-ignored, chmod 600) so the register page can show them and
+    consume_register_token() can persist them onto the account. Neither is a
+    secret; the only secret (the token) is stored as its SHA-256 only."""
     config.INSTANCE_DIR.mkdir(parents=True, exist_ok=True)
     tok = secrets.token_urlsafe(32)
     d = {
@@ -93,12 +115,26 @@ def create_register_token() -> str:
         "used": False,
         "created": int(time.time()),
     }
+    if email:
+        d["email"] = email.strip()
+    if name:
+        d["name"] = name.strip()
     config.REGISTER_FILE.write_text(json.dumps(d))
     try:
         os.chmod(config.REGISTER_FILE, 0o600)
     except OSError:
         pass
     return tok
+
+
+def register_info() -> dict:
+    """The identity bound to the current (open) registration link, for pre-filling
+    the register page: {"email", "name"} (values may be None). Empty when no valid
+    open registration exists."""
+    if not register_open():
+        return {"email": None, "name": None}
+    d = _load_register() or {}
+    return {"email": d.get("email"), "name": d.get("name")}
 
 
 def register_open() -> bool:
@@ -122,15 +158,17 @@ def check_register_token(tok: str) -> bool:
     return hmac.compare_digest(got, d.get("token_hash", ""))
 
 
-def consume_register_token(tok: str, pw: str) -> bool:
-    """Verify token (constant-time), set the password, then mark the token used.
-    Order matters: verify BEFORE set_password (which would flip register_open off)."""
+def consume_register_token(tok: str, pw: str, name: str = None) -> bool:
+    """Verify token (constant-time), set the password + operator identity, then
+    mark the token used. Order matters: verify BEFORE set_password (which would
+    flip register_open off). The account email comes from the link the operator
+    minted (register.json); `name` may be refined on the form, else the link's."""
     if not check_register_token(tok):
         return False
     if not pw or len(pw) < MIN_PW_LEN:
         return False
-    set_password(pw)
     d = _load_register() or {}
+    set_password(pw, name=(name or d.get("name")), email=d.get("email"))
     d["used"] = True
     d["used_at"] = int(time.time())
     try:

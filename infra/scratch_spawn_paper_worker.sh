@@ -7,7 +7,7 @@
 # Usage: scratch_spawn_paper_worker.sh <taskfile> [requester_email]
 set -euo pipefail
 cd /home/steven/Projects/time-series-omp
-TASKFILE="${1:?task spec file}"; REQUESTER="${2:-fenghaod@andrew.cmu.edu}"
+TASKFILE="${1:?task spec file}"; REQUESTER="${2:-${INFRA_OPERATOR_EMAIL:-}}"
 [ -f "$TASKFILE" ] || { echo "ERR: taskfile not found: $TASKFILE" >&2; exit 1; }
 SID="dfd9b9e8-f43e-4b93-9b61-a99cf5ea0ec1"
 NAME="paper"

@@ -33,6 +33,11 @@ Posse is a **general framework**: the repo ships only the **Sheriff** and a
 > **Sheriff** — Oreo, in the badge above — manages the whole operation: supervising
 > deputies and keeping each precinct's records healthy. The deputies are a *posse*.
 
+> **🚀 New operator? Start here.** [`ONBOARDING.md`](ONBOARDING.md) is the step-by-step
+> guide to standing up your own instance — your identity, the posse mailbox, Claude auth
+> (subscription **or** API key), the web host/port, registering your dashboard login, and
+> sending your first task. ~20 minutes end to end.
+
 > **📄 Design paper.** The architecture, the requirements it targets, a comparison with
 > existing agent frameworks, and the rationale for every module are written up in
 > **[`design/POSSE_DESIGN.pdf`](design/POSSE_DESIGN.pdf)** — start there for the full
@@ -99,8 +104,9 @@ don't address:
 - 👥 **Multi-agent coordination.** Tracked *sub-deputies* (numbered `Na`, `Nb`, …),
   *manager-wake* on subtask completion, *joint task forces* (a lead + collaborators),
   and deputy-owned *anonymous critics*.
-- 👁️ **Read-only dashboard.** Login-gated, pure-stdlib web UI: live Status, active
-  deputies, case lineage, a job-history calendar, per-precinct records.
+- 👁️ **Read-only dashboard.** Login-gated (your **email is the username**, set via a
+  one-time registration link), pure-stdlib web UI: live Status, active deputies, case
+  lineage, a job-history calendar, per-precinct records.
 - 🔐 **Secrets never touch git.** Messaging creds, API keys, OAuth tokens, and the login
   hash all live outside the repo; a download sandbox + denylist guard the dashboard.
 
@@ -143,22 +149,29 @@ walkthrough.
 
 ## Quickstart
 
-Everything is Python 3.10 + bash; the dashboard needs **no pip installs**. Point the
-daemons at a state directory with `INFRA_STATE_ROOT`.
+Everything is Python 3.10 + bash; the dashboard needs **no pip installs**.
+**[`ONBOARDING.md`](ONBOARDING.md) is the full walkthrough** (mailbox, Claude auth,
+troubleshooting); the condensed path:
 
 ```bash
-export INFRA_STATE_ROOT=/path/to/your/posse-state   # where the daemons read/write state
+# 1) Configure your instance: state dir, your identity, the allow-list, dashboard bind.
+cp infra_env.sh my_env.sh && $EDITOR my_env.sh    # set INFRA_OPERATOR_EMAIL etc.
+source ./infra_env.sh
 
-# Always-on daemons (each idempotent / flock-guarded):
+# 2) Posse mailbox creds (dedicated account; Gmail app password) — chmod 600.
+#    ~/.smtp_env:  SMTP_USER=posse.bot@gmail.com / SMTP_PASS=... / SMTP_TO=you@example.com
+
+# 3) Claude auth — subscription (claude → /login) OR apikey (~/.anthropic_key + TSOMP_CLAUDE_AUTH=apikey)
+
+# 4) Always-on daemons (each idempotent / flock-guarded):
 bash infra/scratch_jobmgr_start.sh          # job manager
-bash infra/scratch_gpu_manager_start.sh     # resource (GPU) queue
+bash infra/scratch_gpu_manager_start.sh     # resource (GPU) queue — optional
 bash infra/scratch_inbox_loop.sh            # message router
-bash infra/scratch_sheriff_start.sh         # Sheriff — system manager
-#   (watchdog runs alongside — see MIGRATION.md)
+bash infra/scratch_sheriff_start.sh         # Sheriff — system manager (+ watchdog; see ONBOARDING.md)
 
-# Read-only dashboard:
+# 5) Dashboard: register your login (email = username), then serve it.
 cd dashboard
-python3 set_password.py                      # one-time: set the login password
+python make_register_link.py --email you@example.com --name "Your Name"   # open the printed link, set a password
 bash start_dashboard.sh                      # → http://127.0.0.1:8787
 #   public host (binds 0.0.0.0 + self-signed TLS):
 #   INFRA_DASH_PUBLIC=1 bash start_dashboard.sh   → https://<host>:8787
@@ -166,9 +179,10 @@ bash start_dashboard.sh                      # → http://127.0.0.1:8787
 
 Reach the localhost dashboard over an SSH tunnel: `ssh -L 8787:localhost:8787 <host>`.
 
-Key env vars: `INFRA_STATE_ROOT` (state dir the daemons read/write), `INFRA_DASH_PORT`
-(default `8787`), `INFRA_DASH_PUBLIC=1` (bind `0.0.0.0` **and** enable TLS). Full list
-in [`dashboard/README.md`](dashboard/README.md).
+Key env vars: `INFRA_STATE_ROOT` (state dir), `INFRA_OPERATOR_EMAIL` / `INFRA_MAIL_ALLOWED`
+(your identity + the sender allow-list), `INFRA_DASH_PORT` (default `8787`),
+`INFRA_DASH_PUBLIC=1` (bind `0.0.0.0` **and** enable TLS). Full list in
+[`ONBOARDING.md`](ONBOARDING.md) and [`dashboard/README.md`](dashboard/README.md).
 
 ## The wait discipline (why it's load-bearing)
 
@@ -190,8 +204,10 @@ most important operational rule in the system.
 posse/
 ├── assets/               # brand: Posse banner + logo (SVG/PNG) + the architecture figure
 ├── design/               # POSSE_DESIGN.pdf — the design paper (+ sources)
-├── infra/                # the core daemon + helper scripts
+├── infra/                # the core daemon + helper scripts (+ their tests)
 ├── dashboard/            # login-protected, read-only status/history dashboard (stdlib)
+├── infra_env.sh          # your instance config (state dir, identity, allow-list, bind)
+├── ONBOARDING.md         # step-by-step new-operator setup guide  ← start here
 ├── MIGRATION.md          # code/state split · path strategy
 └── README.md             # this file
 ```

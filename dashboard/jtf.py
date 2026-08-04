@@ -1,13 +1,17 @@
 """
-Task 353 — cowork read-helpers for the dashboard's assignment page.
+Task 353 / Case 384e — JTF (Joint Task Force) read-helpers for the dashboard's
+assignment page (renamed from "Cowork" in Phase E).
 
-The agent index powers the /cowork search popup: find an agent by NAME or by a TASK
-it has done. It is read-only, built by joining scratch_agents_registry.json (worker ->
-keywords/desc) with the task<->agent signals the dashboard already computes
-(lineage titles + state.email_task_agents + state.worker_prompt_task_map).
+The agent index powers the /jtf search popup: find an agent by NAME or by a TASK it has
+done (for a *specific-deputy* slot). It is read-only, built by joining
+scratch_agents_registry.json (worker -> keywords/desc) with the task<->agent signals the
+dashboard already computes (lineage titles + state.email_task_agents +
+state.worker_prompt_task_map). The precinct options a slot can also take come straight
+from state.precincts(); they are not resolved here.
 
-The cowork REQUEST writer (POST /api/cowork) is deliberately NOT here yet — it is the
-dashboard's first write path and lands in B2 after Steven signs off on COWORK_DESIGN.md.
+The JTF REQUEST writer is NOT here: the dashboard's authed POST /api/jtf (server.py)
+validates a submission and drops a record the inbox-side bridge (tsomp scratch_jtf.py)
+materializes into spawned/assigned deputies.
 """
 import os
 

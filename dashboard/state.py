@@ -105,6 +105,176 @@ def registry():
 
 
 # --------------------------------------------------------------------------- #
+# precincts (Task 372 — the Sheriff & Deputies records room)
+# --------------------------------------------------------------------------- #
+def _read_text(p, default=""):
+    try:
+        return Path(p).read_text(errors="replace")
+    except Exception:
+        return default
+
+
+def _tmux_alive(name):
+    try:
+        out = subprocess.run(["tmux", "ls"], capture_output=True, text=True,
+                             timeout=5).stdout
+        return any(line.split(":", 1)[0].strip() == name for line in out.splitlines())
+    except Exception:
+        return False
+
+
+def _parse_case_log(text):
+    """Case-log data lines -> [{task, deputy, path, summary}] (skips '#' headers).
+
+    Task 377 #1: NEW rows have four fields <task>\\t<deputy>\\t<path>\\t<summary>;
+    OLD rows (pre-377) have three <task>\\t<path>\\t<summary> and render with an
+    empty deputy. Disambiguated purely by field count (all fields are tab-sanitized,
+    so the count is exact)."""
+    rows = []
+    for ln in text.splitlines():
+        if not ln or ln.startswith("#"):
+            continue
+        parts = ln.split("\t")
+        if len(parts) >= 4:                       # new: task, deputy, path, summary
+            rows.append({"task": parts[0], "deputy": parts[1],
+                         "path": parts[2], "summary": parts[3]})
+        elif len(parts) == 3:                     # old: task, path, summary
+            rows.append({"task": parts[0], "deputy": "",
+                         "path": parts[1], "summary": parts[2]})
+        elif len(parts) == 2:
+            rows.append({"task": parts[0], "deputy": "",
+                         "path": parts[1], "summary": ""})
+    return rows
+
+
+def task_precinct_map():
+    d = _read_json(config.TASK_PRECINCT, {}) or {}
+    return d if isinstance(d, dict) else {}
+
+
+def active_deputies():
+    """Task 382 #1: the active-deputies map (deputy -> {case, description, precinct})
+    the Status board trusts over the launch-script defaults. Written today by the
+    deputy when it takes a new case; by the sheriff in the approved redesign."""
+    d = _read_json(config.ACTIVE_DEPUTIES, {}) or {}
+    return d if isinstance(d, dict) else {}
+
+
+def _deputies_for(name, tmap):
+    """Task-number deputies whose precinct == name, newest task first.
+
+    Task 377 #1: the WORKING DEPUTY is authoritative — prefer `deputy` (set by the
+    spawn) over `agent`, and never show the lesser `handler` (triage lineage) as
+    the deputy. `handler` is surfaced as its own column so the routing lineage is
+    still visible, just not conflated with who did the work."""
+    out = []
+    for tid, e in tmap.items():
+        if isinstance(e, dict) and e.get("precinct") == name:
+            out.append({"task": tid,
+                        "deputy": e.get("deputy") or e.get("agent"),
+                        "handler": e.get("handler") or "",
+                        "session": e.get("session"), "basis": e.get("basis")})
+    out.sort(key=lambda r: int(r["task"]) if str(r["task"]).isdigit() else -1,
+             reverse=True)
+    return out
+
+
+def sheriff_status():
+    """Live status of the sheriff daemon: alive?, A/B (TOKENS, Task 376), whether
+    API (LLM) compaction is on, the GLOBAL sheriff model (Task 384b / Phase C), and
+    the last ledger actions. A/B + llm are parsed from the sheriff's own log
+    ('sheriff up: ... A=.. B=.. tokens ... llm=True model=fable'); the model is read
+    LIVE from the persisted global config (sheriff_config.json) so a UI change shows
+    immediately without waiting for a daemon restart line."""
+    alive = _tmux_alive("sheriff")
+    log = _read_text(config.SHERIFF_LOG)
+    lines = [l for l in log.splitlines() if l.strip()]
+    A = B = None
+    for l in reversed(lines):
+        m = re.search(r"A=(\d+)\s+B=(\d+)", l)
+        if m:
+            A, B = int(m.group(1)), int(m.group(2))
+            break
+    llm = True   # Phase C: API compaction is the default; only an explicit llm=False overrides
+    for l in reversed(lines):
+        m = re.search(r"llm=(True|False)", l)
+        if m:
+            llm = (m.group(1) == "True")
+            break
+    # Global sheriff model: live from the persisted config, fable if unset/garbled.
+    model = "fable"
+    cfg = _read_json(config.SHERIFF_CONFIG, {}) or {}
+    if isinstance(cfg, dict) and cfg.get("model") in ("fable", "opus", "sonnet", "haiku"):
+        model = cfg["model"]
+    actions = [l for l in lines if "COMPACTED" in l or "APPLIED" in l][-5:]
+    return {"alive": alive, "A": A, "B": B, "llm": llm, "model": model, "unit": "tokens",
+            "recent": lines[-1] if lines else "",
+            "actions": list(reversed(actions))}
+
+
+def precincts():
+    """Overview of every precinct from precincts.json, augmented with live
+    ledger length, case-log count, and case-file count. Cached briefly."""
+    def build():
+        d = _read_json(config.PRECINCTS_JSON, {}) or {}
+        pr = d.get("precincts", {}) if isinstance(d, dict) else {}
+        tmap = task_precinct_map()
+        out = []
+        for name in sorted(pr):
+            e = pr[name] if isinstance(pr[name], dict) else {}
+            if e.get("status") == "deleted":     # Phase D: soft-deleted -> off the active list
+                continue
+            ledger = _read_text(config.RECORDS / name / "ledger.md")
+            log = _read_text(config.RECORDS / name / "log.tsv")
+            cases_dir = config.RECORDS / name / "cases"
+            try:
+                ncases = sum(1 for _ in cases_dir.iterdir())
+            except Exception:
+                ncases = 0
+            out.append({
+                "name": name,
+                "mode": e.get("ledger_mode", "mutable"),
+                "model": e.get("model", "opus"),   # Task 376: per-precinct default model
+                "description": e.get("description", ""),
+                "ledger_chars": len(ledger),
+                "ledger_tokens": (len(ledger) + 3) // 4,
+                "log_cases": len(_parse_case_log(log)),
+                "case_files": ncases,
+                "deputies": len(_deputies_for(name, tmap)),
+            })
+        return out
+    return _cached("precincts", 10, build)
+
+
+def precinct_detail(name):
+    """Full detail for one precinct: ledger, parsed case log (newest first),
+    case files, deputies, mode."""
+    d = _read_json(config.PRECINCTS_JSON, {}) or {}
+    pr = d.get("precincts", {}) if isinstance(d, dict) else {}
+    if name not in pr:
+        return None
+    e = pr[name] if isinstance(pr[name], dict) else {}
+    if e.get("status") == "deleted":     # Phase D: a soft-deleted precinct is not shown
+        return None
+    ledger = _read_text(config.RECORDS / name / "ledger.md")
+    log = _read_text(config.RECORDS / name / "log.tsv")
+    rows = _parse_case_log(log)
+    rows.sort(key=lambda r: int(r["task"]) if str(r["task"]).isdigit() else -1,
+              reverse=True)
+    return {
+        "name": name,
+        "mode": e.get("ledger_mode", "mutable"),
+        "model": e.get("model", "opus"),   # Task 376: per-precinct default model
+        "description": e.get("description", ""),
+        "ledger": ledger,
+        "ledger_chars": len(ledger),
+        "ledger_tokens": (len(ledger) + 3) // 4,
+        "cases": rows,
+        "deputies": _deputies_for(name, task_precinct_map()),
+    }
+
+
+# --------------------------------------------------------------------------- #
 # workers (from the watchdog roster)
 # --------------------------------------------------------------------------- #
 _STATE_LABEL = {
@@ -154,6 +324,82 @@ def _mailbox_pending(name):
         return False
 
 
+def _case_log_summary(precinct, case):
+    """The case-log summary (human description) for one case in a precinct, or ''."""
+    if not precinct:
+        return ""
+    for r in _parse_case_log(_read_text(config.RECORDS / precinct / "log.tsv")):
+        if r.get("task") == str(case):
+            return r.get("summary", "") or ""
+    return ""
+
+
+def _latest_attributed_case(name):
+    """Newest NUMERIC case in the task->precinct map ATTRIBUTED to this worker
+    (deputy == name or agent == name), as (case:str|None, precinct:str|None, summary).
+
+    Case 396: for a long-lived agent (e.g. 'paper') that receives emailed cases via
+    the interrupt path -- which stamps NEITHER the active-deputies board NOR an
+    exported TSOMP_CASE -- this structured, backfill-maintained signal is a far
+    better 'current case' than the worker's FROZEN spawn-time prompt file, which is
+    stuck on its BIRTH case (the 'paper #367' Status-page bug: the paper agent long
+    ago moved on to 379/381/383/387, but its prompt file never changed). Numeric
+    only, so an alphanumeric sub-case owned by ANOTHER worker (391b, 397) is never
+    mis-attributed here."""
+    best = None
+    for tid, e in task_precinct_map().items():
+        if not (isinstance(e, dict) and str(tid).isdigit()):
+            continue
+        if e.get("deputy") == name or e.get("agent") == name:
+            n = int(tid)
+            if best is None or n > best[0]:
+                best = (n, e.get("precinct"))
+    if best is None:
+        return None, None, ""
+    case = str(best[0])
+    return case, best[1], _case_log_summary(best[1], case)
+
+
+def _worker_precinct_case(name):
+    """Task 377 #3: (precinct, case) for a worker — primarily from its launch /
+    relaunch script's exported WORKER_PRECINCT / TSOMP_CASE (exactly what the running
+    worker stamps on its emails), falling back to the task->precinct map. Either may
+    be None if unresolved."""
+    precinct = case = None
+    for fn in (f"scratch_worker_{name}_launch.sh", f"scratch_worker_{name}_relaunch.sh"):
+        try:
+            txt = (config.STATE_ROOT / fn).read_text(errors="replace")
+        except Exception:
+            continue
+        mp = re.search(r'export\s+WORKER_PRECINCT="?([^"\n]*)"?', txt)
+        mc = re.search(r'export\s+TSOMP_CASE="?([^"\n]*)"?', txt)
+        if mp and mp.group(1).strip():
+            precinct = precinct or mp.group(1).strip()
+        if mc and mc.group(1).strip():
+            case = case or mc.group(1).strip()
+        if precinct and case:
+            break
+    if precinct is None or case is None:
+        # Case 396: neither the board nor the launch script pinned this worker's
+        # case. Prefer the newest case ATTRIBUTED to it in the task->precinct map (a
+        # backfill-maintained signal) over its frozen spawn-time prompt file, which
+        # is stuck on the worker's BIRTH case (the 'paper #367' bug — a long-lived
+        # agent whose emailed cases restamp neither the board nor the prompt). Fall
+        # back to the prompt-derived task only if the worker is unattributed there.
+        acase, aprec, _ = _latest_attributed_case(name)
+        if acase is not None:
+            case = case or acase
+            precinct = precinct or aprec
+        else:
+            tid, _ = _worker_task_info(name)
+            if tid is not None:
+                case = case or str(tid)
+                e = task_precinct_map().get(str(tid))
+                if precinct is None and isinstance(e, dict):
+                    precinct = e.get("precinct")
+    return precinct, case
+
+
 def workers(active_only=False):
     wd = _read_json(config.WATCHDOG_JOBS, []) or []
     reg = registry()
@@ -166,7 +412,39 @@ def workers(active_only=False):
         if active_only and st in ("done", "failed"):
             continue
         rinfo = reg.get(name, {})
-        tid, ttitle = _worker_task_info(name)
+        prompt_tid, ttitle = _worker_task_info(name)
+        prec, case = _worker_precinct_case(name)
+        # Task 382 #1: the active-deputies file (sheriff-owned in the redesign) is
+        # authoritative for a deputy's CURRENT case/description/precinct — a deputy
+        # relaunched on an email reply and now working a NEW case updates it, so the
+        # board flips off its previous case. Overrides the launch-script defaults.
+        ad = active_deputies().get(name)
+        board_desc = None
+        if isinstance(ad, dict):
+            if ad.get("case"):
+                case = str(ad["case"])
+            if ad.get("description"):
+                board_desc = ttitle = ad["description"]
+            if ad.get("precinct"):
+                prec = ad["precinct"]
+        # Case 396: when the case was NOT pinned by the board and the resolved case
+        # differs from the FROZEN prompt-file birth case, the prompt-derived title is
+        # stale too — describe the row by the resolved case's case-log summary
+        # instead (paper: '#387 — Budgeted-encoding draft', not the Task-367 spec).
+        if not board_desc and case and (prompt_tid is None or str(case) != str(prompt_tid)):
+            s = _case_log_summary(prec, case)
+            if s:
+                ttitle = s
+        # Task 391 #2: the clickable case# must open the ACTUAL case. Reconcile the
+        # numeric detail id (`task`) with the authoritative `case`: a numeric case
+        # links to that case; an ALPHANUMERIC sub-case (e.g. 384e) has no numeric
+        # email conversation, so leave `task` None — do NOT fall back to a mis-parsed
+        # prompt-derived number (that opened the WRONG case, e.g. 331). The UI then
+        # links the case file instead.
+        tid = prompt_tid
+        if case:
+            cs = str(case)
+            tid = int(cs) if cs.isdigit() else None
         rows.append(
             {
                 "name": name,
@@ -176,6 +454,13 @@ def workers(active_only=False):
                 # resolved from its prompt's TASK section for the Status page.
                 "task": tid,
                 "task_title": ttitle,
+                # Task 377 #3: deputy=worker name; its precinct + case number so the
+                # Status "Active Workers" table can lead with deputy / case# / precinct.
+                "precinct": prec or "",
+                "case": case or (str(tid) if tid else ""),
+                # Task 391 #2: the case-file path so an alphanumeric sub-case (no
+                # numeric conversation) links to its case file instead of a wrong case.
+                "case_file": (f"scratch_full_logs/inbox/task_{case}.md" if case else None),
                 "requester": e.get("requester"),
                 "desc": rinfo.get("desc") or "",
                 "keywords": rinfo.get("match", []),
@@ -261,6 +546,48 @@ def gpu_manager_alive():
     return any(d["name"] == "gpu_manager" and d["alive"] for d in daemon_status())
 
 
+def gpu_stats():
+    """On-demand per-GPU stats from nvidia-smi (Task 377 #3). Deliberately NOT part
+    of the 8s /api/status auto-poll — only the Status page's Refresh button calls
+    this (via /api/gpu_stats), so nvidia-smi is invoked on demand, not on a timer.
+    Returns {available, ts, gpus:[{index,name,util,mem_used,mem_total,mem_pct,temp}],
+    error?}. Degrades gracefully when there is no GPU / nvidia-smi is missing."""
+    cmd = ["nvidia-smi",
+           "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+           "--format=csv,noheader,nounits"]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+    except FileNotFoundError:
+        return {"available": False, "ts": time.time(), "gpus": [],
+                "error": "nvidia-smi not found on the dashboard host (no NVIDIA GPU?)"}
+    except Exception as ex:
+        return {"available": False, "ts": time.time(), "gpus": [],
+                "error": f"nvidia-smi could not be run: {ex}"}
+    if p.returncode != 0:
+        msg = (p.stderr or p.stdout or "").strip()[:300] or f"rc={p.returncode}"
+        return {"available": False, "ts": time.time(), "gpus": [],
+                "error": f"nvidia-smi error: {msg}"}
+
+    def _num(s):
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    gpus = []
+    for line in p.stdout.splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) < 6:
+            continue
+        idx, nm, util, used, total, temp = parts[:6]
+        used_n, total_n = _num(used), _num(total)
+        pct = round(100.0 * used_n / total_n, 1) if (used_n is not None and total_n) else None
+        gpus.append({"index": idx, "name": nm, "util": _num(util),
+                     "mem_used": used_n, "mem_total": total_n, "mem_pct": pct,
+                     "temp": _num(temp)})
+    return {"available": True, "ts": time.time(), "gpus": gpus}
+
+
 # --------------------------------------------------------------------------- #
 # usage-limit state (Task 274)
 # --------------------------------------------------------------------------- #
@@ -269,6 +596,53 @@ def limit_state():
     if not isinstance(d, dict) or not d.get("active"):
         return None
     return d
+
+
+# --------------------------------------------------------------------------- #
+# Sheriff = SYSTEM MANAGER (Task 384c / Phase A1)
+# --------------------------------------------------------------------------- #
+def system_manager():
+    """The unified "Sheriff = SYSTEM MANAGER" view. The Sheriff owns TWO always-on
+    supervision loops, presented here as one mental model:
+
+      * DEPUTY SUPERVISION -- the watchdog (``scratch_watchdog.py``): deputy
+        liveness, crash / usage-limit recovery + relaunch. Surfaced from the existing
+        readers ``daemon_status()`` (is the watchdog up?), ``workers()`` (the roster),
+        and ``limit_state()`` (the shared usage-limit marker).
+      * PRECINCT RECORDS-HEALTH -- the sheriff daemon (``scratch_sheriff.py``):
+        ledger sizes, compaction, the deputy->sheriff request queue. Surfaced from
+        ``sheriff_status()``.
+
+    PURE PRESENTATION (Phase A1 is rebrand + supervise, NO behavior change): this
+    only COMPOSES the existing read-only readers -- it does not change what any of
+    them measures and makes no new measurement of its own. Both loops keep running
+    exactly as today; this is simply the single view over the two. The two daemons
+    stay separate processes (A2, a full code merge, is a later phase)."""
+    sh = sheriff_status()
+    watchdog_up = any(d["name"] == "watchdog" and d["alive"] for d in daemon_status())
+    roster = workers(active_only=True)
+    by_state, relaunches, mailbox_pending = {}, 0, 0
+    for w in roster:
+        st = w.get("state") or "?"
+        by_state[st] = by_state.get(st, 0) + 1
+        relaunches += int(w.get("relaunched") or 0)
+        if w.get("mailbox_pending"):
+            mailbox_pending += 1
+    return {
+        # the two loops the one system manager owns
+        "sheriff_up": bool(sh.get("alive")),   # records-health loop
+        "watchdog_up": watchdog_up,            # deputy-supervision loop
+        # records-health detail (sheriff_status, carried through unchanged)
+        "records": sh,
+        # deputy-supervision summary OVER the watchdog roster (workers, unchanged)
+        "deputies": {
+            "active": len(roster),
+            "by_state": by_state,
+            "relaunches": relaunches,
+            "mailbox_pending": mailbox_pending,
+        },
+        "limit": limit_state(),
+    }
 
 
 # --------------------------------------------------------------------------- #

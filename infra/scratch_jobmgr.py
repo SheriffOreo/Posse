@@ -319,8 +319,11 @@ def cmd_submit(argv):
             gtimeout = timeout if timeout else max(2 * est, est + 600)
             (GPUQ / "pending").mkdir(parents=True, exist_ok=True)
             (GPUQ / "done").mkdir(parents=True, exist_ok=True)
+            # Task 325: attribute the GPU job to its jobmgr owner so gpu_manager
+            # carries owner_agent through to gpu_queue/done and the dashboard
+            # shows the owner instead of "?".
             gjob = {"id": gid, "cmd": cmd_str, "cwd": str(ROOT),
-                    "timeout": gtimeout, "env": {}}
+                    "timeout": gtimeout, "env": {}, "owner_agent": owner}
             gtmp = GPUQ / "pending" / f".{gid}.json.tmp"
             gtmp.write_text(json.dumps(gjob))
             gtmp.rename(GPUQ / "pending" / f"{gid}.json")   # atomic enqueue
@@ -564,7 +567,7 @@ def combined_wake_message(owner, recs):
 
 def _hold_ticket(path, rec, st, now):
     """Task 274 G4: a job finished while a limit is active. Relaunching its owner
-    now would just re-hit the limit, so HOLD the ticket and email Steven ONCE per
+    now would just re-hit the limit, so HOLD the ticket and email the operator ONCE per
     job (id + responsible agent + command + rc + OUTPUT PATH + held-until-reset).
     The ticket stays in wakes/ and is delivered when the limit clears. After the
     first hold this is a cheap no-op each tick (no re-write, no re-email) — delivery

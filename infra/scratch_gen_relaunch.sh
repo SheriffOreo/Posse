@@ -5,7 +5,7 @@
 # evolves (spawn_worker calls this at spawn time; regen loops call it per
 # worker). Requires scratch_full_logs/worker_<name>_prompt.md to exist.
 #
-#   Usage: scratch_gen_relaunch.sh <name> <session_id> <requester_email> [model] [effort]
+#   Usage: scratch_gen_relaunch.sh <name> <session_id> <requester_email> [model] [effort] [precinct] [task_uid]
 #
 # Template features (history):
 #   Task 123: drain mailbox under flock + mechanical ack BEFORE claude runs.
@@ -50,7 +50,8 @@
 #     sessions the surgical kill structurally cannot touch — the resumed
 #     parent must reconcile with them instead of re-spawning duplicates.
 set -euo pipefail
-cd /home/steven/Projects/time-series-omp
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # the infra/ dir = code + state root
+cd "$HERE"
 NAME="${1:?worker name}"; SID="${2:?session id}"; REQUESTER="${3:?requester email}"
 # Task 216 F2: default relaunch model is Opus 4.8 (half Fable's per-token
 # price); Fable stays an explicit opt-in via the 4th positional arg. NOTE:
@@ -58,19 +59,39 @@ NAME="${1:?worker name}"; SID="${2:?session id}"; REQUESTER="${3:?requester emai
 # now flips it to opus — pass 'fable' explicitly for the pinned-to-fable
 # sessions (paper, query, omp — see scratch_agents_registry.json / memories).
 MODEL="${4:-opus}"; EFFORT="${5:-max}"
+# Task 372/376: the precinct + case number so the relaunch script re-exports the
+# context-header env (WORKER_PRECINCT/TSOMP_CASE/TSOMP_MODEL) across a revival.
+PRECINCT="${6:-}"; TASK_UID="${7:-}"
 LOG="scratch_full_logs/worker_${NAME}.log"
 PROMPT="scratch_full_logs/worker_${NAME}_prompt.md"
 RELAUNCH="scratch_worker_${NAME}_relaunch.sh"
 [ -f "$PROMPT" ] || { echo "ERR: prompt file missing: $PROMPT" >&2; exit 1; }
+# Recovery for older regen callers that don't pass precinct/task: read them back
+# from the stable markers spawn_worker baked into the prompt (the 'PRECINCT LEDGER
+# (<name>)' banner and the done-hook '--task <uid>' line). Keeps the relaunch
+# header correct even when the caller omits the new positional args.
+if [ -z "$PRECINCT" ]; then
+  PRECINCT="$(grep -oE 'PRECINCT LEDGER \([^)]+\)' "$PROMPT" 2>/dev/null | head -1 | sed -E 's/.*\(([^)]+)\).*/\1/')"
+fi
+if [ -z "$TASK_UID" ]; then
+  TASK_UID="$(grep -oE -- '--task[[:space:]]+[A-Za-z0-9_-]+' "$PROMPT" 2>/dev/null | head -1 | awk '{print $2}')"
+fi
 
 cat > "$RELAUNCH.tmp_gen" <<EOF
 #!/usr/bin/env bash
-cd /home/steven/Projects/time-series-omp
-source ~/anaconda3/etc/profile.d/conda.sh
-conda activate tsomp
-# Task 223: auth switch (default = Claude Max subscription, not the API key).
-source /home/steven/Projects/time-series-omp/scratch_claude_auth.sh
-export PATH="\$HOME/.npm-global/bin:\$PATH"
+# Portable runtime env: cd into the infra/ dir (code + state root), optionally
+# activate a conda env (INFRA_CONDA_ENV), load Claude auth, and put claude on PATH.
+source "$HERE/_daemon_env.sh"
+# Task 325: auto-attribute any GPU job this worker enqueues (submit_gpu.py reads
+# these) so the dashboard shows the owner instead of "?".
+export GPU_JOB_OWNER="$NAME"
+export TSOMP_AGENT="$NAME"
+# Task 372/376: re-export the context-header env so a watchdog-revived deputy's
+# emails still carry [precinct | case | deputy | model]. Baked at generation time
+# (values below are literals) — mirrors GPU_JOB_OWNER surviving a relaunch.
+export WORKER_PRECINCT="$PRECINCT"
+export TSOMP_CASE="$TASK_UID"
+export TSOMP_MODEL="$MODEL"
 echo "[$NAME] RELAUNCH \$(date) resume=$SID" >> $LOG
 
 # Task 170 F5(b): forensic bundle on signal-shaped claude exits (129=SIGHUP,

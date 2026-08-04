@@ -79,7 +79,7 @@ LOG = ROOT / "scratch_full_logs" / "watchdog.log"
 SENT = ROOT / "scratch_full_logs" / "sent_emails.jsonl"
 RECEIPTS = ROOT / "scratch_full_logs" / "inbox" / "receipts"
 # Task 274: the account-global limit marker BOTH daemons read (see DESIGN.md).
-# The 5-hour session and weekly limits both bill Steven's Claude Max subscription,
+# The 5-hour session and weekly limits both bill the operator's Claude Max subscription,
 # so a limit hit blocks EVERY headless worker at once — one shared marker, not a
 # per-worker flag, is the single source of truth jobmgr keys its hold/handover on.
 _JOBS_DIR = Path(os.environ.get("TSOMP_JOBS_DIR") or (ROOT / "scratch_full_logs" / "jobs"))

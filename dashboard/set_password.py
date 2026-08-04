@@ -23,6 +23,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--stdin", action="store_true", help="read password from stdin")
     ap.add_argument("--env", action="store_true", help="read from INFRA_DASH_PASSWORD")
+    ap.add_argument("--email", default=None, help="account username (email)")
+    ap.add_argument("--name", default=None, help="account display name")
     args = ap.parse_args()
 
     if args.env:
@@ -35,12 +37,13 @@ def main():
             print("Passwords do not match.", file=sys.stderr)
             return 1
 
-    if len(pw) < 6:
-        print("Password too short (min 6 chars).", file=sys.stderr)
+    if len(pw) < auth.MIN_PW_LEN:
+        print(f"Password too short (min {auth.MIN_PW_LEN} chars).", file=sys.stderr)
         return 1
 
-    auth.set_password(pw)
-    print(f"Password set. Secret stored at: {config.SECRET_FILE} (chmod 600)")
+    auth.set_password(pw, name=args.name, email=args.email)
+    who = f" for {args.email}" if args.email else ""
+    print(f"Password set{who}. Secret stored at: {config.SECRET_FILE} (chmod 600)")
     return 0
 
 

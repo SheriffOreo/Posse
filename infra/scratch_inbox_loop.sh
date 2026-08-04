@@ -23,10 +23,8 @@
 # SELF-UPDATE: edit this file (atomic mv), `bash -n` it, then
 # `touch scratch_full_logs/inbox/RESTART_LOOP` — the loop execs its new inode
 # between iterations (same pid, no double-poller window, no tmux kill needed).
-cd /home/steven/Projects/time-series-omp
-source ~/anaconda3/etc/profile.d/conda.sh
-conda activate tsomp
-export PATH="$HOME/.npm-global/bin:$PATH"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+source "$HERE/_daemon_env.sh"
 LOG=scratch_full_logs/inbox_agent.log
 IDIR=scratch_full_logs/inbox
 # Task 185: dead-worker relaunch guard only (crash-recovery pacing, NOT a read
@@ -48,6 +46,19 @@ while true; do
     SESSION=$(echo "$OUT" | grep -oP 'SESSION=\K[^\t]+')
     BODYFILE=$(echo "$OUT" | grep -oP 'BODYFILE=\K[^\t]+')
     SUBJECT=$(echo "$OUT"  | grep -oP 'SUBJECT=\K.*$' | cut -f1)
+    # Phase D (Case 384d): a YES/NO reply to a sheriff DELETE-CONFIRMATION carries a
+    # live token. The sheriff is a zero-API daemon (not a mail target), so we match
+    # the token MECHANICALLY and drop a confirmation record the sheriff reads next
+    # pass -- and do NOT route this reply to any worker. Robust + decoupled: only a
+    # LIVE token + a CLEAR yes/no intercepts; anything else (no token, stale token,
+    # unclear answer) reports PASSTHROUGH and routes normally, so a stray reply can
+    # never wedge anything or trigger a delete.
+    CONFIRM=$(python scratch_sheriff_request.py confirm-check --subject "$SUBJECT" --bodyfile "$BODYFILE" --uid "$MUID" 2>>$LOG)
+    if [[ "$CONFIRM" == INTERCEPTED* ]]; then
+      echo "[inbox] $(date) sheriff delete-confirm reply uid=$MUID -> $CONFIRM (recorded for the sheriff; not routed)" >> $LOG
+      python scratch_inbox.py mark --uid "$MUID" >> $LOG 2>&1
+      continue
+    fi
     # LIVE worker (identity = its tmux session, exact match) -> mailbox delivery
     # + immediate interrupt (Task 185 policy lives in scratch_inbox_deliver.sh);
     # marking-seen happens inside the helper only after the durable mailbox
@@ -55,9 +66,41 @@ while true; do
     if [ "$TYPE" = "resume" ] && [ -n "$SESSION" ] && [ "$SESSION" != "None" ] && tmux has-session -t "=$AGENT" 2>/dev/null; then
       bash scratch_inbox_deliver.sh "$AGENT" "$MUID" "$BODYFILE" "$SUBJECT" >> $LOG 2>&1
     else
-      echo "[inbox] $(date) new reply uid=$MUID -> agent=$AGENT ($SUBJECT)" >> $LOG
-      setsid bash scratch_inbox_handle.sh "$AGENT" "$TYPE" "$SESSION" "$BODYFILE" "$MUID" < /dev/null >> $LOG 2>&1 &
-      python scratch_inbox.py mark --uid "$MUID" >> $LOG 2>&1
+      # Feng uid=378 (Task 377): a follow-up to a resume-type deputy whose tmux is
+      # GONE (it finished + touched its done-sentinel) must FULLY RELAUNCH that
+      # deputy as a persistent, WATCHDOG-TRACKED worker — so it can TAKE the new
+      # case to completion if it decides to — NOT the one-shot triage handler that
+      # exits right after replying (which physically prevented the original deputy
+      # from taking the case). We deliver the mail to its mailbox (origin-headed) +
+      # write a receipt + mark seen HERE; the persistent-relaunch fallback below
+      # (unread-mail + tmux-gone + registered relaunch script) brings the deputy
+      # back THIS SAME iteration with the mail injected at the front of its prompt.
+      # Only a brand-new / no-session contact still uses the one-shot handler.
+      REL=$(python3 -c "import json;j=[x for x in json.load(open('scratch_full_logs/watchdog_jobs.json')) if x.get('name')=='$AGENT'];print(j[-1].get('relaunch') or '' if j else '')" 2>/dev/null)
+      if [ "$TYPE" = "resume" ] && [ -n "$SESSION" ] && [ "$SESSION" != "None" ] && [ -n "$REL" ] && [ -f "$REL" ]; then
+        SENDER_L="$(sed -n 's/^FROM:[[:space:]]*//p' "$BODYFILE" 2>/dev/null | head -1)"
+        echo "[inbox] $(date) follow-up uid=$MUID for finished deputy $AGENT -> mailbox + PERSISTENT relaunch (uid=378 policy) ($SUBJECT)" >> $LOG
+        # A finished deputy left a stale done-sentinel; clear it so the relaunched,
+        # watchdog-tracked deputy is properly tracked as RUNNING while it works the
+        # new case (it re-touches its sentinel when it closes the follow-up). Without
+        # this the sentinel-trap would treat its rc=0 as "already done" and never
+        # nudge it, and the watchdog would think it completed.
+        rm -f "scratch_full_logs/worker_${AGENT}.done"
+        if bash scratch_mailbox_append.sh "$AGENT" "uid=$MUID from ${SENDER_L:-user}" "$BODYFILE" >> $LOG 2>&1; then
+          python3 - "$AGENT" "$MUID" "$SUBJECT" "$IDIR/receipts/$MUID.json" <<'PY' 2>>$LOG || true
+import json, sys, time
+agent, uid, subject, dest = sys.argv[1:5]
+json.dump({"agent": agent, "uid": uid, "subject": subject, "ts": time.time()}, open(dest, "w"))
+PY
+          python scratch_inbox.py mark --uid "$MUID" >> $LOG 2>&1
+        else
+          echo "[inbox] $(date) mailbox append failed for $AGENT uid=$MUID -> left unseen for retry" >> $LOG
+        fi
+      else
+        echo "[inbox] $(date) new reply uid=$MUID -> agent=$AGENT ($SUBJECT)" >> $LOG
+        setsid bash scratch_inbox_handle.sh "$AGENT" "$TYPE" "$SESSION" "$BODYFILE" "$MUID" < /dev/null >> $LOG 2>&1 &
+        python scratch_inbox.py mark --uid "$MUID" >> $LOG 2>&1
+      fi
     fi
   fi
   # Fallback: a worker exited (or a relaunch crashed) leaving unread live-mail.
@@ -105,6 +148,23 @@ PY
     cat "$SNAP" >> "$IDIR/mailbox_${A}.processed.md"
   done
   shopt -u nullglob
+  # Task 377 #4: process any web-form "Create new case" submissions dropped by the
+  # dashboard POST. Fire-and-forget + self-claiming (flock) + robust (each record is
+  # moved to failed/ on error), so a bad upload can NEVER wedge the router. The
+  # bridge writes the spec, spawns the deputy, and emails the ACK-with-attachments.
+  if compgen -G "scratch_full_logs/web_cases/pending/*.json" > /dev/null 2>&1; then
+    echo "[inbox] $(date) web-case submission(s) pending -> running scratch_web_case.py bridge" >> $LOG
+    setsid bash -c "cd \"$HERE\" && python3 scratch_web_case.py process" < /dev/null >> $LOG 2>&1 &
+  fi
+  # Case 384e / Phase E: materialize any JTF (Joint Task Force) submissions dropped by
+  # the dashboard POST /api/jtf. Same fire-and-forget + self-claiming (flock) + robust
+  # (bad record -> failed/) contract as the web-case bridge, so a bad JTF submission can
+  # NEVER wedge the router. The bridge spawns precinct-slot deputies, injects must-take
+  # assignments into specific-deputy slots, and emails the ACK.
+  if compgen -G "scratch_full_logs/jtf/pending/*.json" > /dev/null 2>&1; then
+    echo "[inbox] $(date) JTF submission(s) pending -> running scratch_jtf.py bridge" >> $LOG
+    setsid bash -c "cd \"$HERE\" && python3 scratch_jtf.py process" < /dev/null >> $LOG 2>&1 &
+  fi
   # SELF-UPDATE hook: adopt an edited script without killing the tmux.
   if [ -f "$IDIR/RESTART_LOOP" ]; then
     rm -f "$IDIR/RESTART_LOOP"
