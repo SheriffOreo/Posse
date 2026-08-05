@@ -90,7 +90,7 @@ private" warning → **Advanced → Proceed**. To bind publicly over plain HTTP 
 
 | var | default | meaning |
 |-----|---------|---------|
-| `INFRA_STATE_ROOT` | `/home/steven/Projects/time-series-omp` | dir the daemons read/write (read-only here) |
+| `INFRA_STATE_ROOT` | `../infra` (shipped beside the dashboard) | dir the daemons read/write (read-only here) |
 | `INFRA_DASH_HOST` | `127.0.0.1` | bind address; `0.0.0.0` = all interfaces (public) |
 | `INFRA_DASH_PORT` | `8787` | port |
 | `INFRA_DASH_PUBLIC` | `0` | `1` = shortcut for host `0.0.0.0` + TLS on (public, encrypted) |

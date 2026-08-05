@@ -20,7 +20,7 @@
 # AGENTS: never append to scratch_full_logs/inbox/mailbox_*.md by hand —
 # always go through this helper (or scratch_interrupt_worker.sh, which calls
 # it and also does the kill+relaunch dance safely).
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 AGENT="${1:?agent}"; ORIGIN="${2:?origin (uid=N from <sender> | relay from agent <name>)}"; BODYFILE="${3:?bodyfile}"
 IDIR=scratch_full_logs/inbox
 MB="$IDIR/mailbox_${AGENT}.md"

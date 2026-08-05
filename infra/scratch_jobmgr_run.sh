@@ -5,7 +5,7 @@
 # finishes — the unambiguous completion event scratch_jobmgr.py watches for.
 # stdout/stderr already stream to the detach .output file; rc goes here too.
 #   Usage (via scratch_detach.sh only): scratch_jobmgr_run.sh <job_id> -- <command...>
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 ID="${1:?job id}"; shift
 [ "${1:-}" = "--" ] && shift
 "$@"

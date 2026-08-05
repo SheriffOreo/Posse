@@ -33,10 +33,11 @@ Posse is a **general framework**: the repo ships only the **Sheriff** and a
 > **Sheriff** — Oreo, in the badge above — manages the whole operation: supervising
 > deputies and keeping each precinct's records healthy. The deputies are a *posse*.
 
-> **🚀 New operator? Start here.** [`ONBOARDING.md`](ONBOARDING.md) is the step-by-step
-> guide to standing up your own instance — your identity, the posse mailbox, Claude auth
-> (subscription **or** API key), the web host/port, registering your dashboard login, and
-> sending your first task. ~20 minutes end to end.
+> **🚀 New operator? Start here.** Run **`python3 setup.py`** — one interactive program
+> that asks a handful of questions (your identity, the posse mailbox, Claude auth, the web
+> host/port), writes every config file, seeds the front desk, registers your dashboard
+> login, starts the system, and prints the URL to open. [`ONBOARDING.md`](ONBOARDING.md)
+> is the same steps by hand, plus the mental model and troubleshooting.
 
 > **📄 Design paper.** The architecture, the requirements it targets, a comparison with
 > existing agent frameworks, and the rationale for every module are written up in
@@ -149,13 +150,21 @@ walkthrough.
 
 ## Quickstart
 
-Everything is Python 3.10 + bash; the dashboard needs **no pip installs**.
-**[`ONBOARDING.md`](ONBOARDING.md) is the full walkthrough** (mailbox, Claude auth,
-troubleshooting); the condensed path:
+Everything is Python 3.10 + bash; the dashboard needs **no pip installs**. The one-command
+path does all of the below for you:
 
 ```bash
-# 1) Configure your instance: state dir, your identity, the allow-list, dashboard bind.
-cp infra_env.sh my_env.sh && $EDITOR my_env.sh    # set INFRA_OPERATOR_EMAIL etc.
+python3 setup.py            # interactive: config + seed + launch, then prints the dashboard URL
+```
+
+**[`ONBOARDING.md`](ONBOARDING.md) is the full walkthrough** (mailbox, Claude auth,
+troubleshooting); the condensed manual path, if you'd rather run each piece yourself:
+
+```bash
+# 1) Configure your instance: identity in infra/operator.json (name + email + allow-list),
+#    plus state dir / dashboard bind. `python3 setup.py` writes these; or by hand:
+cp infra/operator.json.example infra/operator.json && $EDITOR infra/operator.json
+cp infra_env.sh my_env.sh && $EDITOR my_env.sh    # optional: state dir, conda env, dashboard bind
 source ./infra_env.sh
 
 # 2) Posse mailbox creds (dedicated account; Gmail app password) — chmod 600.

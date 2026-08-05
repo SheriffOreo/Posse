@@ -16,7 +16,7 @@ This version instead draws ONLY the 13 real trees, each as an indented outline
 (the confidence legend). The 130 singletons are summarised in one caption line,
 not plotted.
 
-Usage:  INFRA_STATE_ROOT=/home/steven/Projects/time-series-omp python lineage_figure.py [out.png]
+Usage:  INFRA_STATE_ROOT=/path/to/infra python lineage_figure.py [out.png]
 """
 import os
 import sys

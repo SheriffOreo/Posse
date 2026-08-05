@@ -306,8 +306,14 @@ def sent_map():
 # returns the sentinel "precinct:<name>" which cmd_next turns into a TYPE=general,
 # SESSION=None dispatch (skips every resume path -> fresh deputy in that precinct).
 def known_precincts():
+    # Resolve the precinct directory the same way the records manager does: honor
+    # TSOMP_RECORDS_ROOT (points straight at the records dir) when set, else the
+    # records dir under ROOT. Behavior is unchanged in production (the env is unset
+    # there); the override just lets tests point at a throwaway directory.
+    env = os.environ.get("TSOMP_RECORDS_ROOT")
+    base = Path(env) if env else (ROOT / "scratch_full_logs" / "records")
     try:
-        d = json.loads((ROOT / "scratch_full_logs" / "records" / "precincts.json").read_text())
+        d = json.loads((base / "precincts.json").read_text())
         return set(d.get("precincts", {}).keys())
     except Exception:
         return set()

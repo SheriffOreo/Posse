@@ -10,7 +10,7 @@
 # one session. This snapshot lists every live registered worker session so a
 # resumed parent RECONCILES with its still-running subagents instead of
 # re-spawning duplicates. NEVER mutates anything.
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 WORKER="${1:-}"
 python3 - "$WORKER" <<'PY'
 import json, os, subprocess, sys, time

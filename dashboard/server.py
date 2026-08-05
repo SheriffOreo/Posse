@@ -420,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
         record = {"id": sid, "ts": time.time(), "precinct": precinct,
                   "model": model or None, "parent": parent or None,
                   "description": description, "files": saved, "case": case,
-                  "source": "web", "requester": "fenghaod@andrew.cmu.edu"}
+                  "source": "web", "requester": config.OPERATOR.get("email") or ""}
         try:
             pend = config.WEB_CASES / "pending"
             pend.mkdir(parents=True, exist_ok=True)
@@ -491,7 +491,7 @@ class Handler(BaseHTTPRequestHandler):
         sid = time.strftime("%Y%m%d%H%M%S") + "_" + os.urandom(4).hex()
         record = {"id": sid, "ts": time.time(), "lead": lead, "collaborators": collabs,
                   "critic": bool(payload.get("critic")), "description": description,
-                  "source": "web", "requester": "fenghaod@andrew.cmu.edu"}
+                  "source": "web", "requester": config.OPERATOR.get("email") or ""}
         try:
             pend = config.JTF / "pending"
             pend.mkdir(parents=True, exist_ok=True)

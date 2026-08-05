@@ -18,5 +18,5 @@
 # The command after -- is exec'd verbatim (argv); wrap shell lines as:
 #   ... -- bash -c 'cmd1 && cmd2 > out.log'
 # All logic lives in scratch_jobmgr.py (--submit); this is a thin wrapper.
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 exec python3 scratch_jobmgr.py --submit "$@"

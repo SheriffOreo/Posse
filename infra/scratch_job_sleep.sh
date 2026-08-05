@@ -18,5 +18,5 @@
 # REFUSES to park if no wake_on_done job is in flight for <owner> (nothing
 # would ever wake it). If a user email interrupts you while parked, handle it,
 # then re-park with this script if your job is still running.
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 exec python3 scratch_jobmgr.py --sleep "${1:?usage: scratch_job_sleep.sh <owner>}"

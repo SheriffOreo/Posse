@@ -15,7 +15,7 @@
 # stays put for the live worker / the next relaunch drain.
 # Manual/admin drain override: MAILBOX_FORCE=1 bash scratch_read_mailbox.sh <name>
 # (to inspect without draining, just: cat scratch_full_logs/inbox/mailbox_<name>.md)
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 NAME="${1:?worker name}"
 MB="scratch_full_logs/inbox/mailbox_${NAME}.md"
 LOCK="scratch_full_logs/inbox/mailbox_${NAME}.lock"

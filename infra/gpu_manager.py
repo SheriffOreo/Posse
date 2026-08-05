@@ -8,7 +8,7 @@ in your normal shell, which DOES see the Ada GPU — executes them strictly one
 at a time on GPU 0 and writes results to gpu_queue/done/.
 
 Usage:
-    conda activate tsomp
+    # (optionally activate your env first, e.g. conda activate <env>)
     python gpu_manager.py                 # serial, GPU 0
     python gpu_manager.py --gpu 0 --poll 1.0
 

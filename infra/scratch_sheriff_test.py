@@ -32,6 +32,7 @@ from pathlib import Path
 
 _TEST_ROOT = tempfile.mkdtemp(prefix="tsomp_sheriff_test_")
 os.environ["TSOMP_RECORDS_ROOT"] = _TEST_ROOT
+os.environ["INFRA_MAIL_ALLOWED"] = "operator@example.com,teammate@example.com"
 # never let TSOMP_SHERIFF_* from the caller's env skew the default tests (A/B, the
 # Phase-C llm default, the global model resolution, or the compaction retry count)
 os.environ.pop("TSOMP_SHERIFF_A", None)
@@ -628,7 +629,7 @@ def test_receptionist_delete_handoff_is_authorized_without_session():
     d = "_pd_recept"
     rec.directory_register(d, ledger_mode="mutable")
     r = sreq.submit("precinct_delete", "", "", "", "user asked to delete", target=d,
-                    origin="receptionist", requester="stevenfd@cmu.edu")
+                    origin="receptionist", requester="operator@example.com")
     with _approving():
         sh.request_pass(cfg)
     assert sreq.status(r["id"])["state"] == "done"

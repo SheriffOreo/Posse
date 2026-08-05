@@ -19,3 +19,28 @@ if [ -n "${INFRA_CONDA_ENV:-}" ]; then
 fi
 [ -f "$_INFRA_DIR/scratch_claude_auth.sh" ] && . "$_INFRA_DIR/scratch_claude_auth.sh"
 export PATH="$HOME/.npm-global/bin:$PATH"
+
+# Operator identity: load the durable identity FILE (operator.json: name/email/
+# allowed) into the environment so the mailer greets the operator by name and the
+# mail allow-list defaults to them. Any value ALREADY set in the env wins (explicit
+# override); only missing fields are filled from the file. The onboarding writes it.
+if [ -f "$_INFRA_DIR/operator.json" ]; then
+  eval "$(python3 - "$_INFRA_DIR/operator.json" <<'PY'
+import json, os, shlex, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    d = {}
+email = str(d.get("email", "")).strip()
+name = str(d.get("name", "")).strip()
+allowed = d.get("allowed") or ([email] if email else [])
+allowed = ",".join(a.strip() for a in allowed if str(a).strip())
+if email and not os.environ.get("INFRA_OPERATOR_EMAIL"):
+    print("export INFRA_OPERATOR_EMAIL=%s" % shlex.quote(email))
+if name and not os.environ.get("INFRA_OPERATOR_NAME"):
+    print("export INFRA_OPERATOR_NAME=%s" % shlex.quote(name))
+if allowed and not os.environ.get("INFRA_MAIL_ALLOWED"):
+    print("export INFRA_MAIL_ALLOWED=%s" % shlex.quote(allowed))
+PY
+)"
+fi

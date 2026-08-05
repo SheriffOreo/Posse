@@ -16,6 +16,26 @@ ability to **email a task** and watch a **deputy** work it to completion.
 
 ---
 
+## Fastest path — run the setup program
+
+Most operators should just run the **interactive installer**. It does every step in
+this guide for you — asks your name + email, the posse's mailbox, Claude auth, and the
+web host/port; writes all the config; seeds the front desk; registers your dashboard
+login; starts the system; and prints the URL to open:
+
+```bash
+python3 setup.py               # walk through setup, then launch the system
+python3 setup.py --no-launch   # configure only; start the daemons yourself later
+```
+
+It is **re-runnable and safe**: it shows your current values as defaults and only
+rewrites what you change. Secrets are typed hidden (never echoed) and land only in
+git-ignored files (`infra/operator.json`, `~/.smtp_env`, `~/.anthropic_key`). The
+manual, step-by-step walkthrough below is the reference if you prefer to run each piece
+yourself, script it, or troubleshoot.
+
+---
+
 ## 0. The mental model (read once)
 
 - **You are the operator.** One person runs one Posse instance. Your **email address**
@@ -174,6 +194,15 @@ export TSOMP_CLAUDE_AUTH=apikey        # add this to infra_env.sh to make it per
 ```
 
 Either way the key/tokens live only in those chmod-600 files and are never committed.
+
+### Do deputies need a Claude permission bypass? (yes — it's built in)
+
+A deputy runs **headless**, with no human to approve each tool call, so every launcher
+starts `claude` with `--dangerously-skip-permissions`. **You do not add this yourself** —
+it ships in the spawn/relaunch scripts. Practically: once you send a task, the deputy runs
+shell commands and edits files autonomously within its lane. The only one-time step on your
+side is running `claude` once interactively to accept the folder-trust prompt (and finish
+`/login`), so the headless runs start cleanly.
 
 ---
 

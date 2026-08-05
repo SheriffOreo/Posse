@@ -1,6 +1,6 @@
 # ============================================================================
 # claude_infra/.gitignore  — repo holds CODE ONLY. All runtime state + secrets
-# live in the tsomp working dir (INFRA_STATE_ROOT) and must NEVER be committed.
+# live under INFRA_STATE_ROOT (the infra/ state dir) and must NEVER be committed.
 # ============================================================================
 
 # ---- Secrets (defense in depth; these live outside the repo, but never track) ----
@@ -17,6 +17,10 @@ id_rsa*
 .env
 .env.*
 infra_env.local.sh          # local machine overrides (may name real paths)
+
+# ---- Operator identity: your real name + email (per-instance; template is tracked) ----
+# The live file the onboarding writes; operator.json.example (the template) stays tracked.
+operator.json
 
 # ---- Dashboard instance dir: password hash + cookie-signing secret ----
 dashboard/instance/

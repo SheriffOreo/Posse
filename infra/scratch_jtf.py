@@ -331,7 +331,7 @@ def _assign_deputy(*, jtf_id, role, case, deputy, description, roster, critic,
 
 
 def _ack(record, *, jtf_id, lead_final, collab_finals, critic, spawned, dry):
-    """Email fenghaod an ACK once the JTF is materialized (best-effort)."""
+    """Email the requester an ACK once the JTF is materialized (best-effort)."""
     requester = record.get("requester") or DEFAULT_REQUESTER
     desc = (record.get("description") or "").strip()
 

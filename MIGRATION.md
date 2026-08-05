@@ -6,6 +6,14 @@ guiding constraint: **the live daemons must keep working throughout.** Deliverab
 #1 is a populated + committed repo with the daemons **still running unchanged** from
 tsomp; any cutover is a separate, explicitly-approved step.
 
+> **Status (Case 428): path portability is DONE.** The committed `infra/` code no
+> longer hardcodes any host path — every daemon and helper resolves its state root from
+> `INFRA_STATE_ROOT` (default: the shipped `infra/` dir, beside its own code), so a fresh
+> clone runs standalone with no edits. This document is retained as **internal/historical
+> context** on the code-vs-state split and the *optional* relocation of state to an
+> arbitrary directory; a new operator does not need it — start with `setup.py` /
+> `ONBOARDING.md`. Path placeholders below (`<repo>`, `<state-dir>`) are illustrative.
+
 ---
 
 ## 1. Code vs state split
@@ -27,9 +35,9 @@ daemons; versioning it is pointless and would bloat the repo. The repo is the
 > `INFRA_OPERATOR_EMAIL`/`INFRA_OPERATOR_NAME`) instead of hardcoded addresses, and the
 > mail endpoints default to Gmail but honor `SMTP_HOST`/`IMAP_HOST` overrides. Defaults
 > are empty/fail-closed, so behavior is identical once configured. The **live** tsomp
-> daemons are untouched by these edits. Remaining tsomp couplings (a few `/home/steven`
-> paths in the shell starters, personal addresses in `*_test.py` fixtures) are the
-> `INFRA_STATE_ROOT` cutover surface below and harmless test data.
+> daemons are untouched by these edits. The former hardcoded host paths in the shell
+> starters are now **removed** (Case 428) — they resolve to their own dir / `INFRA_STATE_ROOT`;
+> the `*_test.py` fixtures were also de-identified, so the repo carries no personal identity.
 
 ---
 
@@ -39,7 +47,7 @@ daemons; versioning it is pointless and would bloat the repo. The repo is the
 The core daemons are **path-clean**: each resolves its root from
 `Path(__file__).resolve().parent` (`scratch_jobmgr.py:103`, `scratch_watchdog.py:73`,
 `gpu_manager.py:21`, …), **not** a hardcoded tsomp path. The "459 files hardcode
-`/home/steven/Projects/time-series-omp`" are the *generated* per-worker prompts and
+`<state-dir>`" are the *generated* per-worker prompts and
 relaunch scripts under `scratch_full_logs/` (state, not code) plus a couple of `cd`
 lines in `scratch_spawn_worker.sh`. So:
 
@@ -73,7 +81,7 @@ In `infra/`, replace state-directory references with an `INFRA_STATE_ROOT`-deriv
   `scratch_full_logs`, `gpu_queue`, `scratch_agents_registry.json`, `jobs/`.
 - `scratch_notify_email.py:26`: `sent_emails.jsonl` path → under `STATE_ROOT`.
 - `scratch_spawn_worker.sh` (lines ~30/187/191) and `scratch_gen_relaunch.sh`: the
-  worker prompt's `cd /home/steven/Projects/time-series-omp` and
+  worker prompt's `cd <state-dir>` and
   `source .../scratch_claude_auth.sh` must keep pointing workers at the **tsomp working
   dir** (that is correctly `INFRA_STATE_ROOT`), while sourcing helpers from
   `INFRA_CODE_ROOT`. Parameterize both via `infra_env.sh`.
@@ -88,14 +96,14 @@ flock-guarded restart; mail/jobs survive because state is untouched and the queu
 are on disk.
 
 ```bash
-source /home/steven/Projects/claude_infra/infra_env.sh   # sets INFRA_STATE_ROOT
+source <repo>/infra_env.sh   # sets INFRA_STATE_ROOT
 
 # 1) jobmgr  — idempotent starter picks up the same jobs/ dir
-bash /home/steven/Projects/claude_infra/infra/scratch_jobmgr_start.sh
+bash <repo>/infra/scratch_jobmgr_start.sh
 #    verify: tmux has-session -t jobmgr; jobs/{running,done} advancing
 
 # 2) gpu_manager
-bash /home/steven/Projects/claude_infra/infra/scratch_gpu_manager_start.sh
+bash <repo>/infra/scratch_gpu_manager_start.sh
 #    verify: gpu_queue/pending drains, done/ grows
 
 # 3) inbox router — graceful reload of the loop
@@ -108,7 +116,7 @@ touch "$INFRA_STATE_ROOT/scratch_full_logs/inbox/RESTART_LOOP"
 
 **Prereq:** apply the §2(a) diff first (otherwise a daemon started from `infra/`
 looks for state beside the code). **Rollback:** restart each daemon from the tsomp
-checkout exactly as today (`cd /home/steven/Projects/time-series-omp && bash
+checkout exactly as today (`cd <state-dir> && bash
 scratch_jobmgr_start.sh`, etc.) — since state never moved, rollback is instant and
 lossless.
 

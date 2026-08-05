@@ -30,7 +30,7 @@
 # INBOX_DRYRUN=1: print instead of sending email / marking seen (used by tests;
 # the mailbox append and any kill still happen for real; the entrypoint prints
 # its relaunch instead of executing it).
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 AGENT="${1:?agent}"; MUID="${2:?uid}"; BODYFILE="${3:?bodyfile}"; SUBJECT="${4:-}"
 LOG=scratch_full_logs/inbox_agent.log
 IDIR=scratch_full_logs/inbox

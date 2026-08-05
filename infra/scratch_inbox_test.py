@@ -36,11 +36,13 @@ def test_none_and_empty_safe():
 
 # --- Task 396: routing is EXACTLY two matches (reply-thread, precinct tag); no keyword matching ---
 def test_route_precinct_tag_in_subject():
-    assert ib.route(None, None, "[query] winner naming mismatch", "body") == "precinct:query"
+    with _temp_records({}, precincts=["query"]):
+        assert ib.route(None, None, "[query] winner naming mismatch", "body") == "precinct:query"
 
 
 def test_route_precinct_tag_in_body():
-    assert ib.route(None, None, "winner naming", "precinct: omp\n\ndetails") == "precinct:omp"
+    with _temp_records({}, precincts=["omp"]):
+        assert ib.route(None, None, "winner naming", "precinct: omp\n\ndetails") == "precinct:omp"
 
 
 def test_route_no_legacy_keyword_matching():
@@ -68,16 +70,16 @@ def test_drop_email_case_writes_record_and_is_idempotent():
                        "TSOMP_WEBCASES_ROOT": d + "/web",
                        "TSOMP_INBOX_ROOT": d + "/inbox"})
     try:
-        case, path = ib.drop_email_case("393", "query", "fenghaod@andrew.cmu.edu",
+        case, path = ib.drop_email_case("393", "query", "teammate@example.com",
                                         "[query] fix winner naming", "precinct: query\n\nfix it", [])
         rec = json.loads(path.read_text())
         assert rec["source"] == "email", rec
         assert rec["precinct"] == "query", rec
         assert rec["deputy_hint"] == f"fix_winner_naming_{case}", rec["deputy_hint"]
-        assert rec["requester"] == "fenghaod@andrew.cmu.edu", rec
+        assert rec["requester"] == "teammate@example.com", rec
         assert path.name == "email_393.json", path.name
         # idempotent per uid: same case number, same record file (overwrite, never double-spawn)
-        case2, path2 = ib.drop_email_case("393", "query", "fenghaod@andrew.cmu.edu",
+        case2, path2 = ib.drop_email_case("393", "query", "teammate@example.com",
                                           "[query] fix winner naming", "precinct: query\n\nfix it", [])
         assert case2 == case and str(path2) == str(path)
     finally:
@@ -94,13 +96,21 @@ from contextlib import contextmanager as _contextmanager
 
 
 @_contextmanager
-def _temp_records(mapping, extra_workers=()):
-    """Point _task_precinct_map at a temp task_precinct.json (via TSOMP_RECORDS_ROOT)
-    and inject any extra_workers into the in-memory registry; restore both on exit."""
+def _temp_records(mapping, extra_workers=(), precincts=()):
+    """Point _task_precinct_map + known_precincts at a temp records root (via
+    TSOMP_RECORDS_ROOT) and inject any extra_workers into the in-memory registry;
+    restore both on exit. The temp dir gets BOTH a task_precinct.json (from ``mapping``)
+    and a precincts.json seeded with the precincts this test needs: those referenced by
+    the task map, plus any explicit ``precincts`` (tag targets), plus the receptionist."""
     d = _tempfile.mkdtemp(prefix="c402_")
     old = _os.environ.get("TSOMP_RECORDS_ROOT")
     _os.environ["TSOMP_RECORDS_ROOT"] = d
     (Path(d) / "task_precinct.json").write_text(_json.dumps(mapping))
+    names = {m.get("precinct") for m in mapping.values()
+             if isinstance(m, dict) and m.get("precinct")}
+    names |= set(precincts) | {"receptionist"}
+    (Path(d) / "precincts.json").write_text(
+        _json.dumps({"precincts": {n: {} for n in names}}))
     added = []
     for w in extra_workers:
         if w not in ib.REG["workers"]:
@@ -160,7 +170,8 @@ def test_route_header_match_wins_over_subject():
 
 def test_route_explicit_tag_wins_over_subject_recovery():
     # A deliberate [precinct] tag on the reply overrides the subject's owning case.
-    with _temp_records({"400": {"deputy": "d400", "precinct": "infra"}}, extra_workers=["d400"]):
+    with _temp_records({"400": {"deputy": "d400", "precinct": "infra"}},
+                       extra_workers=["d400"], precincts=["query"]):
         assert ib.route(None, None, "Re: Case 400: move this [query]",
                         "body") == "precinct:query"
 

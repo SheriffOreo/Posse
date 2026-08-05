@@ -121,7 +121,7 @@ def _write_spec(spec_path: Path, *, case, precinct, model, parent, deputy,
 
 
 def _ack(record, *, case, deputy, spec_path, dry):
-    """Email fenghaod an ACK UPON RECEIPT with the form + uploaded files attached."""
+    """Email the requester an ACK UPON RECEIPT with the form + uploaded files attached."""
     precinct = record.get("precinct", "")
     model = record.get("model") or "(precinct default)"
     parent = record.get("parent") or "(none — new task)"

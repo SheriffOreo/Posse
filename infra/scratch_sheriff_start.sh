@@ -27,6 +27,11 @@
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 cd "$HERE"
 
+# Case 428: the front desk must ALWAYS exist so the dashboard Precincts tab is never
+# empty on a fresh install. The sheriff owns the precinct directory, so idempotently
+# seed the receptionist on every (re)start of the system manager (best-effort, cheap).
+python3 scratch_records.py directory ensure-receptionist >/dev/null 2>&1 || true
+
 # Read-only liveness report for the OTHER loop the system manager owns (the watchdog).
 # Purely informational — starts/kills nothing.
 report_watchdog() {

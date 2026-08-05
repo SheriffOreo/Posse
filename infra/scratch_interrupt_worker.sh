@@ -51,7 +51,7 @@
 # scratch_inbox_deliver.sh; there are NO read-deferring cooldowns since Task
 # 185); this script is the MECHANISM only. Exit 0 = relaunched & alive (or
 # dry-run).
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 LOG=scratch_full_logs/inbox_agent.log
 IDIR=scratch_full_logs/inbox
 NAME="${1:?worker name}"; shift

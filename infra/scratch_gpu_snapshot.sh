@@ -6,7 +6,7 @@
 # processes (to catch work NOT going through the queue). With a worker_name it
 # also reports scratch_full_logs/<worker>*.pid liveness. NEVER mutates anything:
 # no killing, no queue writes — safe to run at any time, including mid-training.
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 WORKER="${1:-}"
 python3 - "$WORKER" <<'PY'
 import glob, json, os, subprocess, sys, time

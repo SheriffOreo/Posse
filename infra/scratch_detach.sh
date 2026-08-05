@@ -8,7 +8,7 @@
 # Poll:  kill -0 $(cat scratch_full_logs/<worker>_<job>.pid)  +  tail the .output
 # scratch_cpu_snapshot.sh section 3 lists these pid files automatically.
 set -euo pipefail
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 W="${1:?usage: scratch_detach.sh <worker> <job> -- <command...>}"
 J="${2:?usage: scratch_detach.sh <worker> <job> -- <command...>}"
 shift 2

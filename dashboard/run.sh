@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Start the claude_infra dashboard. Localhost-only by default; reach via SSH tunnel.
 set -euo pipefail
-cd "$(dirname "$0")"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE"
 
-# Where the LIVE infra state lives (read-only). Same knob as the daemon cutover.
-export INFRA_STATE_ROOT="${INFRA_STATE_ROOT:-/home/steven/Projects/time-series-omp}"
+# Where the LIVE infra state lives (read-only). Default: the infra/ dir shipped
+# beside this dashboard (the daemons keep state under infra/scratch_full_logs).
+# Same knob as the daemon cutover — override with INFRA_STATE_ROOT.
+export INFRA_STATE_ROOT="${INFRA_STATE_ROOT:-$(cd "$HERE/.." && pwd)/infra}"
 export INFRA_DASH_HOST="${INFRA_DASH_HOST:-127.0.0.1}"
 export INFRA_DASH_PORT="${INFRA_DASH_PORT:-8787}"
 

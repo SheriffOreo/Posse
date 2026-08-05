@@ -25,7 +25,10 @@ Why this works (probe-verified on claude 2.1.186, Task 153B):
 """
 import json, os, subprocess, sys, time
 
-ROOT = "/home/steven/Projects/time-series-omp"
+# Portable: the state root is INFRA_STATE_ROOT if set (the same env the daemons +
+# dashboard resolve state with), else this script's own directory (the infra/ dir,
+# where scratch_full_logs lives). No hardcoded host path.
+ROOT = os.environ.get("INFRA_STATE_ROOT") or os.path.dirname(os.path.abspath(__file__))
 os.chdir(ROOT)
 
 

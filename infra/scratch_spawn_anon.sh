@@ -22,7 +22,7 @@
 # deputy reads that (and/or a result file the deputy told it to write). Relaunch by
 # re-running scratch_anon_<name>_launch.sh (regenerated here each spawn).
 set -euo pipefail
-cd /home/steven/Projects/time-series-omp
+cd "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"   # portable: infra/ dir = code + state root
 
 NAME=""; PROMPT_FILE=""; MODEL="opus"; MAXTURNS="60"; DRY=""
 while [ $# -gt 0 ]; do
@@ -58,11 +58,8 @@ cp -f "$PROMPT_FILE" "$PROMPT_SNAP"
 cat > "$LAUNCH" <<EOF
 #!/usr/bin/env bash
 # Anonymous worker '$NAME' launcher (Task 384). Deputy-owned; NOT watchdog-tracked.
-cd /home/steven/Projects/time-series-omp
-source ~/anaconda3/etc/profile.d/conda.sh
-conda activate tsomp
-source /home/steven/Projects/time-series-omp/scratch_claude_auth.sh
-export PATH="\$HOME/.npm-global/bin:\$PATH"
+# Portable runtime env (cd into infra/, optional conda env, Claude auth, claude on PATH):
+source "\$(cd "\$(dirname "\${BASH_SOURCE[0]:-\$0}")" && pwd)/_daemon_env.sh"
 echo "[anon:$NAME] starting \$(date) session=$SID model=$MODEL" >> $LOG
 claude --session-id "$SID" -p --dangerously-skip-permissions --model $MODEL \\
   --max-turns $MAXTURNS --verbose < "$PROMPT_SNAP" >> $LOG 2>&1

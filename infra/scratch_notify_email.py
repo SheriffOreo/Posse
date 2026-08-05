@@ -24,11 +24,27 @@ from email.utils import make_msgid
 from pathlib import Path
 
 LOG = Path(__file__).resolve().parent / "scratch_full_logs" / "sent_emails.jsonl"
-# The operator this posse reports to. Email sent to INFRA_OPERATOR_EMAIL opens with
-# "Hi <INFRA_OPERATOR_NAME>,"; set both during onboarding. Empty by default so the
-# released code carries no personal identity (a general greeting is used instead).
-OPERATOR_EMAIL = os.environ.get("INFRA_OPERATOR_EMAIL", "").strip().lower()
-OPERATOR_NAME = os.environ.get("INFRA_OPERATOR_NAME", "there").strip() or "there"
+# The operator this posse reports to. Identity resolves, in priority order:
+#   1. env INFRA_OPERATOR_EMAIL / INFRA_OPERATOR_NAME (what the daemons export);
+#   2. the operator identity FILE operator.json at the state root — the durable
+#      single source of truth the onboarding writes: {"name","email"[,"allowed"]};
+#   3. a generic fallback (no personal identity is baked into the released code).
+# Email sent to the operator's address opens with "Hi <name>,"; every agent signs.
+def _load_operator():
+    email = os.environ.get("INFRA_OPERATOR_EMAIL", "").strip()
+    name = os.environ.get("INFRA_OPERATOR_NAME", "").strip()
+    if not (email and name):
+        root = os.environ.get("INFRA_STATE_ROOT") or str(Path(__file__).resolve().parent)
+        try:
+            d = json.loads((Path(root) / "operator.json").read_text())
+            email = email or str(d.get("email", "")).strip()
+            name = name or str(d.get("name", "")).strip()
+        except Exception:
+            pass
+    return email.lower(), (name or "there")
+
+
+OPERATOR_EMAIL, OPERATOR_NAME = _load_operator()
 
 # Task 376 #1: a context header stamped just under the greeting on every outgoing
 # email, so the operator can see at a glance which precinct / case / deputy (and model)

@@ -627,6 +627,89 @@ def directory_register(
 
 
 # ---------------------------------------------------------------------------
+# RECEPTIONIST BOOTSTRAP -- the system FRONT DESK is a fixed-ledger precinct that
+# always exists (Phase D makes it undeletable). A fresh install has NO precincts.json
+# yet, so the global directory -- and the dashboard Precincts tab -- is EMPTY until
+# something seeds it. ensure_receptionist is the idempotent seed the onboarding and
+# the sheriff startup call, so the front desk (hence a non-empty directory) is
+# guaranteed the moment the system is up.
+# ---------------------------------------------------------------------------
+RECEPTIONIST_NAME = "receptionist"
+RECEPTIONIST_DESCRIPTION = (
+    "front desk: routes unaddressed contacts; fixed ledger (system description) + case log"
+)
+RECEPTIONIST_LEDGER = """# receptionist precinct -- FIXED ledger (read-only)
+
+The receptionist is the FRONT DESK of the Sheriff & Deputies system. It is a special
+precinct: this ledger is FIXED -- authored once and read-only through the records API
+(it takes no case appends, and the sheriff never edits it) -- but the receptionist DOES
+keep a normal, append/read case LOG like every precinct.
+
+## The Sheriff & Deputies system, in one screen
+Work is organized into PRECINCTS (departments). Each precinct keeps three records, all
+reached ONLY through the records-manager program (scratch_records.py), never the raw files:
+  * LEDGER    -- the precinct's big-picture context (prior case summaries + pointers).
+                 Mutable: the SHERIFF compacts it and is its sole editor; DEPUTIES only
+                 append a one-paragraph case report on close. (The receptionist's ledger --
+                 this file -- is the one exception: FIXED.)
+  * CASE LOG  -- an append-only index: one line per closed case (task# + case-file pointer
+                 + one-sentence summary). Edited by NO ONE, not even the sheriff.
+  * CASE FILES-- the durable per-task record (description / progress / deliverables).
+A DEPUTY, named by its task number, takes every email and works every case; it is the point
+of contact. The SHERIFF is a standing background daemon: it keeps mutable ledgers bounded,
+decides deputies' change-requests, and is the SOLE authority that CREATES or DELETES a
+precinct and owns the precinct directory. It answers no email and makes no routing decision.
+
+## The precincts (see the global directory: PRECINCTS.md / precincts.json)
+On a fresh install the receptionist (this front desk) is the only precinct. Create your own
+precincts through the dashboard or the records manager; each appears in the global directory
+as you add it, and its deputies then take that precinct's cases.
+
+## How the operator specifies a precinct in an email (the matching mechanism)
+Precedence -- FIRST match wins:
+  1. EXPLICIT precinct tag (highest priority) -- either a line
+        precinct: <name>
+     anywhere in the body, or a bracket tag  [<name>]  in the subject. Routes straight to
+     that precinct's deputy.
+  2. Else, for a REPLY, the PARENT TASK's precinct, looked up in the persisted
+     task -> precinct map (records/task_precinct.json).
+  3. Else -- a fresh contact with no tag and no owning task -- the RECEPTIONIST is launched
+     to decide the precinct (or simply answer).
+
+## What the receptionist does when launched
+It is launched only for a fresh incoming contact that names no precinct and owns no task. It
+has NO records authority of its own: it never edits the directory, never creates or deletes a
+precinct, never writes another precinct's ledger.
+  * EASY QUESTION -> answer directly. Do NOT allocate a task number; write NO log line and NO
+                     case file.
+  * A NORMAL TASK -> choose an EXISTING precinct from the directory (never invent one), write a
+                     case spec, and spawn that precinct's deputy (which files its own two
+                     closing appends). Route only; do not do the heavy work here.
+  * CREATE / DELETE A PRECINCT -> the receptionist HANDS OFF to the sheriff (it does NOT do it
+                     itself) by posting a request to the sheriff's queue (scratch_sheriff_request.py).
+"""
+
+
+def ensure_receptionist() -> dict:
+    """Idempotently seed the receptionist precinct (the system front desk) so the global
+    directory is never empty on a fresh install -- the fix for an empty dashboard
+    Precincts tab. Registers the fixed-ledger precinct if absent and authors its fixed
+    ledger once. Safe to call repeatedly: an already-registered receptionist keeps its
+    ledger/log/cases untouched (register is idempotent; the ledger is authored only while
+    still empty). Returns ``{"created": bool, "authored": bool}``.
+    """
+    existing = directory_read(include_deleted=True).get("precincts", {}).get(RECEPTIONIST_NAME)
+    created = not isinstance(existing, dict)
+    directory_register(RECEPTIONIST_NAME, description=RECEPTIONIST_DESCRIPTION,
+                       ledger_mode=LEDGER_MODE_FIXED, model=DEFAULT_MODEL, role="sheriff")
+    authored = False
+    if not ledger_read(RECEPTIONIST_NAME).strip():
+        ledger_author(RECEPTIONIST_NAME, RECEPTIONIST_LEDGER)
+        authored = True
+    return {"created": created, "authored": authored}
+
+
+# ---------------------------------------------------------------------------
 # PRECINCT LIFECYCLE (Phase D, Case 384d) -- soft-delete / restore / purge, all
 # SHERIFF-ONLY (like ledger_write / log_remove). DELETE IS RECOVERABLE: it never
 # hard-removes anything except the explicit >retention purge. The destructive
@@ -922,6 +1005,10 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="default model for spawned deputies (Task 376); unset keeps existing")
     p.add_argument("--role", default="sheriff")
 
+    p = drop.add_parser("ensure-receptionist",
+                        help="idempotently seed the front-desk precinct so the directory is "
+                             "never empty on a fresh install (onboarding/sheriff bootstrap)")
+
     p = drop.add_parser("mode", help="print a precinct's ledger mode (mutable|fixed)")
     p.add_argument("--dept", required=True)
 
@@ -1011,6 +1098,10 @@ def main(argv=None) -> int:
                                            model=args.model, role=args.role)
                 print(f"registered precinct[{args.name}] mode={entry['ledger_mode']} "
                       f"model={entry.get('model', DEFAULT_MODEL)}", file=sys.stderr)
+            elif args.op == "ensure-receptionist":
+                res = ensure_receptionist()
+                print(f"receptionist ensured (created={res['created']} "
+                      f"authored={res['authored']})", file=sys.stderr)
             elif args.op == "mode":
                 print(precinct_mode(args.dept))
             elif args.op == "model":

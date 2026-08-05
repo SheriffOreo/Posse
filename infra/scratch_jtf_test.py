@@ -61,7 +61,7 @@ jtf._ack = lambda *a, **k: _ACKS.append(k)
 def _write_pending(sid, **record):
     record.setdefault("id", sid)
     record.setdefault("source", "web")
-    record.setdefault("requester", "fenghaod@andrew.cmu.edu")
+    record.setdefault("requester", "teammate@example.com")
     p = Path(_JROOT) / "pending" / f"{sid}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(record))

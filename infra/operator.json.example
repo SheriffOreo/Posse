@@ -1,0 +1,6 @@
+{
+  "_comment": "Operator identity for this Posse instance — the single source of truth. Copy this file to operator.json (git-ignored) and fill it in, or let the onboarding program (posse-setup) write it for you. 'name' is how agents address you in email ('Hi <name>,'); 'email' is your dashboard login username AND the address the posse emails you at; 'allowed' is the fail-closed list of senders who may command the fleet by email (defaults to just you).",
+  "name": "Your Name",
+  "email": "you@example.com",
+  "allowed": ["you@example.com"]
+}

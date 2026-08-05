@@ -22,6 +22,7 @@ from pathlib import Path
 
 _TEST_ROOT = tempfile.mkdtemp(prefix="tsomp_sreq_test_")
 os.environ["TSOMP_RECORDS_ROOT"] = _TEST_ROOT
+os.environ["INFRA_MAIL_ALLOWED"] = "operator@example.com,teammate@example.com"
 # a throwaway worker registry so verify_identity is deterministic + offline
 _REG = Path(_TEST_ROOT) / "registry.json"
 _REG.write_text(json.dumps({"workers": {
@@ -129,15 +130,15 @@ def test_receptionist_handoff_submit_authorized_without_session():
     # a precinct-lifecycle op may be posted with origin=receptionist + an allowed
     # requester and NO deputy session (the user's mailbox is the authority).
     r = sreq.submit("precinct_delete", "", "", "", "user asked to delete", target="oldp",
-                    origin="receptionist", requester="stevenfd@cmu.edu", force=True)
+                    origin="receptionist", requester="operator@example.com", force=True)
     got = sreq.get(r["id"])
     assert got["op"] == "precinct_delete" and got["target"] == "oldp"
-    assert got["origin"] == "receptionist" and got["requester"] == "stevenfd@cmu.edu"
+    assert got["origin"] == "receptionist" and got["requester"] == "operator@example.com"
     assert got["force"] is True and got["deputy"] == "receptionist"
     # create + restore also allowed via the hand-off
     for op in ("precinct_create", "precinct_restore"):
         rr = sreq.submit(op, "", "", "", "user asked", target="p1",
-                         origin="receptionist", requester="fenghaod@andrew.cmu.edu")
+                         origin="receptionist", requester="teammate@example.com")
         assert sreq.get(rr["id"])["origin"] == "receptionist"
 
 
@@ -152,7 +153,7 @@ def test_receptionist_handoff_rejects_bad_requester_and_wrong_op():
     # a non-lifecycle op cannot ride the receptionist hand-off
     try:
         sreq.submit("log_remove", "infra", "", "", "sneak", target="1",
-                    origin="receptionist", requester="stevenfd@cmu.edu")
+                    origin="receptionist", requester="operator@example.com")
         raise AssertionError("log_remove via receptionist origin must be rejected")
     except ValueError:
         pass

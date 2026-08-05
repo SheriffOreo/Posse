@@ -19,7 +19,8 @@ set -euo pipefail
 SESSION="infra_dashboard"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-export INFRA_STATE_ROOT="${INFRA_STATE_ROOT:-/home/steven/Projects/time-series-omp}"
+# Default state root: the infra/ dir shipped beside this dashboard (override with INFRA_STATE_ROOT).
+export INFRA_STATE_ROOT="${INFRA_STATE_ROOT:-$(cd "$HERE/.." && pwd)/infra}"
 # Public convenience switch: all interfaces + TLS on (encrypted login over the LAN).
 if [ "${INFRA_DASH_PUBLIC:-0}" = "1" ]; then
   export INFRA_DASH_HOST="0.0.0.0"

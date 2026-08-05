@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # scratch_claude_auth.sh — THE single switch for how headless workers authenticate.
 #
-# SOURCE this file (never execute it) right after `conda activate tsomp` and
-# before any `claude` invocation. Every launcher does:
-#     source /home/steven/Projects/time-series-omp/scratch_claude_auth.sh
+# SOURCE this file (never execute it) after any env activation and before any
+# `claude` invocation. Every launcher sources it via _daemon_env.sh, i.e.:
+#     source "$(dirname "${BASH_SOURCE[0]:-$0}")/scratch_claude_auth.sh"
 #
 # Modes (env var TSOMP_CLAUDE_AUTH, read at source time):
 #   subscription  (DEFAULT, since 2026-07-22) — clear ANTHROPIC_API_KEY so the
@@ -17,8 +17,8 @@
 #
 # To flip a single launch back to API billing:
 #     TSOMP_CLAUDE_AUTH=apikey bash scratch_spawn_worker.sh ...
-# To flip everything back, change the default in the `case` below AND in the env
-# hook ~/anaconda3/envs/tsomp/etc/conda/activate.d/zzz_anthropic_key.sh.
+# To flip everything back, change the default in the `case` below (and any env
+# hook you use to export the key, e.g. a conda activate.d script).
 #
 # NOTE: the raw key still lives only in ~/.anthropic_key (chmod 600, git-ignored)
 # and the OAuth tokens only in ~/.claude/.credentials.json (chmod 600). Never

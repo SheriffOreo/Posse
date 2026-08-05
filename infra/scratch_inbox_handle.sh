@@ -15,12 +15,10 @@
 #   sender, up to MAX_DEFERS(=3) deferrals, after which a FINAL give-up email
 #   dead-letters the uid. Real usage/session limits still bypass this (defer to
 #   the reset). Knobs are env-overridable named constants below (tests only).
-cd /home/steven/Projects/time-series-omp
-source ~/anaconda3/etc/profile.d/conda.sh
-conda activate tsomp
-# Task 223: auth switch (default = Claude Max subscription, not the API key).
-source /home/steven/Projects/time-series-omp/scratch_claude_auth.sh
-export PATH="$HOME/.npm-global/bin:$PATH"
+# Portable runtime env: cd into infra/ (code + state root), optionally activate a
+# conda env (INFRA_CONDA_ENV; unset => system python3), load the Claude auth switch
+# (default = Max subscription, not the API key), and put the claude CLI on PATH.
+source "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/_daemon_env.sh"
 
 # --- Task 362 policy constants -------------------------------------------------
 # the operator's spec: "try 5 times in a row; if all fail, defer 15 min and email; 15 min
@@ -204,8 +202,8 @@ EOF
 
 echo "[inbox] $(date) dispatch agent=$AGENT type=$TYPE" >> $LOG
 if [ "$TYPE" = "resume" ] && [ "$SESSION" != "None" ] && [ -n "$SESSION" ]; then
-  # Task 391 #3: the legacy hardcoded 'paper' special-case is REMOVED. It used to
-  # resume the old persistent paper session via scratch_spawn_paper_worker.sh, which
+  # Task 391 #3: the legacy hardcoded per-project special-case is REMOVED. It used to
+  # resume one persistent hardcoded session via a bespoke launcher, which
   # bypassed the deputy model entirely — it filed NO case number, NO ledger paragraph,
   # and NO case-log line, and showed a stale case# on the board. The paper agent is now
   # a NORMAL deputy that delegates real work via scratch_spawn_worker.sh (a fresh

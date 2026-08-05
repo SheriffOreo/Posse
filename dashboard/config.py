@@ -1,10 +1,11 @@
 """
 Central configuration for the claude_infra dashboard.
 
-Everything is READ-ONLY against the live tsomp working directory. The one knob
+Everything is READ-ONLY against the live infra state directory. The one knob
 that matters is INFRA_STATE_ROOT: it points at the directory the daemons use for
-runtime state (default: the tsomp checkout). This is the SAME env var the daemon
-"cutover" uses, so the dashboard and a relocated daemon agree on where state lives.
+runtime state (default: the infra/ dir shipped beside this dashboard). This is the
+SAME env var the daemon "cutover" uses, so the dashboard and a relocated daemon
+agree on where state lives.
 
 No secrets live here. The dashboard's own login secret lives under instance/
 (git-ignored), created by set_password.py.
@@ -13,9 +14,40 @@ import os
 from pathlib import Path
 
 # --- where the LIVE runtime state lives (read-only) -------------------------
+# Default: the infra/ dir shipped beside this dashboard package (the daemons keep
+# their state under infra/scratch_full_logs, resolved relative to their own file).
+# Override with INFRA_STATE_ROOT to point at a relocated state directory.
+_DEFAULT_STATE_ROOT = Path(__file__).resolve().parent.parent / "infra"
+# `or` (not get's default) so an exported-but-EMPTY INFRA_STATE_ROOT falls back to the
+# default instead of resolving to the cwd.
 STATE_ROOT = Path(
-    os.environ.get("INFRA_STATE_ROOT", "/home/steven/Projects/time-series-omp")
+    os.environ.get("INFRA_STATE_ROOT") or str(_DEFAULT_STATE_ROOT)
 ).resolve()
+
+
+# --- operator identity (the durable single source of truth) -----------------
+# operator.json at the state root ({"name","email"[,"allowed"]}) is the FILE the
+# onboarding writes and everything reads: the mailer greets the operator by name,
+# the dashboard login username is this email, and the web "Create new case" / JTF
+# forms attribute submissions to this address. Env (INFRA_OPERATOR_EMAIL/NAME) wins;
+# empty when nothing is configured (the released code carries no personal identity).
+OPERATOR_FILE = STATE_ROOT / "operator.json"
+
+
+def _load_operator():
+    email = os.environ.get("INFRA_OPERATOR_EMAIL", "").strip()
+    name = os.environ.get("INFRA_OPERATOR_NAME", "").strip()
+    try:
+        import json as _json
+        d = _json.loads(OPERATOR_FILE.read_text())
+        email = email or str(d.get("email", "")).strip()
+        name = name or str(d.get("name", "")).strip()
+    except Exception:
+        pass
+    return {"email": email, "name": name}
+
+
+OPERATOR = _load_operator()
 
 # --- network bind (default localhost; reach via SSH tunnel) ------------------
 # HOST defaults to localhost (safe). To reach it without a tunnel, bind wider via
@@ -102,12 +134,14 @@ DOWNLOAD_ROOTS = [
     (SCRATCH).resolve(),
     (GPU_QUEUE / "logs").resolve(),
     (STATE_ROOT / "eval").resolve(),
-    # Task 327 (Steven-approved, option b): the paper's notes dir, so deliverables a
-    # persistent worker emails from the paper repo (e.g. residual_models_survey.pdf,
-    # the Task 324 FINAL attachment) resolve through the guarded /download. Narrowest
-    # path that covers them; DOWNLOAD_DENY below still blocks any secret inside it.
-    Path("/home/steven/Papers/Time_series_OMP/notes").resolve(),
 ]
+# Optional operator-added roots: absolute paths (os.pathsep-separated) to extra
+# directories a worker emails deliverables from (e.g. a separate notes/paper dir
+# outside the state root), so they resolve through the guarded /download. Empty by
+# default — NO host path is baked in. DOWNLOAD_DENY still blocks secrets inside them.
+for _extra in os.environ.get("INFRA_EXTRA_DOWNLOAD_ROOTS", "").split(os.pathsep):
+    if _extra.strip():
+        DOWNLOAD_ROOTS.append(Path(_extra.strip()).resolve())
 # Never serve these, even inside a whitelisted root.
 DOWNLOAD_DENY = [
     "credentials.json", ".smtp_env", ".anthropic_key", ".credentials",
