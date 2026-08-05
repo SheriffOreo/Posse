@@ -42,7 +42,21 @@ _MS = re.compile(r"[A-Za-z]?(\d{13})(?:\D|$)")
 _SEC = re.compile(r"[A-Za-z]?(\d{10})(?:\D|$)")
 # Task 327: "Task N" token in an email subject -> the task it belongs to. Kept in
 # lockstep with lineage._TASK_TOKEN (agents title emails "Task N START/FINAL/...").
-_SUBJ_TASK = re.compile(r"\btask[ _]?#?(\d+)", re.I)
+_SUBJ_TASK = re.compile(r"\b(?:task|case)[ _]?#?(\d+)", re.I)  # Case 427: "Case N" too
+
+# Mechanical acks the router / web-case bridge send on the user's behalf — never
+# part of the substantive case conversation (Case 427). Two shapes:
+#   * creation ack:  subject "Case <n> created|assigned (<precinct>): ..."
+#   * router ack:    body opens with "Auto-ack from the inbox router: ..."
+_ACK_SUBJECT = re.compile(r"^\s*(?:re:\s*)?case\s+\d+\s+(?:created|assigned)\s*\(", re.I)
+
+
+def is_autoack(subject, body):
+    """True for a mechanical acknowledgement (case-creation echo or inbox-router
+    auto-ack) that should be hidden from a case's conversation + deliverables."""
+    if _ACK_SUBJECT.search(subject or ""):
+        return True
+    return "auto-ack from the inbox router" in (body or "").lower()
 
 
 def epoch_from_id(jid):
@@ -782,6 +796,15 @@ def agent_for_task(task_id, spec_agent=None):
     for a persistent worker whose prompt file no longer names this task."""
     if spec_agent:
         return spec_agent
+    # Case 427: the AUTHORITATIVE owner is the deputy recorded for this case at
+    # spawn/take (the same task_precinct.json the Status board trusts). Web cases
+    # (deputy web_<n>) resolve here directly; old migrated rows carry only a
+    # precinct (no deputy) -> fall through to the heuristics below.
+    rec = task_precinct_map().get(str(task_id))
+    if isinstance(rec, dict):
+        dep = rec.get("deputy") or rec.get("agent")
+        if dep:
+            return dep
     cands = worker_prompt_task_map().get(task_id) or []
     if cands:
         owners = _job_owner_counts()
@@ -835,21 +858,41 @@ def _emailed_attachments(agent, task_id=None):
     the right task instead of dumping all of its emailed files under every task."""
     if not agent:
         return []
-    out, seen = [], set()
     try:
         lines = Path(config.SENT_EMAILS).read_text(errors="replace").splitlines()
     except Exception:
-        return out
+        return []
+    rows = []
     for ln in lines:
         try:
             r = json.loads(ln)
         except Exception:
             continue
-        if r.get("agent") != agent:
-            continue
-        if task_id is not None:
+        if r.get("agent") == agent:
+            rows.append(r)
+    # Case 427: a token-less email from a deputy DEDICATED to this case (every
+    # case token it ever used is task_id) still belongs to the case — otherwise
+    # the per-milestone figures a web deputy sends under a fresh "Re: <topic>"
+    # subject (no "Case N" token) are silently dropped from deliverables.
+    dedicated = False
+    if task_id is not None:
+        toks = set()
+        for r in rows:
             m = _SUBJ_TASK.search(r.get("subject", "") or "")
-            if not (m and int(m.group(1)) == task_id):
+            if m:
+                toks.add(int(m.group(1)))
+        dedicated = toks <= {task_id}
+    out, seen = [], set()
+    for r in rows:
+        if task_id is not None:
+            if is_autoack(r.get("subject", "") or "", r.get("body", "") or ""):
+                continue
+            m = _SUBJ_TASK.search(r.get("subject", "") or "")
+            tok = int(m.group(1)) if m else None
+            if tok is not None:
+                if tok != task_id:
+                    continue
+            elif not dedicated:
                 continue
         for p in (r.get("attachments") or []):
             rp = config.resolve_download(p)

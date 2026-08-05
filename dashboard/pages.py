@@ -199,6 +199,11 @@ a.schip:hover { background:var(--btn-bg); color:var(--btn-fg); text-decoration:n
 .atts { margin-top:8px; display:flex; flex-direction:column; gap:7px; }
 img.attimg { max-width:100%; height:auto; border:1px solid var(--border); border-radius:6px; background:var(--surface2); }
 a.attfile { display:inline-block; }
+/* ---- initial / final message tags (Case 427) ---- */
+.kindtag { display:inline-block; font-size:10px; font-weight:700; letter-spacing:.04em;
+  padding:1px 6px; border-radius:9px; margin-right:7px; vertical-align:1px; text-transform:uppercase; }
+.kindtag.initial { background:var(--accent-border); color:var(--fg); }
+.kindtag.final { background:var(--good, #2f855a); color:#fff; }
 /* ---- deliverables section (Task detail) ---- */
 .deliv { margin-top:12px; padding-top:8px; border-top:1px solid var(--border); }
 .deliv .job { margin:5px 0; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
@@ -595,7 +600,12 @@ async function showTask(id){
   if(!t.conversation.messages.length) conv.appendChild(el('div','muted','No emails matched this thread.'));
   t.conversation.messages.forEach(function(m){var d=el('div','msg '+(m.dir==='in'?'in':'out'));
     var hd=el('div','small muted', (m.dir==='in'?('⇦ '+(m.from||'user')):('⇨ '+(m.agent||'agent')+' → '+(m.to||'')))+'  ·  '+fmtTs(m.ts));
-    d.appendChild(hd); if(m.subject) d.appendChild(el('div',null,m.subject));
+    d.appendChild(hd);
+    // Case 427: badge the initial request + the deputy's FINAL so the three parts
+    // the user asked for (your request / the exchange / the FINAL) read at a glance.
+    if(m.kind==='initial'||m.kind==='final'){
+      var kt=el('span','kindtag '+m.kind, m.kind==='initial'?'initial request':'final'); d.appendChild(kt); }
+    if(m.subject) d.appendChild(el('div',null,m.subject));
     if(m.body) d.appendChild(el('div','msgbody',m.body));              // full, untruncated
     else if(m.dir==='out') d.appendChild(el('div','small muted','(outbound body not stored — email predates Task 323 body logging)'));
     if(m.attachments && m.attachments.length){                        // inline images / file links

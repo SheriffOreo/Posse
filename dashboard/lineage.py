@@ -51,7 +51,7 @@ def _norm_subject(s):
 # attribute an OUTBOUND email to its task explicitly, overriding subject-thread
 # matching (a persistent worker like `paper` spans many task numbers, so its
 # normalized subject alone mis-groups emails). See task_conversation().
-_TASK_TOKEN = re.compile(r"\btask[ _]?#?(\d+)", re.I)
+_TASK_TOKEN = re.compile(r"\b(?:task|case)[ _]?#?(\d+)", re.I)  # Case 427: "Case N" too
 
 
 def subject_task(subject):
@@ -218,7 +218,7 @@ def _build_lineage():
         for tid in nodes:
             if tid in edges:
                 continue
-            m = re.search(r"\btask[ _]?#?(\d+)", inbound_by_uid.get(tid, {}).get("subject", ""), re.I)
+            m = re.search(r"\b(?:task|case)[ _]?#?(\d+)", inbound_by_uid.get(tid, {}).get("subject", ""), re.I)
             if m:
                 _set(tid, int(m.group(1)), "reply-subject")
     # 3) subject-thread fallback: chain same-subject tasks by ascending id
@@ -440,71 +440,215 @@ def _out_attachments(paths):
     return out
 
 
+# --------------------------------------------------------------------------- #
+# case identity — authoritative maps (Case 427)
+# --------------------------------------------------------------------------- #
+_WEB_MARKER = "submitted through the dashboard"
+_FORM_DESC = re.compile(r"##\s*Task description[^\n]*\n+(.*?)(?:\n##\s|\Z)", re.S | re.I)
+_FORM_UPLOADS = re.compile(r"##\s*Uploaded files.*?\n(.*?)(?:\n##\s|\Z)", re.S | re.I)
+
+
+def _case_deputy(task_id):
+    """The deputy that OWNS this case, from the spawn/board record
+    (task_precinct.json) — authoritative for both web and email cases. None for
+    old migrated rows that recorded only a precinct (caller falls back)."""
+    rec = state.task_precinct_map().get(str(task_id))
+    if isinstance(rec, dict):
+        return rec.get("deputy") or rec.get("agent")
+    return None
+
+
+def _uid_case_map():
+    try:
+        d = json.loads((config.RECORDS / "uid_case.json").read_text())
+        return {int(k): int(v) for k, v in d.items()}
+    except Exception:
+        return {}
+
+
+def _origin_uid(task_id, is_web):
+    """Gmail uid of the email that SPAWNED this case, or None.
+
+    Web cases have no originating email (the request lives in the spec). A
+    decoupled (post-391a) email case is looked up in uid_case.json (its case
+    number != the Gmail uid). A legacy email case reused the inbound uid AS the
+    case number, so <case>.txt is the origin — but ONLY when that uid isn't
+    linked to a DIFFERENT case, which is exactly the collision that made case 426
+    show the unrelated 'Weekly slides' thread (Gmail uid 426 belongs elsewhere)."""
+    if is_web:
+        return None
+    uc = _uid_case_map()
+    for uid, case in uc.items():
+        if case == task_id:
+            return uid
+    if task_id in uc and uc[task_id] != task_id:
+        return None  # <case>.txt is a different case's email — a number collision
+    if (config.INBOX / f"{task_id}.txt").exists():
+        return task_id  # legacy: case number == inbound uid
+    return None
+
+
+def _is_web_case(body):
+    return _WEB_MARKER in (body or "").lower()
+
+
+def _form_description(body):
+    """Verbatim web-form request from a web-case spec, else None."""
+    m = _FORM_DESC.search(body or "")
+    return m.group(1).strip() if m else None
+
+
+def _form_uploads(body):
+    """Downloadable files the user attached to a web-form submission (from the
+    spec's '## Uploaded files' block), tagged is_image for inline display."""
+    m = _FORM_UPLOADS.search(body or "")
+    if not m:
+        return []
+    out, seen = [], set()
+    for p in re.findall(r"(/\S+)", m.group(1)):
+        rp = config.resolve_download(p.rstrip(").,"))
+        if rp is None or str(rp) in seen:
+            continue
+        seen.add(str(rp))
+        out.append({"name": rp.name, "path": str(rp),
+                    "is_image": rp.suffix.lower() in _IMG_EXT})
+    return out
+
+
 def task_conversation(task_id):
+    """Reconstruct ONE case's conversation (Case 427): the user's initial request,
+    the in/out emails that actually belong to the case, and the deputy's FINAL —
+    with mechanical auto-acks excluded and unrelated threads kept out.
+
+    Attribution is case-centric, not Gmail-uid-centric: a "Case N"/"Task N" subject
+    token binds an email to its case; a token-less email from a deputy DEDICATED to
+    this case (its only case is N — e.g. a per-case web_<n> worker) belongs here
+    too; a token-less user reply that threads onto one of the case's subjects is a
+    reply. This fixes the uid==case collision that pulled a foreign thread in, and
+    surfaces web-form requests that were never emails."""
     nodes = _all_task_nodes()
     node = nodes.get(task_id)
+    body = node["body"] if node else ""
     inbound, outbound = _indexes()
-    # resolve the worker agent (spec --agent, else worker-prompt fallback) — used
-    # both for subject threading below and as the conversation header label.
-    agent = state.agent_for_task(task_id, node.get("agent") if node else None)
-    root_in = next((e for e in inbound if e["uid"] == task_id), None)
-    norm = None
-    if root_in:
-        norm = root_in["norm"]
-    elif agent:
-        # derive a subject from the resolved agent's first outbound
-        cand = [o for o in outbound if o.get("agent") == agent]
-        if cand:
-            norm = min(cand, key=lambda o: o.get("ts") or 0)["norm"]
 
-    msgs = []
-    for e in inbound:
-        # Task 331: mirror the Task 327 outbound fix on the INBOUND side. Include an
-        # inbound email iff it IS the originating email (uid == task_id), OR its
-        # subject explicitly names this task ("Re: Task N ..." token == task_id), OR
-        # (fallback) its norm threads with the originating email. Without the token
-        # clause, a mid-task reply keyed by a different norm was dropped — e.g.
-        # Steven's replies to a 326 milestone/FINAL ("Re: Task 326 ...") were missing
-        # from task 326 because 326's originating norm is "task 324 final ...". A
-        # bridging reply that also spawned its own task legitimately shows in both
-        # threads (its own uid + the task it names).
-        etask = subject_task(e["subject"])
-        if e["uid"] == task_id or etask == task_id or (norm and e["norm"] == norm):
-            msgs.append(
-                {"dir": "in", "ts": e["ts"], "from": e["from"],
-                 "subject": e["subject"],
-                 "body": _full_body(e["file"]),
-                 "attachments": _attachments_for(e["uid"])}
-            )
+    is_web = _is_web_case(body)
+    # authoritative owner, else the heuristic resolver (spec --agent -> board ->
+    # worker-prompt -> "Case N" email vote).
+    deputy = _case_deputy(task_id) or state.agent_for_task(
+        task_id, node.get("agent") if node else None)
+
+    origin_uid = _origin_uid(task_id, is_web)
+    origin_in = next((e for e in inbound if e["uid"] == origin_uid), None) if origin_uid else None
+
+    # deputy dedicated to this case? (every case token it used is task_id) -> a
+    # token-less email it sent belongs here.
+    dtoks = {o["task"] for o in outbound
+             if o.get("agent") == deputy and o.get("task") is not None}
+    dedicated = bool(deputy) and dtoks <= {task_id}
+
+    def _out_belongs(o):
+        # Deputy-anchored (Case 427): the number alone is not enough — historical
+        # collisions overload one number across deputies (e.g. paper's "Task 399"
+        # vs infra's "Case 399"). Attribute to the case's own deputy; only if the
+        # deputy is unknown do we fall back to a bare token match.
+        a, tok = o.get("agent"), o.get("task")
+        if tok is not None and tok != task_id:
+            return False                     # names a DIFFERENT case -> never
+        if deputy:
+            if a != deputy:
+                return False
+            return tok == task_id or dedicated
+        return tok == task_id                # deputy unknown -> best-effort token
+
+    # anchor norms: the originating email + every outbound we attribute to the case
+    # -> pulls in token-less user REPLIES to a milestone.
+    anchor = set()
+    if origin_in and origin_in.get("norm"):
+        anchor.add(origin_in["norm"])
     for o in outbound:
-        # Task 327: an explicit "Task N" token in the OUTBOUND subject wins over
-        # norm-subject threading. Include iff it names THIS task, or (no token) its
-        # subject threads with the originating email. A token naming a DIFFERENT
-        # task excludes the email even if the norm matches — so a persistent
-        # worker's "Task 324 FINAL" no longer leaks into task 326's conversation.
-        otask = o.get("task")
-        if otask is not None:
-            include = (otask == task_id)
-        else:
-            include = bool(norm and o["norm"] == norm)
-        if include:
-            msgs.append(
-                {"dir": "out", "ts": o["ts"], "agent": o.get("agent"),
-                 "to": o.get("to"), "subject": o["subject"],
-                 # Task 323 D2: real outbound body + attachments when persisted
-                 # (empty for emails sent before the change).
-                 "body": o.get("body", ""),
-                 "attachments": _out_attachments(o.get("attachments"))}
-            )
-    msgs = [m for m in msgs if m.get("ts")]
-    msgs.sort(key=lambda m: m["ts"])
+        if _out_belongs(o) and o.get("norm"):
+            anchor.add(o["norm"])
+
+    # subjects of same-numbered mail sent by a DIFFERENT deputy (a historical
+    # number collision) — a user reply that threads onto one of these is about the
+    # OTHER work, not this case, even though it carries the matching number.
+    foreign_norms = {o["norm"] for o in outbound
+                     if o.get("task") == task_id and o.get("agent") != deputy and o.get("norm")}
+
+    def _in_belongs(e):
+        if e.get("norm") and e["norm"] in foreign_norms:
+            return False
+        tok = subject_task(e["subject"])
+        if tok is not None:
+            return tok == task_id
+        return bool(e.get("norm")) and e["norm"] in anchor
+
+    # ---- gather the real emails (auto-acks dropped) ----------------------- #
+    emails = []
+    for e in inbound:
+        if origin_uid and e["uid"] == origin_uid:
+            continue  # the originating email is added as the initial, below
+        if not _in_belongs(e):
+            continue
+        fb = _full_body(e["file"])
+        if state.is_autoack(e["subject"], fb):
+            continue
+        emails.append({"dir": "in", "ts": e["ts"], "from": e["from"],
+                       "subject": e["subject"], "body": fb,
+                       "attachments": _attachments_for(e["uid"]), "kind": "message"})
+    for o in outbound:
+        if not _out_belongs(o):
+            continue
+        if state.is_autoack(o["subject"], o.get("body", "")):
+            continue
+        emails.append({"dir": "out", "ts": o["ts"], "agent": o.get("agent"),
+                       "to": o.get("to"), "subject": o["subject"],
+                       "body": o.get("body", ""),
+                       "attachments": _out_attachments(o.get("attachments")),
+                       "kind": "message"})
+    emails = [m for m in emails if m.get("ts")]
+    emails.sort(key=lambda m: m["ts"])
+
+    # ---- initial task description (first message) ------------------------- #
+    msgs = []
+    if is_web:
+        desc = _form_description(body) or (node or {}).get("title") or ""
+        rm = re.search(r"Email\s+(\S+@\S+)", body)
+        # sort strictly first even if the spec mtime drifted past the first email
+        first_ts = emails[0]["ts"] if emails else ((node or {}).get("ts") or 0)
+        init_ts = (node or {}).get("ts")
+        if init_ts is None or (emails and init_ts >= first_ts):
+            init_ts = first_ts - 1
+        msgs.append({"dir": "in", "ts": init_ts,
+                     "from": (rm.group(1) if rm else "you (web form)"),
+                     "subject": (node or {}).get("title") or f"Case {task_id}",
+                     "body": desc, "attachments": _form_uploads(body),
+                     "kind": "initial"})
+    elif origin_in:
+        msgs.append({"dir": "in", "ts": origin_in["ts"], "from": origin_in["from"],
+                     "subject": origin_in["subject"],
+                     "body": _full_body(origin_in["file"]),
+                     "attachments": _attachments_for(origin_in["uid"]),
+                     "kind": "initial"})
+
+    msgs.extend(emails)
+    # the initial request always leads, then chronological (an email-origin file's
+    # mtime can drift past the deputy's first reply, so don't rank it purely by ts).
+    msgs.sort(key=lambda m: (0 if m.get("kind") == "initial" else 1, m["ts"]))
+    # tag the deputy's last outbound as FINAL
+    for m in reversed(msgs):
+        if m["dir"] == "out":
+            m["kind"] = "final"
+            break
+
+    header_subject = (origin_in or {}).get("subject") or (node or {}).get("title")
     return {
         "task_id": task_id,
-        "agent": agent,
-        "subject": (root_in or {}).get("subject") or (node or {}).get("title"),
+        "agent": deputy,
+        "subject": header_subject,
         "messages": msgs,
-        "note": "Thread reconstructed by normalized-subject matching (In-Reply-To is "
-                "not persisted). Inbound AND outbound bodies + attachments are shown "
-                "in full when persisted (Task 323); emails sent before that change "
-                "have no stored body, so only their subject + time appear.",
+        "note": "Scoped to this case (Case 427): your initial request, the in/out "
+                "emails attributed to the case by deputy + Case/Task number, and the "
+                "deputy's FINAL. Mechanical auto-acks are excluded; unrelated threads "
+                "that merely share a Gmail message number are no longer pulled in.",
     }
