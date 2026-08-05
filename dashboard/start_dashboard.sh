@@ -19,6 +19,12 @@ set -euo pipefail
 SESSION="infra_dashboard"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
+# Per-machine config (git-ignored; setup.py writes it, or edit by hand). Sourced BEFORE
+# the defaults below so a persisted INFRA_STATE_ROOT / bind survives a bare restart —
+# without this, a restart that forgot to export INFRA_STATE_ROOT falls back to the empty
+# release dir and the dashboard renders blank (Case 431).
+if [ -f "$HERE/../infra_env.local.sh" ]; then . "$HERE/../infra_env.local.sh"; fi
+
 # Default state root: the infra/ dir shipped beside this dashboard (override with INFRA_STATE_ROOT).
 export INFRA_STATE_ROOT="${INFRA_STATE_ROOT:-$(cd "$HERE/.." && pwd)/infra}"
 # Public convenience switch: all interfaces + TLS on (encrypted login over the LAN).

@@ -16,7 +16,8 @@ credentials.json
 id_rsa*
 .env
 .env.*
-infra_env.local.sh          # local machine overrides (may name real paths)
+# local machine overrides (may name real paths); an inline # comment does NOT work in .gitignore
+infra_env.local.sh
 
 # ---- Operator identity: your real name + email (per-instance; template is tracked) ----
 # The live file the onboarding writes; operator.json.example (the template) stays tracked.

@@ -39,6 +39,15 @@ Posse is a **general framework**: the repo ships only the **Sheriff** and a
 > login, starts the system, and prints the URL to open. [`ONBOARDING.md`](ONBOARDING.md)
 > is the same steps by hand, plus the mental model and troubleshooting.
 
+> **♻️ Already set up? Relaunch after a reboot.** `setup.py` is a **one-time installer** —
+> you do **not** re-run it to restart. To bring the whole system back up after a machine
+> power cycle (or to stop it), run these two idempotent scripts from the repo root:
+>
+> ```bash
+> bash posse_start.sh    # start or verify every daemon + the dashboard (safe to re-run)
+> bash posse_stop.sh     # stop the daemons + dashboard (deputies + jobs keep running)
+> ```
+
 > **📄 Design paper.** The architecture, the requirements it targets, a comparison with
 > existing agent frameworks, and the rationale for every module are written up in
 > **[`design/POSSE_DESIGN.pdf`](design/POSSE_DESIGN.pdf)** — start there for the full
@@ -154,7 +163,16 @@ Everything is Python 3.10 + bash; the dashboard needs **no pip installs**. The o
 path does all of the below for you:
 
 ```bash
-python3 setup.py            # interactive: config + seed + launch, then prints the dashboard URL
+python3 setup.py            # FIRST-TIME setup only: config + seed + launch, then prints the dashboard URL
+```
+
+Once you're set up, **you never re-run `setup.py`.** To start or stop the system any time —
+including **relaunching after a machine reboot** — use these two idempotent scripts from the
+repo root (`setup.py` calls the first for you on the initial install):
+
+```bash
+bash posse_start.sh        # start or verify all daemons + the dashboard (re-runnable; --gpu / --dry-run)
+bash posse_stop.sh         # stop the daemons + dashboard (deputies + jobs keep running)
 ```
 
 **[`ONBOARDING.md`](ONBOARDING.md) is the full walkthrough** (mailbox, Claude auth,

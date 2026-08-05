@@ -257,9 +257,27 @@ shows your email as the signed-in account.
 
 ## 8. Start the system
 
-Start the daemons (each starter is **idempotent** and flock-guarded — safe to re-run;
-each runs from `infra/` and needs no conda env). Run these from the shell where you
-sourced `infra_env.sh`:
+**One command — `bash posse_start.sh`** — starts (or verifies) the whole system: the
+daemons (jobmgr, sheriff, inbox, watchdog) **and** the dashboard. It is **idempotent**,
+so re-run it any time (after a reboot, after editing config) — every service is guarded
+by a tmux session check, so nothing is ever started twice.
+
+```bash
+bash posse_start.sh            # start or verify all daemons + the dashboard
+bash posse_start.sh --gpu      # also start the optional GPU resource manager
+bash posse_start.sh --dry-run  # preview what WOULD start (changes nothing)
+
+bash posse_stop.sh             # stop the daemons + dashboard (deputies + jobs keep running)
+```
+
+`setup.py` runs `posse_start.sh` for you at the end of onboarding, so the first launch
+and every later restart are identical.
+
+<details><summary><b>What <code>posse_start.sh</code> does under the hood</b> — the equivalent manual steps</summary>
+
+Each starter is **idempotent** and flock-guarded — safe to re-run; each runs from
+`infra/` and needs no conda env. Run these from the shell where you sourced
+`infra_env.sh`:
 
 ```bash
 # 1) Job manager — tracks jobs; event-wakes a sleeping deputy when a long job finishes
@@ -287,6 +305,8 @@ cd dashboard
 bash start_dashboard.sh                 # localhost:8787  (or INFRA_DASH_PUBLIC=1 for TLS)
 cd ..
 ```
+
+</details>
 
 **Verify** everything is up:
 
@@ -366,9 +386,12 @@ bring in a collaborator:
   (short jobs, ≤ 4-min intervals — every poll is a cache-warm read) or **submits + sleeps**
   (long jobs — the job manager event-wakes it). This keeps token cost bounded; see the
   README's "wait discipline" section.
+- **Start / stop the system.** `bash posse_start.sh` starts or verifies everything;
+  `bash posse_stop.sh` stops the daemons + dashboard (deputies and jobs in flight keep
+  running). Both take `--dry-run` (preview) and `--gpu` (include the GPU manager).
 - **Daemons are self-healing.** The starters are idempotent; re-run any of them any time.
-  The watchdog relaunches crashed or rate-limited deputies. If the machine reboots,
-  re-run the five start commands in Step 8.
+  The watchdog relaunches crashed or rate-limited deputies. **After a reboot, just run
+  `bash posse_start.sh`.**
 - **Secrets never touch git.** `~/.smtp_env`, `~/.anthropic_key`,
   `~/.claude/.credentials.json`, and `dashboard/instance/` all live outside the repo and
   are chmod 600. A secret scan should be part of every commit.

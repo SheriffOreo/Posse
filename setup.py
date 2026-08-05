@@ -148,9 +148,46 @@ def _rel(p):
         return Path(p)
 
 
-def dashboard_url(host, port, public):
+def _reachable_host():
+    """Best-guess address a browser on ANOTHER machine would use to reach this host —
+    for the final banner when the dashboard is bound publicly (0.0.0.0). Mirrors
+    dashboard/start_dashboard.sh: prefer the FQDN (`hostname -f`, then `hostname`),
+    else the primary outbound IP, else localhost. Never raises."""
+    for cmd in (["hostname", "-f"], ["hostname"]):
+        try:
+            out = subprocess.run(cmd, text=True, capture_output=True).stdout.strip()
+        except Exception:
+            out = ""
+        if out and out != "localhost":
+            return out.split()[0]
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        if ip:
+            return ip
+    except Exception:
+        pass
+    return "localhost"
+
+
+def dashboard_url(host, port, public, advertise=""):
+    """The URL to open. A localhost bind is literally localhost; a PUBLIC bind (0.0.0.0)
+    shows a REACHABLE address — the operator's advertised host if given, else an
+    auto-detected FQDN/IP — never the misleading 'localhost' the user complained about."""
     scheme = "https" if public else "http"
-    shown = "localhost" if host in ("127.0.0.1", "0.0.0.0", "localhost") else host
+    if host in ("127.0.0.1", "localhost"):
+        shown = "localhost"
+    elif advertise:
+        shown = advertise
+    elif host in ("0.0.0.0", ""):
+        shown = _reachable_host()
+    else:
+        shown = host
     return f"{scheme}://{shown}:{port}"
 
 
@@ -191,45 +228,63 @@ def _have(cmd):
     return shutil.which(cmd) is not None
 
 
-def _tmux_running(session):
-    return _run(["tmux", "has-session", "-t", f"={session}"]).returncode == 0
+PREREQS = [("python3", "the daemons + dashboard"), ("tmux", "the long-lived daemons"),
+           ("git", "the repo"), ("claude", "every deputy is a claude process")]
+
+# Per-tool install guidance shown when a prerequisite is missing (step 1 pauses on this).
+_INSTALL_HINTS = {
+    "python3": ["Debian/Ubuntu:  sudo apt install python3",
+                "macOS (brew):   brew install python",
+                "or:             https://www.python.org/downloads/  (3.9+)"],
+    "tmux":    ["Debian/Ubuntu:  sudo apt install tmux",
+                "Fedora/RHEL:    sudo dnf install tmux",
+                "macOS (brew):   brew install tmux"],
+    "git":     ["Debian/Ubuntu:  sudo apt install git",
+                "macOS:          xcode-select --install   (or: brew install git)"],
+    "claude":  ["npm (Node 18+): npm install -g @anthropic-ai/claude-code",
+                "or native:      curl -fsSL https://claude.ai/install.sh | bash",
+                "then run once:  claude   (accept the trust prompt, then /login)",
+                "docs:           https://docs.claude.com/en/docs/claude-code"],
+}
+
+
+def _check_prereqs():
+    """Print each prerequisite's status; return the list of (tool, why) still missing."""
+    missing = []
+    for tool, why in PREREQS:
+        if _have(tool):
+            ok(f"{tool}: found")
+        else:
+            warn(f"{tool}: NOT found — needed for {why}")
+            missing.append((tool, why))
+    return missing
+
+
+def _guide_install(missing):
+    """Print per-tool install guidance for the missing prerequisites (step 1)."""
+    print()
+    warn(f"{len(missing)} prerequisite(s) missing — install these before launching:")
+    for tool, _why in missing:
+        print("  " + _c("1;37", f"install {tool}:"))
+        for line in _INSTALL_HINTS.get(tool, ["see the tool's website"]):
+            info("    " + line)
 
 
 def launch_system(env, want_gpu):
-    """Start the daemons + dashboard. Idempotent starters are re-run safely; the two
-    tmux-loop daemons (inbox, watchdog) are started only if not already up."""
+    """Start the daemons + dashboard by delegating to posse_start.sh — the SAME
+    idempotent start path the operator uses day-to-day (after a reboot, or any time),
+    so a fresh install and a later restart are byte-identical. posse_start.sh reads the
+    just-written infra_env.local.sh for the dashboard bind, guards every service behind
+    a tmux session check (nothing is started twice), and never touches the whole tmux
+    server. Output streams straight to the terminal."""
     if not _have("tmux"):
-        warn("tmux not found — cannot start the daemons. Install tmux, then follow "
-             "ONBOARDING.md step 8.")
+        warn("tmux not found — cannot start the daemons. Install tmux, then run "
+             "'bash posse_start.sh' (or follow ONBOARDING.md step 8).")
         return False
-    started = []
-
-    # idempotent starters (safe to re-run)
-    for label, script in [("jobmgr", "scratch_jobmgr_start.sh"),
-                          ("sheriff", "scratch_sheriff_start.sh")]:
-        r = _run(["bash", script], cwd=str(INFRA), env=env)
-        (ok if r.returncode == 0 else warn)(f"{label}: {'started/verified' if r.returncode == 0 else r.stderr.strip()[:200]}")
-        started.append(label)
+    cmd = ["bash", str(REPO / "posse_start.sh")]
     if want_gpu:
-        r = _run(["bash", "scratch_gpu_manager_start.sh"], cwd=str(INFRA), env=env)
-        (ok if r.returncode == 0 else warn)("gpu_manager: " + ("started/verified" if r.returncode == 0 else "see log"))
-
-    # tmux-loop daemons — start only if not already running
-    for session, inner in [
-        ("inbox", f"bash {INFRA}/scratch_inbox_loop.sh"),
-        ("watchdog", f'source "{INFRA}/_daemon_env.sh" && python3 scratch_watchdog.py '
-                     '2>&1 | tee -a scratch_full_logs/watchdog_stdout.log'),
-    ]:
-        if _tmux_running(session):
-            warn(f"{session}: a tmux session named '{session}' is already running — left as is.")
-        else:
-            _run(["tmux", "new-session", "-d", "-s", session, f"bash -lc '{inner}'"], env=env)
-            ok(f"{session}: started (tmux '{session}')")
-
-    # dashboard
-    r = _run(["bash", "start_dashboard.sh"], cwd=str(DASH), env=env)
-    (ok if r.returncode == 0 else warn)("dashboard: " + ("started/verified" if r.returncode == 0 else r.stderr.strip()[:200]))
-    return True
+        cmd.append("--gpu")
+    return subprocess.run(cmd, cwd=str(REPO), env=env).returncode == 0
 
 
 # ---------------------------------------------------------------------------
@@ -257,10 +312,25 @@ def main(argv=None):
           "present, are shown as defaults.")
 
     # -- 1. prerequisites ----------------------------------------------------
+    # PAUSE on anything missing (esp. `claude` — no deputy can run without it) and guide
+    # the install, rather than silently proceeding to a system that cannot fully launch.
     step(1, TOTAL, "Prerequisites")
-    for tool, why in [("python3", "daemons + dashboard"), ("tmux", "long-lived daemons"),
-                      ("git", "the repo"), ("claude", "every deputy is a claude process")]:
-        (ok if _have(tool) else warn)(f"{tool}: {'found' if _have(tool) else 'NOT found — install before launching (' + why + ')'}")
+    missing = _check_prereqs()
+    while missing:
+        _guide_install(missing)
+        if not _TTY:
+            warn("Non-interactive run — continuing; install the above, then re-run setup.py.")
+            break
+        print()
+        choice = ask("Press Enter to re-check · type s to skip and continue anyway · q to quit", "").lower()
+        if choice.startswith("q"):
+            print("\naborted — nothing was changed. Re-run 'python3 setup.py' after installing.")
+            return 130
+        if choice.startswith("s"):
+            warn("Continuing with missing prerequisite(s) — the system may not fully launch.")
+            break
+        print()
+        missing = _check_prereqs()
 
     # -- 2. your identity ----------------------------------------------------
     step(2, TOTAL, "Your identity")
@@ -329,7 +399,14 @@ def main(argv=None):
     step(6, TOTAL, "Dashboard web address")
     info("Localhost (default, safest) = reach via SSH tunnel. Public = bind 0.0.0.0 + TLS.")
     public = ask_yesno("Expose the dashboard publicly with TLS (else localhost-only)?", default=False)
-    dash_host = "0.0.0.0" if public else ask("Bind host", "127.0.0.1")
+    advertise = ""
+    if public:
+        dash_host = "0.0.0.0"
+        info("Public bind — browsers on OTHER machines reach the dashboard at this host's")
+        info("address, not localhost. Enter the hostname/IP they should use (auto-detected).")
+        advertise = ask("Public hostname or IP", _reachable_host())
+    else:
+        dash_host = ask("Bind host", "127.0.0.1")
     dash_port = ask("Port", "8787")
     conda_env = ask("Conda env for the daemons (blank = system python3)", os.environ.get("INFRA_CONDA_ENV", ""))
     write_env_local(conda_env, claude_auth, dash_host, dash_port, public)
@@ -355,7 +432,7 @@ def main(argv=None):
 
     # -- 8. launch -----------------------------------------------------------
     step(8, TOTAL, "Launch the system")
-    url = dashboard_url(dash_host, dash_port, public)
+    url = dashboard_url(dash_host, dash_port, public, advertise)
     if args.no_launch:
         warn("--no-launch: skipping daemon/dashboard start. Start later with ONBOARDING.md step 8.")
     else:
@@ -371,6 +448,10 @@ def main(argv=None):
     else:
         info(f"(localhost-only — tunnel first:  ssh -L {dash_port}:localhost:{dash_port} <this-host>)")
     print(_c("1;37", f"  Sign in as: {email or '<your email>'}"))
+    print(_c("1;37", "  Start / stop your posse (any time — e.g. after a reboot):"))
+    info("   bash posse_start.sh   — start or verify all daemons + dashboard (idempotent)")
+    info("   bash posse_stop.sh    — stop the daemons + dashboard (deputies + jobs keep running)")
+    info("   (add --dry-run to either to preview; --gpu to include the GPU manager)")
     info("Next: create precincts (python3 infra/scratch_records.py directory register --name <x> ...)")
     info(f"      then email the posse account a task tagged [precinct]. See ONBOARDING.md §9–10.")
     print()
