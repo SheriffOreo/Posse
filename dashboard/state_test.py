@@ -242,8 +242,59 @@ def test_workers_board_still_overrides_fallback():
         config.STATE_ROOT = orig_root
 
 
+def test_emailed_attachments_downloadable_flag():
+    """Case 512: an emailed attachment OUTSIDE the download roots (another
+    precinct's project dir, or an ephemeral /tmp figure) must still be SHOWN,
+    marked downloadable=False -- NOT silently dropped (that drop is what rendered
+    '(none found)' for a case whose FINAL truly emailed a PDF). In-root files stay
+    downloadable=True; the creation auto-ack's form upload is still excluded; a
+    re-attach in a follow-up dedups."""
+    import json as _json
+    tmp = Path(tempfile.mkdtemp())
+    sent = tmp / "sent_emails.jsonl"
+    rows = [
+        # creation auto-ack: its submitted_form.txt must NOT become a deliverable
+        {"agent": "web_z", "subject": "Case 777 created (deepcap): do the thing",
+         "body": "", "attachments": [str(tmp / "submitted_form.txt")]},
+        # FINAL: an in-root pdf + a cross-precinct pdf + an ephemeral /tmp figure
+        {"agent": "web_z", "subject": "Case 777 FINAL: report (PDF attached)",
+         "body": "final", "attachments": [
+             "/root/state/reports/in_root.pdf",
+             "/home/x/OtherProj/docs/out_of_root.pdf",
+             "/tmp/fig777.png"]},
+        # a follow-up re-attach of the SAME files (must dedup, not double up)
+        {"agent": "web_z", "subject": "Re: Case 777 FINAL: updated report",
+         "body": "v2", "attachments": [
+             "/home/x/OtherProj/docs/out_of_root.pdf", "/tmp/fig777.png"]},
+    ]
+    sent.write_text("\n".join(_json.dumps(r) for r in rows) + "\n")
+
+    def fake_resolve(p):
+        s = str(p)
+        return Path(s) if s.startswith("/root/state/") else None
+
+    orig_sent, orig_resolve = config.SENT_EMAILS, config.resolve_download
+    config.SENT_EMAILS, config.resolve_download = str(sent), fake_resolve
+    try:
+        files = state._emailed_attachments("web_z", 777)
+        by = {f["name"]: f for f in files}
+        check("emailed512: in-root pdf downloadable",
+              by.get("in_root.pdf", {}).get("downloadable") is True)
+        check("emailed512: cross-precinct pdf SHOWN, non-downloadable",
+              by.get("out_of_root.pdf", {}).get("downloadable") is False)
+        check("emailed512: /tmp figure SHOWN, non-downloadable",
+              by.get("fig777.png", {}).get("downloadable") is False)
+        check("emailed512: creation-ack form upload excluded",
+              "submitted_form.txt" not in by)
+        check("emailed512: re-attached cross-precinct pdf appears once",
+              sum(1 for f in files if f["name"] == "out_of_root.pdf") == 1)
+    finally:
+        config.SENT_EMAILS, config.resolve_download = orig_sent, orig_resolve
+
+
 def main():
     for fn in (test_composes_both_loops,
+               test_emailed_attachments_downloadable_flag,
                test_watchdog_down_and_limit_active,
                test_active_only_true_is_passed_to_workers,
                test_latest_attributed_case_newest_numeric,

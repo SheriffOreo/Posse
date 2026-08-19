@@ -348,6 +348,111 @@ def _case_log_summary(precinct, case):
     return ""
 
 
+def case_meta(task_id, fallback_precinct=None):
+    """(precinct, summary) for a case id — the two facts the History day view needs.
+
+    Case 447: `precinct` comes from the authoritative task->precinct map (falling
+    back to a precinct scraped from the spec, e.g. an old case not in the map);
+    `summary` is the case's ONE-SENTENCE case-log line — the LAST (most recent) row
+    for it in that precinct's log, so a re-logged case (e.g. a v2 delivery) shows
+    its latest summary. Summary is '' for a case that isn't closed/logged yet, and
+    the UI then falls back to the request text."""
+    e = task_precinct_map().get(str(task_id))
+    prec = (e.get("precinct") if isinstance(e, dict) else None) or fallback_precinct
+    summ = ""
+    if prec:
+        for r in _parse_case_log(_read_text(config.RECORDS / prec / "log.tsv")):
+            if r.get("task") == str(task_id):
+                summ = r.get("summary", "") or summ
+    return prec, summ
+
+
+# --------------------------------------------------------------------------- #
+# Case 471: a ONE-SENTENCE summary of what a case REQUESTED, for the History +
+# Status descriptions.
+#
+# Feng's ask: describe each case by a one-sentence summary of WHAT HE ASKED FOR,
+# not the long case-log "what was done" summary the pages showed before. The
+# request text lives in the case spec (the "## Task description" block the
+# web-case bridge writes for BOTH web-form and precinct-tagged-email cases, or the
+# first heading for legacy specs). A good one-sentence summary of a varied,
+# multi-part request needs a model, so summaries are PRECOMPUTED by
+# scratch_case_summarize.py into case_request_summaries.json; the dashboard only
+# READS that cache (staying zero-API) and falls back to a deterministic
+# first-sentence for any case not yet summarized.
+# --------------------------------------------------------------------------- #
+_FORM_DESC_RE = re.compile(r"##\s*Task description[^\n]*\n+(.*?)(?:\n##\s|\Z)", re.S | re.I)
+_SUBJECT_LEAD = re.compile(r"^\s*SUBJECT:\s*(?:\[[^\]]*\]\s*)?[^\n]*\n+", re.I)
+_CASE_LEAD = re.compile(r"^\s*(?:case|task)\s*#?\d+\s*[—\-:]\s*", re.I)
+
+
+def request_text(task_id):
+    """The user's ORIGINAL request for a case (verbatim), or '' if unavailable.
+
+    Reads the case spec (scratch_full_logs/inbox/task_<id>.md), preferring the
+    '## Task description' block the web-case bridge writes for web-form AND
+    precinct-tagged-email cases; falls back to the spec's first heading (minus the
+    'Case N —' lead) for legacy hand-written specs. Memoised per render."""
+    def _load():
+        body = _read_text(config.INBOX / f"task_{task_id}.md")
+        if not body:
+            return ""
+        m = _FORM_DESC_RE.search(body)
+        if m:
+            req = m.group(1).strip()
+            if req and req.lower() != "(no description provided)":
+                return req
+        for ln in body.splitlines():                 # legacy: first heading
+            s = ln.strip()
+            if s.startswith("#"):
+                return _CASE_LEAD.sub("", s.lstrip("# ").strip()).strip()
+        return ""
+    return _cached(f"reqtext:{task_id}", 30, _load)
+
+
+def request_oneliner(text, cap=160):
+    """Deterministic one-line reduction of a request: drop a leading
+    'SUBJECT:'/'Case N —', flatten newlines + list markers, then keep the whole
+    thing if it is already short, else its first sentence, capped at ~cap chars on
+    a word boundary. The zero-API FALLBACK used when a case has no cached model
+    summary."""
+    if not text:
+        return ""
+    t = _SUBJECT_LEAD.sub("", text.strip())
+    t = _CASE_LEAD.sub("", t)
+    t = re.sub(r"[\r\n]+\s*(?:[-*•]|\d{1,2}[.)])?\s*", " ", t)  # newlines/bullets -> space
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t:
+        return ""
+    if len(t) > cap:                                 # long -> first sentence only
+        m = re.search(r"^(.+?[.?!])(?:\s|$)", t)
+        if m:
+            t = m.group(1).strip()
+    if len(t) > cap:                                 # still long -> hard cap
+        t = t[:cap].rsplit(" ", 1)[0].rstrip(",.;:") + "…"
+    return t
+
+
+def _summary_cache():
+    """{case_id(str): {'summary':..}} of precomputed model request-summaries,
+    written by scratch_case_summarize.py. Read-only, short-lived memo."""
+    return _cached(
+        "req_summaries", 30,
+        lambda: _read_json(config.SCRATCH / "case_request_summaries.json", {}) or {},
+    )
+
+
+def request_summary(task_id, fallback_precinct=None):
+    """One-sentence summary of a case's REQUEST for the History/Status description
+    (Case 471): the precomputed model summary when present, else the deterministic
+    first-sentence. Always zero-API. `fallback_precinct` is accepted for a uniform
+    call signature with case_meta but is unused here."""
+    ent = _summary_cache().get(str(task_id))
+    if isinstance(ent, dict) and (ent.get("summary") or "").strip():
+        return ent["summary"].strip()
+    return request_oneliner(request_text(task_id))
+
+
 def _latest_attributed_case(name):
     """Newest NUMERIC case in the task->precinct map ATTRIBUTED to this worker
     (deputy == name or agent == name), as (case:str|None, precinct:str|None, summary).
@@ -449,6 +554,16 @@ def workers(active_only=False):
             s = _case_log_summary(prec, case)
             if s:
                 ttitle = s
+        # Case 471: the Status "case description" should be a ONE-SENTENCE summary of
+        # what the case REQUESTED (same as the History page), not the truncated title
+        # heading (board description) or the what-was-done case-log summary. Prefer it
+        # whenever the request is resolvable; the board/summary logic above stays the
+        # fallback for a case with no readable request (e.g. a long-lived agent's
+        # email case that never wrote a spec).
+        if case:
+            rs = request_summary(case)
+            if rs:
+                ttitle = rs
         # Task 391 #2: the clickable case# must open the ACTUAL case. Reconcile the
         # numeric detail id (`task`) with the authoritative `case`: a numeric case
         # links to that case; an ALPHANUMERIC sub-case (e.g. 384e) has no numeric
@@ -896,13 +1011,29 @@ def _emailed_attachments(agent, task_id=None):
                 continue
         for p in (r.get("attachments") or []):
             rp = config.resolve_download(p)
-            if rp is None:
-                continue
-            key = str(rp)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append({"name": rp.name, "path": key, "emailed": True})
+            if rp is not None:
+                key = str(rp)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"name": rp.name, "path": key, "emailed": True,
+                            "downloadable": True})
+            else:
+                # Case 512: the deputy DID email this file, but it resolves outside
+                # the dashboard's download roots — e.g. another precinct's project
+                # dir (deepcap deliverables under /DeepStore) or an ephemeral /tmp
+                # figure. SILENTLY DROPPING it is the reported bug: the panel showed
+                # "(none found)" even though a PDF was demonstrably emailed. Surface
+                # it as a non-downloadable entry (name shown, full path in tooltip),
+                # deduped by the raw path so a FINAL and its follow-up re-attach of
+                # the same file collapse to one row.
+                key = "raw::" + str(p)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"name": os.path.basename(str(p)) or str(p),
+                            "path": str(p), "emailed": True,
+                            "downloadable": False})
     return out
 
 

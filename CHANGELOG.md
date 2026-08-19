@@ -11,6 +11,34 @@ To update an existing install to a new version, follow
 Versioning is [semantic](https://semver.org): `MAJOR.MINOR.PATCH` — MAJOR for a
 breaking change, MINOR for a backward-compatible feature, PATCH for a fix.
 
+## [1.2.0] — 2026-08-19
+
+_Action required: none — dashboard-only; pull + restart per "Updating Posse"._
+
+Persists the accumulated dashboard improvements that had been running live but were not
+yet committed to the repo (cases 440, 447, 471, 509, 512).
+
+### Added
+- Per-case **conversation** and **deliverables** views on each precinct's Case log,
+  opening a centered modal (the same case-centric reconstruction as the History tab).
+- A **model registry** (`dashboard/models.py`) surfaced across the Precincts table, the
+  Sheriff block, and the precinct / create-case model selectors (exact model ids +
+  display labels).
+
+### Changed
+- **History page**: lineage is direct-reply-only (no inferred trees), each case shows a
+  one-sentence summary of its *request*, and the day view is grouped by precinct.
+- **Status page**: the case description is the same one-sentence request summary.
+
+### Fixed
+- **Deliverables panel** no longer shows "(none found)" when a FINAL emailed a file
+  outside the download roots — such files are now shown (with a downloadable flag), and
+  the configured project dirs are download roots so cross-precinct files download.
+
+### Security
+- The download endpoint never serves VCS internals (`/.git/` added to the deny list) —
+  a repo remote URL can embed a token, and this matters once project dirs are roots.
+
 ## [1.1.0] — 2026-08-19
 
 _Action required: none — a normal update (pull + restart) is enough._
@@ -49,5 +77,6 @@ Initial public release.
   [`ONBOARDING.md`](ONBOARDING.md) new-operator guide.
 
 [issue #1]: https://github.com/SheriffOreo/Posse/issues/1
+[1.2.0]: https://github.com/SheriffOreo/Posse/releases/tag/v1.2.0
 [1.1.0]: https://github.com/SheriffOreo/Posse/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SheriffOreo/Posse/tree/5ab4e20

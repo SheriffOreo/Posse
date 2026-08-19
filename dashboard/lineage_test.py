@@ -160,9 +160,110 @@ def test_deliverables_scoped():
     check("deliv: creation-ack form echo NOT a deliverable", "submitted_form.txt" not in names)
 
 
+def test_lineage_direct_reply_only():
+    """Case 447: lineage is DIRECT-REPLY ONLY (the parent_task stamp); the old
+    heuristics are off by default so a case is never INFERRED to be a follow-up.
+    Also: day-view nodes carry their precinct + (Case 471) a one-sentence summary
+    of the REQUEST as the readable description (not the case-log 'what was done'
+    summary, and not the truncated title heading)."""
+    sc = Path(_TMP) / "scratch_full_logs"
+    inbox = sc / "inbox"
+    records = sc / "records"
+    # a GENUINE direct-reply child of 500 (explicit parent_task stamp) -> must link
+    _w(inbox / "task_502.md",
+       "parent_task: 500\nprecinct: eval\ndeputy: web_502\n\n"
+       "# Case 502 — follow up on the sweep\n\nReply body.\n")
+    # a case that only LOOKS like a reply (inbound uid-503 subject 'Re: Case 500')
+    # but has parent_task: none -> must stay STANDALONE (this is the tldr-style bug)
+    _w(inbox / "task_503.md",
+       "parent_task: none\nprecinct: tldr\ndeputy: web_503\n\n"
+       "# Case 503 — Can you plan the group trip, which is about random stuff regard\n\n"
+       "Unrelated request.\n")
+    _w(inbox / "503.txt",
+       "FROM: user@example.com\nSUBJECT: Re: Case 500 sweep\n\n"
+       "Gmail uid 503 merely mentions Case 500 in its subject.\n")
+    _w(records / "task_precinct.json",
+       json.dumps({"500": {"precinct": "eval", "deputy": "web_500", "basis": "spawn"},
+                   "502": {"precinct": "eval", "deputy": "web_502", "basis": "spawn"},
+                   "503": {"precinct": "tldr", "deputy": "web_503", "basis": "spawn"}}))
+    _w(records / "tldr" / "log.tsv",
+       "# case_log dept=tldr\n"
+       "503\tweb_503\tscratch_full_logs/inbox/task_503.md\t"
+       "Planned the group day trip: a clean one-sentence summary.\n")
+    state._cache.clear()
+
+    lin = lineage.build_lineage()
+    by = {n["task_id"]: n for n in lin["nodes"]}
+    check("447: genuine parent_task link kept (502->500)",
+          by[502]["parent"] == 500 and by[502]["basis"] == "parent-field")
+    check("447: false reply-subject NOT inferred (503 stays standalone)",
+          by[503]["parent"] is None)
+
+    dl = lineage.history_day_lineage(by[503]["day"])
+    n503 = None
+    for t in dl["trees"]:
+        stack = [t]
+        while stack:
+            x = stack.pop()
+            if x["task_id"] == 503:
+                n503 = x
+            stack.extend(x.get("children", []))
+    check("447: day node carries its precinct", bool(n503) and n503.get("precinct") == "tldr")
+    # Case 471: desc is now a one-sentence summary of the REQUEST (here the deterministic
+    # fallback = the request/heading text, since no model summary is cached), NOT the
+    # case-log 'what was done' summary ("Planned the group day trip") it used to show.
+    check("471: day-node desc is the REQUEST summary, not the case-log summary",
+          bool(n503) and n503.get("desc", "").startswith("Can you plan the group trip")
+          and "Planned the group day trip" not in n503.get("desc", ""))
+
+
+def test_request_summary_471():
+    """Case 471: request_summary is the History/Status description -- a precomputed
+    model summary when cached, else a deterministic first-sentence of the REQUEST
+    text; request_text pulls the verbatim form block, and the reducer strips a
+    leading SUBJECT:/Case N and caps a long request to one sentence."""
+    sc = Path(_TMP) / "scratch_full_logs"
+    inbox = sc / "inbox"
+    # 600: multi-sentence complaint-then-ask, WITH a precomputed model summary cached
+    _w(inbox / "task_600.md",
+       "parent_task: none\nprecinct: infra\ndeputy: web_600\n\n"
+       "# Case 600 — Now the thing is too long and unclear. I want it to be\n\n"
+       "## Task description (verbatim from the form)\n\n"
+       "Now the thing is too long and unclear. I want it to be a one sentence "
+       "summary of my request, not a summary of the work.\n\n"
+       "## Worker discipline\n\nEmail user.\n")
+    _w(sc / "case_request_summaries.json",
+       json.dumps({"600": {"summary": "Shorten descriptions to one sentence about the request.",
+                            "hash": "x"}}))
+    # 601: SUBJECT-prefixed one-line request, NO cache -> deterministic fallback
+    _w(inbox / "task_601.md",
+       "parent_task: none\nprecinct: infra\ndeputy: web_601\n\n"
+       "# Case 601 — dashboard down\n\n"
+       "## Task description (verbatim from the form)\n\n"
+       "SUBJECT: [infra] dashboard down\n\nCan you investigate why the dashboard is down.\n\n"
+       "## Worker discipline\n\nEmail user.\n")
+    state._cache.clear()
+
+    check("471: cached model summary is used verbatim",
+          state.request_summary(600) == "Shorten descriptions to one sentence about the request.")
+    check("471: request_text is the verbatim form block",
+          state.request_text(601).startswith("SUBJECT: [infra] dashboard down"))
+    check("471: fallback strips SUBJECT and yields the request",
+          state.request_summary(601) == "Can you investigate why the dashboard is down.")
+    # reducer: a long multi-sentence request -> first sentence, capped
+    ol = state.request_oneliner("Please do the big thing. " + ("word " * 80))
+    check("471: reducer keeps the first sentence", ol.startswith("Please do the big thing."))
+    check("471: reducer caps length", len(ol) <= 161)
+    check("471: reducer keeps an already-short request whole",
+          state.request_oneliner("Add two buttons to the page.") == "Add two buttons to the page.")
+    check("471: no spec -> empty (page then uses the title)",
+          state.request_summary(999999) == "")
+
+
 def main():
     _setup()
-    for t in (test_autoack, test_conversation_scoped, test_deliverables_scoped):
+    for t in (test_autoack, test_conversation_scoped, test_deliverables_scoped,
+              test_lineage_direct_reply_only, test_request_summary_471):
         try:
             t()
         except Exception:

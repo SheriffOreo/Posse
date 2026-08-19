@@ -159,8 +159,15 @@ def _task_node(f):
     am = re.search(r"--agent\s+([A-Za-z0-9_]+)", body)
     if am:
         agent = am.group(1)
+    # Case 447: the spec's own `precinct:` field, used only as a fallback when the
+    # authoritative task->precinct map has no entry (old cases). Web/reply specs
+    # stamp it in their first few lines (e.g. "precinct: infra").
+    prec = None
+    pm = re.search(r"^\s*precinct\s*[:=]\s*([A-Za-z0-9_]+)\s*$", body, re.I | re.M)
+    if pm:
+        prec = pm.group(1)
     return {"task_id": tid, "title": title, "ts": ts, "day": state.day_of(ts),
-            "agent": agent, "body": body}
+            "agent": agent, "spec_precinct": prec, "body": body}
 
 
 def _all_task_nodes():
@@ -185,53 +192,58 @@ def _build_lineage():
         if parent in ids and parent != child and child not in edges:
             edges[child] = {"parent": parent, "basis": basis}
 
-    # 1) explicit arrow chains  (task_274->275->276->316). Intermediate task
-    #    numbers may not exist as spec files, so link each element to its nearest
-    #    PRECEDING element that is a real node (274->276->316 with 275 absent still
-    #    yields 316 -> 274).
-    for tid, n in nodes.items():
-        for m in _CHAIN.finditer(n["body"]):
-            seq = [int(x) for x in re.findall(r"\d+", m.group(1))]
-            for i in range(1, len(seq)):
-                for j in range(i - 1, -1, -1):
-                    if seq[j] in ids:
-                        _set(seq[i], seq[j], "explicit-chain")
-                        break
-    # 2) follow-up phrasing / parent_task field
+    # Case 447: LINEAGE IS NOW DIRECT-REPLY ONLY. Steven asked us to stop INFERRING
+    # lineage — a case is a follow-up of another ONLY when it is a genuine direct
+    # reply (or a deliberately-created subtask), which is recorded ONCE, explicitly,
+    # as the `parent_task:` stamp the inbox handler / deputy writes into the spec.
+    # The old heuristics (arrow-chains, follow-up phrasing, "Re: Case N" subjects,
+    # and same-subject threading) mis-linked unrelated cases: after case numbers were
+    # decoupled from Gmail uids (Case 391a) the reply-subject pass read the WRONG
+    # email's subject and chained e.g. the tldr cases (443/444/445) under case 417.
+    # So the default now uses ONLY the parent_task field. Set INFRA_LINEAGE_HEURISTICS=1
+    # to restore the old multi-signal inference (kept for A/B and back-compat).
     for tid, n in nodes.items():
         pf = _PARENT_FIELD.search(n["body"])
         if pf:
             _set(tid, int(pf.group(1)), "parent-field")
-        else:
+
+    if os.environ.get("INFRA_LINEAGE_HEURISTICS"):
+        # (legacy, off by default) 1) explicit arrow chains (task_274->275->276->316).
+        for tid, n in nodes.items():
+            for m in _CHAIN.finditer(n["body"]):
+                seq = [int(x) for x in re.findall(r"\d+", m.group(1))]
+                for i in range(1, len(seq)):
+                    for j in range(i - 1, -1, -1):
+                        if seq[j] in ids:
+                            _set(seq[i], seq[j], "explicit-chain")
+                            break
+        # 2) follow-up phrasing (parent_task already applied above)
+        for tid, n in nodes.items():
+            if tid in edges:
+                continue
             fm = _FOLLOWUP.search(n["body"])
             if fm:
                 _set(tid, int(fm.group(1)), "followup-phrase")
-    # 2b) reply-subject (Task 323 retro): a task whose ORIGINATING email subject is
-    #     "Re: Task N ..." is a follow-up of N. Lower confidence than the persisted
-    #     parent_task field (an LLM-free but heuristic read), higher than same-subject
-    #     threading. This retroactively links historical chains (e.g.
-    #     317->319->320->322) whose specs predate the parent_task stamp.
-    # (env gate INFRA_LINEAGE_NO_REPLY_SUBJECT lets one A/B the heuristic — e.g.
-    #  render the pre-Task-323 "before" state; default is ON.)
-    if not os.environ.get("INFRA_LINEAGE_NO_REPLY_SUBJECT"):
-        inbound_by_uid = {e["uid"]: e for e in _indexes()[0]}
-        for tid in nodes:
-            if tid in edges:
-                continue
-            m = re.search(r"\b(?:task|case)[ _]?#?(\d+)", inbound_by_uid.get(tid, {}).get("subject", ""), re.I)
-            if m:
-                _set(tid, int(m.group(1)), "reply-subject")
-    # 3) subject-thread fallback: chain same-subject tasks by ascending id
-    threads = {}
-    inbound = {e["uid"]: e for e in _indexes()[0]}
-    for tid, n in nodes.items():
-        subj = inbound.get(tid, {}).get("norm")
-        if subj:
-            threads.setdefault(subj, []).append(tid)
-    for subj, members in threads.items():
-        members.sort()
-        for a, b in zip(members, members[1:]):
-            _set(b, a, "subject-thread")
+        # 2b) reply-subject: a task whose ORIGINATING email subject is "Re: Task N".
+        if not os.environ.get("INFRA_LINEAGE_NO_REPLY_SUBJECT"):
+            inbound_by_uid = {e["uid"]: e for e in _indexes()[0]}
+            for tid in nodes:
+                if tid in edges:
+                    continue
+                m = re.search(r"\b(?:task|case)[ _]?#?(\d+)", inbound_by_uid.get(tid, {}).get("subject", ""), re.I)
+                if m:
+                    _set(tid, int(m.group(1)), "reply-subject")
+        # 3) subject-thread fallback: chain same-subject tasks by ascending id
+        threads = {}
+        inbound = {e["uid"]: e for e in _indexes()[0]}
+        for tid, n in nodes.items():
+            subj = inbound.get(tid, {}).get("norm")
+            if subj:
+                threads.setdefault(subj, []).append(tid)
+        for subj, members in threads.items():
+            members.sort()
+            for a, b in zip(members, members[1:]):
+                _set(b, a, "subject-thread")
 
     node_list = []
     for tid, n in sorted(nodes.items()):
@@ -240,6 +252,7 @@ def _build_lineage():
                 "task_id": tid,
                 "title": n["title"],
                 "agent": n["agent"],
+                "spec_precinct": n.get("spec_precinct"),
                 "day": n["day"],
                 "ts": n["ts"],
                 "parent": edges.get(tid, {}).get("parent"),
@@ -336,10 +349,32 @@ def lineage_for(task_id):
     return {"ancestors": chain, "self": by[task_id], "children": kids}
 
 
+# Case 447: strip the redundant leading "Case N — " / "Task N: " (and a "SUBJECT:"
+# token) from a spec heading, so the fallback description reads as the request text
+# itself — the node already shows "#N", so repeating "Case N —" wastes the width.
+_TITLE_PREFIX = re.compile(r"^\s*(?:case|task)\s*#?\d+\s*[—:\-]\s*", re.I)
+_SUBJ_PREFIX = re.compile(r"^\s*subject\s*:\s*", re.I)
+
+
+def _clean_desc_title(title):
+    t = _TITLE_PREFIX.sub("", title or "")
+    t = _SUBJ_PREFIX.sub("", t)
+    return t.strip() or (title or "")
+
+
 def _pub_node(n):
+    # Case 447: attach the case's PRECINCT (for grouping).
+    # Case 471: the DESCRIPTION (`desc`) is now a ONE-SENTENCE summary of what the
+    # case REQUESTED (state.request_summary — a precomputed model summary, else a
+    # deterministic first-sentence), NOT the case-log "what was done" summary the
+    # day view used to show. The case-log `summary` is still attached for reference.
+    precinct, summary = state.case_meta(n["task_id"], n.get("spec_precinct"))
     return {"task_id": n["task_id"], "title": n["title"], "agent": n.get("agent"),
             "day": n.get("day"), "ts": n.get("ts"),
-            "parent": n.get("parent"), "basis": n.get("basis")}
+            "parent": n.get("parent"), "basis": n.get("basis"),
+            "precinct": precinct, "summary": summary,
+            "desc": (state.request_summary(n["task_id"], n.get("spec_precinct"))
+                     or _clean_desc_title(n["title"]))}
 
 
 def history_day_lineage(day):
@@ -647,7 +682,7 @@ def task_conversation(task_id):
         "agent": deputy,
         "subject": header_subject,
         "messages": msgs,
-        "note": "Scoped to this case (Case 427): your initial request, the in/out "
+        "note": f"Scoped to this case (Case {task_id}): your initial request, the in/out "
                 "emails attributed to the case by deputy + Case/Task number, and the "
                 "deputy's FINAL. Mechanical auto-acks are excluded; unrelated threads "
                 "that merely share a Gmail message number are no longer pulled in.",

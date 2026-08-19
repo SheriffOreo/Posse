@@ -146,6 +146,8 @@ for _extra in os.environ.get("INFRA_EXTRA_DOWNLOAD_ROOTS", "").split(os.pathsep)
 DOWNLOAD_DENY = [
     "credentials.json", ".smtp_env", ".anthropic_key", ".credentials",
     "auth.json", "register.json", ".env", "id_rsa", "private", ".pem", ".key",
+    "/.git/",  # Case 512: never serve VCS internals (a remote URL can embed a
+               # token) — matters once cross-precinct project dirs become roots.
 ]
 
 # Max bytes served by the download endpoint (guard against dumping huge files).

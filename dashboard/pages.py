@@ -3,11 +3,13 @@ pages are thin shells filled by fetch() from the JSON APIs (all dynamic values g
 in via textContent on the client, so they are XSS-safe)."""
 import base64
 import html
+import json
 import os
 import urllib.parse
 
 import auth
 import config
+import models
 import state
 
 # Self-hosted Rye (Case 403): the dashboard CSP blocks external stylesheets/fonts
@@ -183,6 +185,15 @@ a.schip:hover { background:var(--btn-bg); color:var(--btn-fg); text-decoration:n
 .tnode.onday a.tlink { color:var(--onday); font-weight:700; }
 .tnode.offday { opacity:.6; }
 .bchip.ctx { background:var(--ctx-bg); color:var(--muted2); font-style:italic; }
+/* Case 447: precinct chip on a node + per-precinct group section in the day view */
+.pchip { font-size:11px; padding:1px 7px; border-radius:9px; background:var(--chip-bg);
+  color:var(--link); border:1px solid var(--border-soft); white-space:nowrap; font-weight:600; }
+.pgroup { margin:10px 0 4px; }
+.pgroup + .pgroup { border-top:1px solid var(--border); margin-top:16px; padding-top:6px; }
+.pghead { display:flex; align-items:baseline; gap:10px; margin:2px 0 2px; }
+.pgname { font-weight:800; font-size:14px; color:var(--link); text-transform:capitalize;
+  letter-spacing:.02em; }
+.pgcount { font-size:12px; color:var(--muted2); }
 /* Case 421: History layout — compact calendar band on top, then a WIDE day-view
    (lineage chains) beside the sticky detail panel (the calendar used to share the
    narrow 540px column with the chains, crushing long follow-ups). Scoped to
@@ -208,6 +219,25 @@ a.attfile { display:inline-block; }
 .deliv { margin-top:12px; padding-top:8px; border-top:1px solid var(--border); }
 .deliv .job { margin:5px 0; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 .deliv a { color:var(--link); }
+/* ---- Case-log per-row view actions: conversation / deliverables / case file (Case 440) ---- */
+.viewacts { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.viewacts a { font-size:12px; line-height:1.4; padding:3px 8px; border-radius:6px;
+  border:1px solid var(--accent-border); background:var(--surface2); color:var(--link);
+  white-space:nowrap; cursor:pointer; text-decoration:none; }
+.viewacts a:hover { border-color:var(--link); }
+/* ---- Case-log detail MODAL: floats the popup on top of everything (Case 440, Feng uid=469) ---- */
+.pcmodal[hidden] { display:none; }
+.pcmodal { position:fixed; inset:0; z-index:9999; display:flex; align-items:flex-start;
+  justify-content:center; padding:4vh 16px; }
+.pcmodal-backdrop { position:absolute; inset:0; background:rgba(2,6,15,.66); }
+.pcmodal-dialog { position:relative; z-index:1; width:min(920px,96vw); max-height:90vh;
+  overflow:auto; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,.55); }
+.pcmodal-bar { position:sticky; top:0; z-index:6; display:flex; justify-content:flex-end;
+  padding:8px 8px 0; pointer-events:none; }         /* transparent bar; only the button is clickable */
+.pcmodal-bar .pcmodal-x { pointer-events:auto; }
+.pcmodal-dialog .card { margin:0; }                 /* the popup card fills the dialog */
+.pcmodal-dialog .card > button:first-child { display:none; }  /* card's own ✕ replaced by the sticky bar */
+body.pcmodal-open { overflow:hidden; }              /* lock background scroll while open */
 /* ---- create-case attachments: drop zone + previews (Case 421) ---- */
 .dropzone { border:1.5px dashed var(--accent-border); border-radius:8px; padding:16px 14px;
   text-align:center; color:var(--muted); cursor:pointer; background:var(--surface2); margin-top:5px;
@@ -553,11 +583,17 @@ function treeNodeLi(n){
   var row=el('div','tnode'+(n.on_day===true?' onday':(n.on_day===false?' offday':'')));
   row.appendChild(el('span','cbar '+(DOT[n.basis]||'broot')));
   var main=el('div','tmain');
-  var a=el('a','tlink','#'+n.task_id+'  '+(n.title||''));
-  a.href='javascript:void(0)'; a.title=n.title||'';
+  // Case 471: the DESCRIPTION (n.desc) is a one-sentence summary of what the case
+  // REQUESTED (not the case-log "what was done" summary); fall back to the title.
+  var desc = n.desc || n.title || '';
+  var a=el('a','tlink','#'+n.task_id+'  '+desc);
+  a.href='javascript:void(0)'; a.title=desc;
   a.onclick=(function(id){return function(){showTask(id);};})(n.task_id);
   main.appendChild(a);
   var meta=el('div','tmeta');
+  // Case 447: precinct chip — suppressed (showprec===false) under a precinct group
+  // header that already names it; shown for a cross-precinct child or on the Lineage page.
+  if(n.precinct && n.showprec!==false) meta.appendChild(el('span','pchip',n.precinct));
   if(n.basis) meta.appendChild(el('span','bchip',BLABEL[n.basis]||n.basis));
   if(n.agent) meta.appendChild(el('span','wchip','· '+n.agent));  // Task 327: owning worker
   if(n.on_day===false) meta.appendChild(el('span','bchip ctx','context'));
@@ -573,17 +609,21 @@ function treeNodeLi(n){
 }
 // Task detail panel (thread + reconstructed lineage). Shared by History + Lineage;
 // harmless on pages without a #detail container (guarded).
-async function showTask(id){
+async function showTask(id, focus){
+  // Case 440: an optional focus ('conversation' | 'deliverables') renders JUST that
+  // section — used by the precinct Case-log buttons. No focus = the full view
+  // (lineage + conversation + deliverables), so History/Lineage are unchanged.
   var D=document.getElementById('detail'); if(!D) return;
   D.innerHTML='<div class="card muted">loading&hellip;</div>';
   var t=await getJSON('/api/task?id='+id); if(!t){D.innerHTML='';return;}
   var c=el('div','card');
   // Task 391 #2: a close (X) box on the detail pop-up so it can be dismissed.
   var xb=el('button','small','✕ close'); xb.title='close'; xb.style.cssText='float:right;margin-left:8px';
-  xb.onclick=function(){ D.innerHTML=''; }; c.appendChild(xb);
-  c.appendChild(el('h2',null,'Case #'+id+(t.conversation.agent?(' · '+t.conversation.agent):'')));
+  xb.onclick=function(){ D.innerHTML=''; if(window.pcClose) pcClose(); }; c.appendChild(xb);
+  c.appendChild(el('h2',null,'Case #'+id+(t.conversation.agent?(' · '+t.conversation.agent):'')
+    +(focus==='conversation'?' · conversation':(focus==='deliverables'?' · deliverables':''))));
   if(t.conversation.subject) c.appendChild(el('div',null,t.conversation.subject));
-  if(t.lineage){ var lin=el('div','card'); lin.appendChild(el('div','muted small','LINEAGE'));
+  if(!focus && t.lineage){ var lin=el('div','card'); lin.appendChild(el('div','muted small','LINEAGE'));
     var ul=el('ul','lin');
     function lrow(n,dir){ var li=el('li'); if(dir){var a0=el('span','arrow',dir+' '); li.appendChild(a0);}
       var s=el('a','',' #'+n.task_id+' '+n.title); s.href='javascript:void(0)';
@@ -596,6 +636,7 @@ async function showTask(id){
     if(!t.lineage.ancestors.length && !t.lineage.children.length)
       lin.appendChild(el('div','muted small','No linked parent/children reconstructed.'));
     c.appendChild(lin);}
+  if(!focus || focus==='conversation'){
   var conv=el('div','thread'); conv.appendChild(el('div','muted small','CONVERSATION'));
   if(!t.conversation.messages.length) conv.appendChild(el('div','muted','No emails matched this thread.'));
   t.conversation.messages.forEach(function(m){var d=el('div','msg '+(m.dir==='in'?'in':'out'));
@@ -620,7 +661,9 @@ async function showTask(id){
     }
     conv.appendChild(d);});
   c.appendChild(conv);
+  }
   // deliverables (best-effort): job artifacts owned by this task's agent + reports/
+  if(!focus || focus==='deliverables'){
   var dd=t.deliverables||{jobs:[],files:[]};
   var dl=el('div','deliv'); dl.appendChild(el('div','muted small','DELIVERABLES (best-effort)'));
   if(!(dd.jobs&&dd.jobs.length) && !(dd.files&&dd.files.length))
@@ -632,12 +675,24 @@ async function showTask(id){
       a.href='/download?path='+encodeURIComponent(p.path); a.target='_blank'; jb.appendChild(a); });
     dl.appendChild(jb);
   });
-  (dd.files||[]).forEach(function(f){ var a=el('a','small',(f.emailed?'📧 emailed: ':'📄 ')+f.name);
+  (dd.files||[]).forEach(function(f){
+    if(f.downloadable===false){
+      // Case 512: emailed but outside the dashboard download roots — show it
+      // (honest: a PDF WAS emailed) as a non-clickable row with the path, rather
+      // than dropping it and rendering "(none found)".
+      var s=el('div','small'); s.style.display='block';
+      s.appendChild(el('span',null,'📧 emailed: '+f.name+' '));
+      var n=el('span','muted small','· not downloadable here');
+      n.title='This file was emailed to you but lives outside the dashboard download roots:\n'+f.path;
+      s.appendChild(n); dl.appendChild(s); return;
+    }
+    var a=el('a','small',(f.emailed?'📧 emailed: ':'📄 ')+f.name);
     a.href='/download?path='+encodeURIComponent(f.path); a.target='_blank';
     a.title=f.emailed?'attachment this task’s agent emailed (authoritative)':'reports/ match';
     a.style.display='block'; dl.appendChild(a); });
   c.appendChild(dl);
-  c.appendChild(el('div','muted small',t.conversation.note||''));
+  }
+  if(!focus) c.appendChild(el('div','muted small',t.conversation.note||''));
   D.innerHTML=''; D.appendChild(c);
 }
 // Task 391 (uid=392): an alphanumeric sub-case (391a, 384e) has no numeric
@@ -656,7 +711,7 @@ async function showCaseFile(cnum, path){
   }catch(e){ D.innerHTML='<div class="card muted">could not load case #'+cnum+'</div>'; return; }
   var c=el('div','card');
   var xb=el('button','small','✕ close'); xb.title='close'; xb.style.cssText='float:right;margin-left:8px';
-  xb.onclick=function(){ D.innerHTML=''; }; c.appendChild(xb);
+  xb.onclick=function(){ D.innerHTML=''; if(window.pcClose) pcClose(); }; c.appendChild(xb);
   c.appendChild(el('h2',null,'Case #'+cnum));
   c.appendChild(el('div','muted small','sub-case spec · '+basename(path)));
   var pre=el('pre','mono small'); pre.textContent=txt;
@@ -801,8 +856,10 @@ function draw(){
   }
 }
 function dayLegend(){
+  // Case 447: lineage is now direct-reply-only, so the legend is just
+  // "direct reply" (a parent_task follow-up) vs a standalone case.
   var L=el('div','legend');
-  [['bh','explicit link'],['bm','follow-up'],['bl','same subject'],['broot','root']].forEach(function(k){
+  [['bh','direct reply (parent_task)'],['broot','standalone case']].forEach(function(k){
     var s=el('span','k'); s.appendChild(el('span','cbar '+k[0]));
     s.appendChild(document.createTextNode(k[1])); L.appendChild(s);});
   var s2=el('span','k'); s2.appendChild(el('span','bchip ctx','context'));
@@ -815,16 +872,35 @@ async function loadDay(day){
   var lin=await getJSON('/api/history/day_lineage?date='+day)||{trees:[],n_day_tasks:0};
   dv.innerHTML=''; var c=el('div','card');
   c.appendChild(el('h2',null,'Launched on '+day));
-  // task lineage — mini-trees grouped by root (not a flat list)
+  // Case 447: the day's cases GROUPED BY PRECINCT (a tree's group is its root's
+  // precinct), each case described by its one-sentence summary. Direct-reply
+  // follow-ups (parent_task) still nest; everything else is standalone.
   if(lin.trees && lin.trees.length){
-    c.appendChild(el('div','muted small','CASE LINEAGE — '+lin.n_day_tasks+
-      ' case'+(lin.n_day_tasks===1?'':'s')+' this day, shown in context · click a case for detail'));
+    c.appendChild(el('div','muted small','CASES — '+lin.n_day_tasks+
+      ' case'+(lin.n_day_tasks===1?'':'s')+' this day, grouped by precinct · click a case for detail'));
     c.appendChild(dayLegend());
-    var host=el('div','daytrees');
-    lin.trees.forEach(function(t){
-      var mt=el('div','mtree'); var ul=el('ul','tree-ul root');
-      ul.appendChild(treeNodeLi(t)); mt.appendChild(ul); host.appendChild(mt);});
-    c.appendChild(host);
+    function markShowprec(n,grp){ n.showprec = !!(n.precinct && n.precinct!==grp);
+      (n.children||[]).forEach(function(k){ markShowprec(k,grp); }); }
+    function countOnDay(n){ var k=(n.on_day===true?1:0);
+      (n.children||[]).forEach(function(k2){ k+=countOnDay(k2); }); return k; }
+    var groups={};
+    lin.trees.forEach(function(t){ var grp=t.precinct||'unassigned';
+      markShowprec(t,grp);
+      if(!groups[grp]) groups[grp]={trees:[],n:0};
+      groups[grp].trees.push(t); groups[grp].n+=countOnDay(t); });
+    // most-active precinct first, then alphabetical
+    var names=Object.keys(groups).sort(function(a,b){
+      return groups[b].n-groups[a].n || (a<b?-1:a>b?1:0); });
+    names.forEach(function(pname){ var g=groups[pname];
+      var sec=el('div','pgroup');
+      var hd=el('div','pghead');
+      hd.appendChild(el('span','pgname',pname));
+      hd.appendChild(el('span','pgcount',g.n+' case'+(g.n===1?'':'s')));
+      sec.appendChild(hd);
+      var host=el('div','daytrees');
+      g.trees.forEach(function(t){ var mt=el('div','mtree'); var ul=el('ul','tree-ul root');
+        ul.appendChild(treeNodeLi(t)); mt.appendChild(ul); host.appendChild(mt); });
+      sec.appendChild(host); c.appendChild(sec); });
   } else {
     c.appendChild(el('div','muted small','No cases launched this day.'));
   }
@@ -1174,12 +1250,13 @@ def precincts_page():
     field_css = ("padding:5px 9px;border-radius:6px;border:1px solid var(--accent-border);"
                  "background:var(--surface2);color:var(--fg);font:inherit")
     model_opts = "".join(
-        f"<option value='{m}'{' selected' if m == cur_model else ''}>{m}</option>"
-        for m in ("fable", "opus", "sonnet", "haiku"))
+        f"<option value='{m}'{' selected' if m == cur_model else ''}>{models.label(m)}</option>"
+        for m in models.ALIASES)
     # Task 384b / Phase C: the ONE global sheriff model (system-wide), authed write.
+    # Case 509: show the SPECIFIC model (label + exact id), not the bare alias.
     model_form = (
         "<div class='small' style='margin:8px 0 2px'>"
-        f"<b>Global sheriff model:</b> <span class='mono'>{e(cur_model)}</span> "
+        f"<b>Global sheriff model:</b> <span class='mono'>{e(models.label_with_id(cur_model))}</span> "
         "<span class='muted'>&mdash; one model system-wide for ledger compaction AND "
         "change-request decisions.</span></div>"
         "<form method='post' action='/sheriff/model' "
@@ -1189,7 +1266,7 @@ def precincts_page():
     )
     compaction_txt = (
         "Ledger <b>compaction is a Claude API call</b> on the global "
-        f"<span class='mono'>{e(cur_model)}</span> model &mdash; it is given every precinct's "
+        f"<span class='mono'>{e(models.label(cur_model))}</span> model &mdash; it is given every precinct's "
         "(truncated) ledger for big-picture context and rewrites the crossing one; a "
         "mechanical rewrite is the automatic FALLBACK if that call fails or hits a usage limit."
         if llm_on else
@@ -1239,7 +1316,8 @@ def precincts_page():
             "<tr>"
             f"<td><a href='/precinct?name={urllib.parse.quote(p['name'])}'><b>{e(p['name'])}</b></a></td>"
             f"<td><span class='small {mcls}'>{e(p['mode'])}</span></td>"
-            f"<td class='small mono'>{e(p.get('model', 'opus'))}</td>"
+            f"<td class='small mono' title='{e(models.model_id(p.get('model', 'opus')))}'>"
+            f"{e(models.label(p.get('model', 'opus')))}</td>"
             f"<td class='small'>{e(p['description'])}</td>"
             f"<td class='small'>{p['ledger_chars']:,} ch (~{p['ledger_tokens']:,} tok)</td>"
             f"<td class='small'>{p['log_cases']:,}</td>"
@@ -1261,13 +1339,32 @@ def precincts_page():
     return _shell("Precincts", banner + intro + table, active="precincts")
 
 
-_PRECINCT_DETAIL_JS = r"""
+_PRECINCT_DETAIL_JS = _COMMON_JS + r"""
+// Case 440 (Feng uid=469): the precinct Case-log rows open the shared
+// showTask()/showCaseFile() popup (from _COMMON_JS, now prepended) inside a centered
+// MODAL overlay (#pcmodal) that floats on top of everything — not the old inline box
+// that dropped to the bottom of the page. pcShow reveals the dimmed backdrop + dialog
+// and locks background scroll; pcClose hides it and clears the content. The card's own
+// ✕ button also calls pcClose (guarded so History/Lineage, which have no #pcmodal, are
+// unaffected). Backdrop-click and Esc dismiss too.
+function pcShow(){ var m=document.getElementById('pcmodal'); if(m){ m.hidden=false;
+    document.body.classList.add('pcmodal-open');
+    var dg=m.querySelector('.pcmodal-dialog'); if(dg) dg.scrollTop=0; } }
+function pcClose(){ var m=document.getElementById('pcmodal'); if(m){ m.hidden=true;
+    document.body.classList.remove('pcmodal-open'); }
+  var D=document.getElementById('detail'); if(D) D.innerHTML=''; }
+function pcOpen(id, focus){ pcShow(); showTask(id, focus); }
+function pcCaseFile(cnum, path){ pcShow(); showCaseFile(cnum, path); }
+(function(){ var m=document.getElementById('pcmodal'); if(!m) return;   // bind dismissers once
+  var bd=m.querySelector('.pcmodal-backdrop'); if(bd) bd.addEventListener('click', pcClose);
+  document.addEventListener('keydown', function(ev){ if(ev.key==='Escape' && !m.hidden) pcClose(); }); })();
+
 // Task 377 #4 / Case 421: submit the per-precinct "Create new case" form via multipart
 // to the authed POST /precinct/create_case. Case 421 adds paste + drag-and-drop of
 // files with live thumbnail/file previews. Files are collected in JS (pasted, dropped,
 // or browsed) and appended to a FormData we build by hand on submit — so pasted
-// screenshots, which can't live in a <input type=file>, are included. This block runs
-// standalone (no _COMMON_JS on this page), so it ships its own tiny el() helper.
+// screenshots, which can't live in a <input type=file>, are included. The create-case
+// block runs in its own IIFE and ships a local el() helper (harmless shadow).
 (function(){
   var form=document.getElementById('ccform'); if(!form) return;
   var btn=document.getElementById('ccsubmit'), stat=document.getElementById('ccstatus');
@@ -1399,12 +1496,12 @@ def precinct_detail_page(name):
     field_css = ("padding:5px 9px;border-radius:6px;border:1px solid var(--accent-border);"
                  "background:var(--surface2);color:var(--fg);font:inherit")
     opts = "".join(
-        f"<option value='{m}'{' selected' if m == cur_model else ''}>{m}</option>"
-        for m in ("fable", "opus", "sonnet", "haiku"))
+        f"<option value='{m}'{' selected' if m == cur_model else ''}>{models.label(m)}</option>"
+        for m in models.ALIASES)
     model_card = (
         "<div class='card'>"
         "<div class='small muted' style='margin-bottom:6px'>Default model for spawned "
-        f"deputies &mdash; current <b class='mono'>{e(cur_model)}</b> "
+        f"deputies &mdash; current <b class='mono'>{e(models.label_with_id(cur_model))}</b> "
         "<span class='muted'>(an email <code>model:&lt;name&gt;</code> tag overrides it "
         "per request)</span></div>"
         "<form method='post' action='/precinct/model' "
@@ -1437,25 +1534,54 @@ def precinct_detail_page(name):
         deputies = "<h2>Deputies</h2><p class='muted small'>none mapped yet</p>"
     crows = ""
     for c in d["cases"]:
-        link = f"/download?path={urllib.parse.quote(c['path'])}"
+        tid = str(c["task"])
+        # Case 440 (Feng uid=469): all three buttons open a centered MODAL popup.
+        # A numeric case can reconstruct its email thread + deliverables (via
+        # /api/task -> showTask), so it gets "conversation" + "deliverables" + a
+        # "case file" (the writeup, via showCaseFile, with a raw-download link inside).
+        # Alphanumeric sub-cases (e.g. 384c) have no reconstructable numeric thread,
+        # so they get the "case file" modal only (mirrors the Status workers table).
+        oc_cf = e(f"pcCaseFile({json.dumps(tid)}, {json.dumps(c['path'])})")
+        cf_btn = (f"<a onclick=\"{oc_cf}\" title='Case-file writeup (raw download inside)'>"
+                  "&#128196; case file</a>")
+        if tid.isdigit():
+            oc_conv = e(f"pcOpen({tid}, 'conversation')")
+            oc_deliv = e(f"pcOpen({tid}, 'deliverables')")
+            acts = (f"<a onclick=\"{oc_conv}\" title='Reconstructed email thread for this case'>"
+                    "&#128172; conversation</a>"
+                    f"<a onclick=\"{oc_deliv}\" title='Files &amp; artifacts this case delivered'>"
+                    "&#128230; deliverables</a>"
+                    f"{cf_btn}")
+        else:
+            acts = cf_btn
         # Task 377 #1: Deputy column (empty '-' for pre-377 rows that carry none).
-        crows += (f"<tr><td class='small'>{e(str(c['task']))}</td>"
+        crows += (f"<tr><td class='small'>{e(tid)}</td>"
                   f"<td class='small'>{e(c.get('deputy') or '-')}</td>"
                   f"<td class='small'>{e(c['summary'])}</td>"
-                  f"<td class='small'><a href='{link}'>case file</a></td></tr>")
+                  f"<td class='small'><div class='viewacts'>{acts}</div></td></tr>")
     cases = (f"<h2>Case log <span class='muted small'>{len(d['cases'])} closed cases "
              "(append-only index)</span></h2>"
              "<div class='tablewrap'><table>"
-             "<tr><th>Case</th><th>Deputy</th><th>Summary</th><th>File</th></tr>"
+             "<tr><th>Case</th><th>Deputy</th><th>Summary</th><th>View</th></tr>"
              f"{crows or '<tr><td colspan=4 class=small muted>no closed cases yet</td></tr>'}"
-             "</table></div>")
+             "</table></div>"
+             # Case 440 (Feng uid=469): the shared showTask()/showCaseFile() popup
+             # renders INSIDE a centered MODAL overlay on top of everything — a dimmed
+             # backdrop + a floating dialog, dismissed by the card's ✕, click-outside,
+             # or Esc. Hidden until a Case-log button opens it.
+             "<div id='pcmodal' class='pcmodal' hidden>"
+             "<div class='pcmodal-backdrop'></div>"
+             "<div class='pcmodal-dialog' role='dialog' aria-modal='true'>"
+             "<div class='pcmodal-bar'><button type='button' class='pcmodal-x' "
+             "onclick='pcClose()' aria-label='close'>&#10005; close</button></div>"
+             "<div id='detail'></div></div></div>")
     # Task 377 #4: the per-precinct "Create new case" form (collapsed <details> so
     # it doesn't dominate). model optional / follow-up optional / description required
     # / multiple file+photo uploads. Submits multipart to the authed POST endpoint.
     ta_css = ("width:100%;padding:9px;border-radius:6px;border:1px solid var(--accent-border);"
               "background:var(--surface2);color:var(--fg);font:inherit;resize:vertical")
-    model_opts = "<option value=''>precinct default (" + e(cur_model) + ")</option>" + "".join(
-        f"<option value='{m}'>{m}</option>" for m in ("fable", "opus", "sonnet", "haiku"))
+    model_opts = "<option value=''>precinct default (" + e(models.label(cur_model)) + ")</option>" + "".join(
+        f"<option value='{m}'>{models.label(m)}</option>" for m in models.ALIASES)
     create_card = (
         "<details class='card'><summary style='cursor:pointer;font-weight:600'>"
         f"&#43; Create new case in {e(d['name'])}</summary>"

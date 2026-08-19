@@ -85,7 +85,7 @@ if tmux has-session -t "=$SESSION" 2>/dev/null; then
 fi
 
 tmux new-session -d -s "$SESSION" \
-  "bash -lc 'cd \"$HERE\" && export INFRA_STATE_ROOT=\"$INFRA_STATE_ROOT\" INFRA_DASH_HOST=\"$INFRA_DASH_HOST\" INFRA_DASH_PORT=\"$INFRA_DASH_PORT\" INFRA_DASH_TLS=\"$INFRA_DASH_TLS\" INFRA_DASH_CERT=\"$INFRA_DASH_CERT\" INFRA_DASH_KEY=\"$INFRA_DASH_KEY\"; while true; do \"$PY\" server.py 2>&1 | tee -a \"$LOG\"; echo \"[dashboard-wrapper] server exited rc=\$? \$(date) — restarting in 5s\" | tee -a \"$LOG\"; sleep 5; done'"
+  "bash -lc 'cd \"$HERE\" && export INFRA_STATE_ROOT=\"$INFRA_STATE_ROOT\" INFRA_DASH_HOST=\"$INFRA_DASH_HOST\" INFRA_DASH_PORT=\"$INFRA_DASH_PORT\" INFRA_DASH_TLS=\"$INFRA_DASH_TLS\" INFRA_DASH_CERT=\"$INFRA_DASH_CERT\" INFRA_DASH_KEY=\"$INFRA_DASH_KEY\" INFRA_EXTRA_DOWNLOAD_ROOTS=\"${INFRA_EXTRA_DOWNLOAD_ROOTS:-}\"; while true; do \"$PY\" server.py 2>&1 | tee -a \"$LOG\"; echo \"[dashboard-wrapper] server exited rc=\$? \$(date) — restarting in 5s\" | tee -a \"$LOG\"; sleep 5; done'"
 sleep 2
 if tmux has-session -t "=$SESSION" 2>/dev/null; then
   echo "started dashboard tmux session '$SESSION' (log: $LOG)"
