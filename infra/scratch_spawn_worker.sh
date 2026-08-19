@@ -381,12 +381,24 @@ if [ -n "$DRY" ]; then
 fi
 mv "${PROMPT}.tmp" "$PROMPT"
 
-# 2) register so the user's replies to this worker's emails route back to it
+# 2) register so the user's replies to this worker's emails route back to it.
+#    A fresh install has no registry yet (GitHub issue #1: a precinct-tagged email
+#    got a "deputy spawned" ack but no deputy ran, because this step crashed on the
+#    missing file under `set -euo pipefail`, before the tmux launch below). Tolerate
+#    a missing / empty / corrupt file and start from {"workers": {}} so registration
+#    can never abort the spawn. Mirrors the guard the collision-check above and
+#    scratch_inbox.py already use.
 python3 - "$NAME" "$SID" "$KEYWORDS" <<'PY'
 import json, sys
 name, sid, kw = sys.argv[1], sys.argv[2], sys.argv[3]
 p = "scratch_agents_registry.json"
-r = json.load(open(p))
+try:
+    r = json.load(open(p))
+    if not isinstance(r, dict):
+        raise ValueError("registry is not a JSON object")
+except (OSError, ValueError):
+    r = {}
+r.setdefault("workers", {})
 r["workers"][name] = {"type": "resume", "session": sid,
                       "match": [k.strip().lower() for k in kw.split(",") if k.strip()],
                       "desc": f"email-spawned task worker ({name})"}

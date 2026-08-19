@@ -211,6 +211,47 @@ Key env vars: `INFRA_STATE_ROOT` (state dir), `INFRA_OPERATOR_EMAIL` / `INFRA_MA
 `INFRA_DASH_PUBLIC=1` (bind `0.0.0.0` **and** enable TLS). Full list in
 [`ONBOARDING.md`](ONBOARDING.md) and [`dashboard/README.md`](dashboard/README.md).
 
+## Updating Posse
+
+Posse is a git repo. Updating means **pulling the new code and restarting the
+long-lived services** so they run it. Your configuration and state —
+`infra/operator.json`, `~/.smtp_env`, `infra_env.local.sh`, and everything under
+`infra/scratch_full_logs/` — live **outside** version control, so a pull never touches
+them. `setup.py` is a **one-time installer**; you do *not* re-run it to update.
+
+1. **See what's new.** Skim [`CHANGELOG.md`](CHANGELOG.md) — the top entry is the latest
+   version. Note any entry marked **Action required** (a migration step you must run).
+
+2. **Pull the new version.**
+   ```bash
+   cd <your posse checkout>
+   git stash            # only if you have local edits to keep
+   git pull --ff-only
+   git stash pop        # only if you stashed
+   ```
+   If `git pull` reports a conflict in a file you edited locally, resolve it, or take
+   the repo's version with `git checkout -- <file>`.
+
+3. **Run any migration** the changelog calls out for the versions you crossed. Most
+   updates need none.
+
+4. **Restart the services so they run the new code.** The inbox router re-executes its
+   Python per poll, so it picks up new code on its own; the long-lived daemons and the
+   dashboard are persistent processes and must be bounced:
+   ```bash
+   bash posse_stop.sh    # stop the dashboard + inbox/watchdog/jobmgr/sheriff
+   bash posse_start.sh   # idempotent restart of all of them  (add --gpu if you use GPUs)
+   ```
+   Running deputies and detached jobs are **left alone** — they finish (or get
+   relaunched) on their current code, which is expected and safe.
+
+5. **Verify.**
+   ```bash
+   cat VERSION                    # the version you're now on
+   ```
+   Open the dashboard (`https://<host>:8787`) and confirm it loads. Reply to any
+   deputy's email as usual; new work runs on the new code.
+
 ## The wait discipline (why it's load-bearing)
 
 The prompt cache has a ~5-minute TTL: a touch within it is a warm **read**; a touch
@@ -235,6 +276,8 @@ posse/
 ├── dashboard/            # login-protected, read-only status/history dashboard (stdlib)
 ├── infra_env.sh          # your instance config (state dir, identity, allow-list, bind)
 ├── ONBOARDING.md         # step-by-step new-operator setup guide  ← start here
+├── CHANGELOG.md          # version notes — one entry per push (see "Updating Posse")
+├── VERSION               # the current version string
 ├── MIGRATION.md          # code/state split · path strategy
 └── README.md             # this file
 ```

@@ -214,6 +214,21 @@ def seed_receptionist(env=None):
                 cwd=str(INFRA), env=env or _base_env())
 
 
+def seed_registry():
+    """Create an empty deputy registry on a fresh install so the first spawned deputy
+    has a file to register into (GitHub issue #1: without it the first precinct-tagged
+    email got a 'deputy spawned' ack but the spawn crashed on the missing file, before
+    the tmux launch). Idempotent — never clobbers an existing registry. spawn_worker.sh
+    also creates it on demand, but seeding here means the router + dashboard see a
+    consistent empty registry from first boot. Returns True if it wrote the file."""
+    reg = INFRA / "scratch_agents_registry.json"
+    if reg.exists():
+        return False
+    reg.parent.mkdir(parents=True, exist_ok=True)
+    reg.write_text(json.dumps({"workers": {}}, indent=2) + "\n")
+    return True
+
+
 def set_dashboard_account(password, email, name, env=None):
     """Bind the single dashboard account: username = email, plus a password (via stdin
     so it never lands in argv). Delegates to dashboard/set_password.py."""
@@ -420,6 +435,8 @@ def main(argv=None):
     r = seed_receptionist(env)
     ok("seeded the receptionist precinct (the Precincts tab now shows the front desk)"
        if r.returncode == 0 else "receptionist seed reported: " + r.stderr.strip()[:160])
+    if seed_registry():
+        ok("seeded an empty deputy registry (scratch_agents_registry.json)")
     if ask_yesno("Set your dashboard password now (username = your email)?", default=True):
         pw = ask_secret("Dashboard password (min 8, hidden)")
         pw2 = ask_secret("Confirm password")
