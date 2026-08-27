@@ -358,8 +358,9 @@ def _mark(px):
 
 
 def _nav(active=""):
-    """Header nav. `active` in {status,history,lineage,jtf} marks the current link
-    with .cur so you can see which page you're on (Task 346; Cowork->JTF Case 384e)."""
+    """Header nav. `active` in {status,history,precincts,judges,lineage,jtf} marks the
+    current link with .cur so you can see which page you're on (Task 346;
+    Cowork->JTF Case 384e; Judges Case 551)."""
     def cur(name):
         return " class='cur'" if name == active else ""
     acct = auth.account().get("email")
@@ -371,6 +372,7 @@ def _nav(active=""):
         f"<nav><a href='/'{cur('status')}>Status</a>"
         f"<a href='/history'{cur('history')}>History</a>"
         f"<a href='/precincts'{cur('precincts')}>Precincts</a>"
+        f"<a href='/judges'{cur('judges')}>Judge</a>"
         f"<a href='/lineage'{cur('lineage')}>Lineage</a>"
         f"<a href='/jtf'{cur('jtf')}>JTF</a></nav>"
         "<span id='daemons' class='small muted'></span>"
@@ -1029,8 +1031,16 @@ def jtf_page():
         "<div class='fld'><span class='lbl'>Collaborators (precinct or specific deputy)</span>"
         "<div id='collabchips' class='chips'></div>"
         "<div><button type='button' id='collab-add-btn' class='small'>Add collaborator&hellip;</button></div></div>"
-        "<label class='fld chk'><input type='checkbox' id='critic'>"
-        "<span>Add an independent critic (the lead spawns an anonymous critic agent)</span></label>"
+        # Case 551: the JTF critic is now a NAMED judge from the registry rather
+        # than a bare checkbox, so a JTF and a per-case critic mean the same thing.
+        "<div class='fld'><span class='lbl'>Judge (optional)</span>"
+        "<select id='critic'><option value=''>none</option>"
+        + "".join(f"<option value='{html.escape(c['id'])}'>"
+                    f"{html.escape(c.get('display_name') or c['id'])}</option>"
+                    for c in state.critics())
+        + "</select>"
+        "<span class='small muted'>The lead iterates with this judge until it signs off "
+        "the deliverables.</span></div>"
         "<div class='fld'><span class='lbl'>Task description</span>"
         "<textarea id='desc' rows='6' placeholder='What should this JTF accomplish? "
         "Be specific about the deliverables.'></textarea></div>"
@@ -1048,6 +1058,400 @@ def jtf_page():
         "</div></div>"
     )
     return _shell("New JTF", body, _JTF_JS, active="jtf")
+
+
+# --------------------------------------------------------------------------- #
+# Case 551: JUDGES — the critic roster.                                        #
+# --------------------------------------------------------------------------- #
+def judges_page():
+    """The Judges tab: the roster of critics, the fixed charter every one of them
+    shares, each one's custom (persona) prompt, the sheriff-approval trail for
+    adding one, and the review rounds they have actually ruled on.
+
+    Read-only over the registry by design — the registry is sheriff-owned, so the
+    'propose a judge' form files a request onto the sheriff queue rather than
+    writing anything itself."""
+    e = html.escape
+    cs = state.critics(include_retired=True)
+    charter = state.critic_charter()
+    reqs = state.critic_requests(limit=12)
+    revs = state.critic_reviews(limit=15)
+
+    intro = (
+        "<h2>Judge</h2>"
+        "<div class='muted small' style='margin-bottom:14px;max-width:760px'>"
+        "A <b>judge</b> is an independent reviewing agent a deputy must satisfy "
+        "before it may close a case. It is spawned as an anonymous worker, sees the work "
+        "for the first time, reports only to the deputy, and returns one of three verdicts: "
+        "<b>SIGN-OFF</b>, <b>REVISE</b> or <b>REJECT</b>. The deputy fixes and resubmits "
+        "until it signs off.<br><br>"
+        "Every judge runs the same fixed <b>charter</b> (independence, grounding, the verdict "
+        "vocabulary, the output contract) plus its own <b>custom prompt</b> — the taste that "
+        "makes it that judge. Pick one per case in the precinct <i>Create new case</i> form, or "
+        "by email with a <code>judge: &lt;id&gt;</code> line. The default is <b>no judge</b>."
+        "</div>")
+
+    # ---- roster ----------------------------------------------------------
+    if cs:
+        rows = []
+        for c in cs:
+            live = c["status"] == "active"
+            badge = ("<span class='badge b-done'>active</span>" if live
+                     else "<span class='badge'>retired</span>")
+            dflt = (" <span class='pill' title='Used when a case asks for a critic "
+                    "without naming one'>default</span>" if c["id"] == "anonymous" else "")
+            prov = e(c["added_by"] or "—")
+            if c["request_id"]:
+                prov += f" <span class='small muted'>(request {e(c['request_id'][:18])})</span>"
+            rows.append(
+                "<tr>"
+                f"<td class='mono'>{e(c['id'])}{dflt}</td>"
+                f"<td>{e(c['display_name'])}<div class='small muted'>{e(c['description'])}</div></td>"
+                f"<td>{e(c['model'] or 'deputy default')}</td>"
+                f"<td>{badge}</td>"
+                f"<td class='small muted'>{prov}</td>"
+                f"<td><button type='button' class='small jview' data-id='{e(c['id'])}'>"
+                f"prompt ({c['prompt_chars']:,}&nbsp;ch)</button></td>"
+                "</tr>")
+        roster = ("<div class='card'><b>Roster</b>"
+                  "<div class='tablewrap'><table class='table'><tr>"
+                  "<th>id</th><th>judge</th><th>model</th><th>status</th>"
+                  "<th>added by</th><th>custom prompt</th></tr>"
+                  + "".join(rows) + "</table></div></div>")
+    else:
+        roster = ("<div class='card banner'>No judges are registered yet. The default "
+                  "<code>anonymous</code> judge is seeded through the sheriff-approval path — "
+                  "until then, cases created with a judge fall back to no review.</div>")
+
+    # ---- the fixed charter ----------------------------------------------
+    charter_card = (
+        "<details class='card'><summary style='cursor:pointer;font-weight:600'>"
+        f"The Critic Charter &mdash; fixed system prompt shared by every judge "
+        f"<span class='small muted'>({len(charter):,} chars)</span></summary>"
+        "<div class='small muted' style='margin:8px 0'>Prepended unchanged to every critic. "
+        "Changing it is a sheriff operation (<code>critic_update --critic charter</code>), not "
+        "an edit anyone can make here.</div>"
+        f"<pre class='mono small' style='white-space:pre-wrap;max-height:460px;overflow:auto'>"
+        f"{e(charter) or '(not seeded yet)'}</pre></details>")
+
+    # ---- propose a judge (files a SHERIFF REQUEST) ------------------------
+    fc = ("padding:8px;border-radius:6px;border:1px solid var(--accent-border);"
+          "background:var(--surface2);color:var(--fg);font:inherit")
+    ta = fc + ";width:100%;resize:vertical;font-family:ui-monospace,Menlo,monospace;font-size:12px"
+    propose = (
+        "<details class='card'><summary style='cursor:pointer;font-weight:600'>"
+        "&#43; Propose a new judge</summary>"
+        "<div class='small muted' style='margin:8px 0'>This does <b>not</b> add the judge. It "
+        "files a <code>critic_add</code> request on the sheriff queue; the sheriff reads the "
+        "prompt you wrote and approves or denies it, and only the sheriff writes the registry. "
+        "You can do the same by email &mdash; see the note under the request list below.</div>"
+        "<div style='display:flex;flex-direction:column;gap:12px;max-width:760px'>"
+        "<div style='display:flex;gap:12px;flex-wrap:wrap'>"
+        "<label class='small' style='flex:1;min-width:170px'>Judge id "
+        "<span class='muted'>(lowercase, e.g. <code>vyas</code>)</span><br>"
+        f"<input type='text' id='jid' style='{fc};width:100%'></label>"
+        "<label class='small' style='flex:1;min-width:170px'>Display name<br>"
+        f"<input type='text' id='jname' style='{fc};width:100%'></label>"
+        "<label class='small' style='flex:1;min-width:150px'>Model "
+        "<span class='muted'>(optional)</span><br>"
+        f"<select id='jmodel' style='{fc};width:100%'><option value=''>deputy default</option>"
+        + "".join(f"<option value='{m}'>{models.label(m)}</option>" for m in models.ALIASES)
+        + "</select></label></div>"
+        "<label class='small'>One-line description<br>"
+        f"<input type='text' id='jdesc' style='{fc};width:100%'></label>"
+        "<label class='small'>Custom prompt <span class='muted'>(the persona/taste — what this "
+        "judge looks for, in what order, in what voice. The charter above is prepended "
+        "automatically; do not repeat it.)</span><br>"
+        f"<textarea id='jprompt' rows='12' style='{ta}'></textarea></label>"
+        "<label class='small'>Why should the sheriff approve this? "
+        "<span class='muted'>(required)</span><br>"
+        f"<input type='text' id='jreason' style='{fc};width:100%'></label>"
+        "<div style='display:flex;gap:12px;align-items:center'>"
+        "<button type='button' id='jsubmit'>Submit for sheriff approval</button>"
+        "<span id='jstatus' class='small muted'></span></div>"
+        "</div></details>")
+
+    # ---- the approval trail ---------------------------------------------
+    if reqs:
+        rr = []
+        for r in reqs:
+            cls = {"done": "b-done", "denied": "b-failed", "pending": "b-running"}.get(r["state"], "")
+            verdict = {"done": "approved", "denied": "denied", "pending": "awaiting sheriff"}[r["state"]]
+            who = r["deputy"] or r["requester"] or "—"
+            rr.append("<tr>"
+                      f"<td class='mono small'>{e(r['op'])}</td>"
+                      f"<td class='mono'>{e(r['critic'])}</td>"
+                      f"<td><span class='badge {cls}'>{verdict}</span></td>"
+                      f"<td class='small muted'>{e(who)}</td>"
+                      f"<td class='small'>{e((r['decision_reason'] or r['reason'])[:180])}</td>"
+                      "</tr>")
+        trail = ("<div class='card'><b>Sheriff approval trail</b>"
+                 "<div class='small muted' style='margin:6px 0'>Every add / change / retire, and "
+                 "how the sheriff ruled.</div>"
+                 "<div class='tablewrap'><table class='table'><tr><th>op</th><th>judge</th>"
+                 "<th>outcome</th><th>requested by</th><th>reason</th></tr>"
+                 + "".join(rr) + "</table></div></div>")
+    else:
+        trail = ("<div class='card'><b>Sheriff approval trail</b>"
+                 "<div class='small muted' style='margin-top:6px'>No judge requests yet.</div></div>")
+
+    # ---- judges actually being used --------------------------------------
+    if revs:
+        vr = []
+        for r in revs:
+            cls = ("b-done" if r["latest"] == "SIGN-OFF"
+                   else "b-failed" if r["latest"] == "REJECT" else "b-running")
+            last = r["rounds"][-1]
+            n = len(r["rounds"])
+            # Case 555: the arc matters on a multi-round review, so show every
+            # round's verdict inline and let the button open all of them in full.
+            arc = " → ".join(
+                ("<span class='pill' title='round %d'>%s</span>"
+                 % (x["round"], e(x["verdict"] or "…"))) for x in r["rounds"])
+            vr.append("<tr>"
+                      f"<td class='mono'>{e(str(r['case']))}</td>"
+                      f"<td class='mono'>{e(r['critic'] or '—')}</td>"
+                      f"<td class='small'>{n}<div class='small muted'>{arc}</div></td>"
+                      f"<td style='white-space:nowrap'>"
+                      f"<span class='badge {cls}'>{e(r['latest'] or 'no verdict')}</span></td>"
+                      f"<td class='small'>{e((last['one_line'] or '')[:160])}</td>"
+                      f"<td><button type='button' class='small rview' "
+                      f"data-case='{e(str(r['case']))}'>read ruling"
+                      + (f" ({n} rounds)" if n > 1 else "") + "</button></td>"
+                      "</tr>")
+        used = ("<div class='card'><b>Recent rulings</b>"
+                "<div class='small muted' style='margin:6px 0'>Each round is archived under "
+                "<code>scratch_full_logs/critic_reviews/case_&lt;n&gt;/round_&lt;r&gt;/</code>, so a "
+                "sign-off is an artifact rather than a claim in an email. "
+                "<b>read ruling</b> opens the judge's full written verdict &mdash; every round of it.</div>"
+                "<div class='tablewrap'><table class='table'><tr><th>case</th><th>judge</th>"
+                "<th>rounds</th><th>latest</th><th>one-line read</th><th>full ruling</th></tr>"
+                + "".join(vr) + "</table></div></div>")
+    else:
+        used = ("<div class='card'><b>Recent rulings</b><div class='small muted' "
+                "style='margin-top:6px'>No cases have gone before a judge yet.</div></div>")
+
+    howto = (
+        "<div class='card'><b>By email</b>"
+        "<div class='small muted' style='margin-top:6px'>"
+        "Add a judge: email the receptionist (no precinct tag) asking for it and include the "
+        "prompt &mdash; it files the same <code>critic_add</code> request and the sheriff "
+        "decides.<br>"
+        "Use a judge on a case: put <code>judge: &lt;id&gt;</code> on its own line in the body "
+        "of a precinct-tagged email (or <code>[judge:&lt;id&gt;]</code> in the subject), exactly "
+        "like the existing <code>precinct:</code> and <code>model:</code> tags. "
+        "Omit it for no judge.</div></div>")
+
+    # per-judge prompt modal
+    modal = ("<div id='jmodal' class='pcmodal' hidden><div class='pcmodal-backdrop'></div>"
+             "<div class='pcmodal-dialog'><div class='pcmodal-bar'>"
+             "<b id='jmtitle'>prompt</b>"
+             "<button type='button' id='jmclose' class='small'>&#10005;</button></div>"
+             "<pre id='jmbody' class='mono small' style='white-space:pre-wrap;padding:14px'></pre>"
+             "</div></div>")
+
+    # Case 555: the full-ruling modal — every round of one case's review.
+    # (wider than the shared 920px dialog — a ruling is prose plus file:line
+    # citations, and re-wrapping those to 920px hurts more than it helps)
+    rmodal = ("<div id='rmodal' class='pcmodal' hidden><div class='pcmodal-backdrop'></div>"
+              "<div class='pcmodal-dialog' style='width:min(1120px,96vw)'>"
+              "<div class='pcmodal-bar'>"
+              "<b id='rmtitle'>ruling</b>"
+              "<button type='button' id='rmclose' class='small'>&#10005;</button></div>"
+              "<div id='rmbody' style='padding:14px'></div>"
+              "</div></div>")
+
+    return _shell("Judge",
+                  intro + roster + charter_card + propose + trail + used + howto + modal + rmodal,
+                  _JUDGES_JS, active="judges")
+
+
+_JUDGES_JS = _COMMON_JS + r"""
+(function(){
+  var modal=document.getElementById('jmodal');
+  function close(){ modal.hidden=true; }
+  document.getElementById('jmclose').addEventListener('click', close);
+  modal.querySelector('.pcmodal-backdrop').addEventListener('click', close);
+  document.addEventListener('keydown', function(ev){ if(ev.key==='Escape') close(); });
+  Array.prototype.forEach.call(document.querySelectorAll('.jview'), function(b){
+    b.addEventListener('click', async function(){
+      var id=b.getAttribute('data-id');
+      document.getElementById('jmtitle').textContent='custom prompt — '+id;
+      document.getElementById('jmbody').textContent='loading…';
+      modal.hidden=false;
+      try{
+        var r=await fetch('/api/judge?id='+encodeURIComponent(id));
+        if(r.status===401){ location='/login'; return; }
+        var d=await r.json();
+        document.getElementById('jmbody').textContent=d.prompt||'(no prompt on disk)';
+      }catch(e){ document.getElementById('jmbody').textContent='failed to load'; }
+    });
+  });
+
+  // ---- Case 555: the FULL ruling modal — every round, in full ------------
+  var rmodal=document.getElementById('rmodal');
+  var rbody=document.getElementById('rmbody');
+  function rclose(){ rmodal.hidden=true; document.body.classList.remove('pcmodal-open'); }
+  function ropen(){ rmodal.hidden=false; document.body.classList.add('pcmodal-open');
+    var dg=rmodal.querySelector('.pcmodal-dialog'); if(dg) dg.scrollTop=0; }
+  document.getElementById('rmclose').addEventListener('click', rclose);
+  rmodal.querySelector('.pcmodal-backdrop').addEventListener('click', rclose);
+  document.addEventListener('keydown', function(ev){ if(ev.key==='Escape') rclose(); });
+
+  function vcls(v){ return v==='SIGN-OFF' ? 'b-done'
+                        : v==='REJECT'   ? 'b-failed' : 'b-running'; }
+  var PRE='white-space:pre-wrap;overflow-x:auto;max-height:none;margin:8px 0 0;'
+         +'padding:10px;border-radius:6px;background:var(--surface2)';
+
+  // a titled list block; skipped entirely when the judge returned nothing for it
+  function listBlock(title, items, render){
+    if(!items || !items.length) return null;
+    var d=el('div',null); d.style.marginTop='10px';
+    d.appendChild(el('div','small',title+' ('+items.length+')'));
+    var ul=el('ul'); ul.style.margin='4px 0 0'; ul.style.paddingLeft='20px';
+    items.forEach(function(it){ var li=el('li','small'); li.style.marginBottom='4px';
+      render(li,it); ul.appendChild(li); });
+    d.appendChild(ul); return d;
+  }
+
+  function roundCard(cs, r){
+    var c=el('div','card'); c.style.margin='0 0 14px';
+    var head=el('div'); head.style.cssText='display:flex;gap:8px;align-items:center;flex-wrap:wrap';
+    head.appendChild(el('b',null,'Round '+r.round));
+    head.appendChild(el('span','badge '+vcls(r.verdict), r.pending ? 'in flight'
+                                                        : (r.verdict||'no verdict')));
+    var meta=[];
+    if(r.critic) meta.push('judge '+r.critic);
+    if(r.model)  meta.push(r.model);
+    if(r.ts)     meta.push(fmtTs(r.ts));
+    if(meta.length) head.appendChild(el('span','small muted', '· '+meta.join(' · ')));
+    c.appendChild(head);
+
+    if(r.pending){
+      c.appendChild(el('div','small muted',
+        'This round has been assigned but the judge has not written its verdict yet.'));
+      return c;
+    }
+    if(r.coerced){
+      var w=el('div','small flag'); w.style.marginTop='6px';
+      w.textContent='The judge wrote SIGN-OFF but listed must-fixes, so the harness '
+                   +'downgraded it to REVISE (fail-closed).';
+      c.appendChild(w);
+    }
+    if(r.error){ var er=el('div','small flag'); er.style.marginTop='6px';
+      er.textContent='harness note: '+r.error; c.appendChild(er); }
+    if(r.one_line){ var ol=el('div',null,r.one_line);
+      ol.style.cssText='margin:8px 0 0;font-style:italic'; c.appendChild(ol); }
+
+    var b;
+    b=listBlock('MUST FIX — blockers', r.must_fix, function(li,f){
+      if(f.location){ var loc=el('span','mono small',f.location); li.appendChild(loc);
+                      li.appendChild(document.createElement('br')); }
+      li.appendChild(document.createTextNode(f.problem||''));
+      if(f.fix){ li.appendChild(document.createElement('br'));
+                 var fx=el('span','muted','fix: '+f.fix); li.appendChild(fx); }
+    }); if(b) c.appendChild(b);
+    function plain(li,s){ li.textContent=s; }
+    b=listBlock('Should fix', r.should_fix, plain);        if(b) c.appendChild(b);
+    b=listBlock('Keep', r.keep, plain);                    if(b) c.appendChild(b);
+    b=listBlock('Could not verify', r.unverified, plain);  if(b) c.appendChild(b);
+    b=listBlock('Artifacts reviewed', r.artifacts, function(li,p){
+      li.appendChild(el('span','mono small',p)); });       if(b) c.appendChild(b);
+    b=listBlock('Artifacts MISSING at review time', r.missing_artifacts, function(li,p){
+      li.appendChild(el('span','mono small flag',p)); });  if(b) c.appendChild(b);
+
+    // the whole written ruling — open by default; this is the point of the button
+    var det=el('details'); det.open=true; det.style.marginTop='12px';
+    var sm=el('summary','small'); sm.style.cursor='pointer';
+    sm.textContent='Full written ruling — verdict.md ('
+                  +(r.verdict_md?r.verdict_md.length.toLocaleString():0)+' chars)';
+    det.appendChild(sm);
+    var pre=el('pre','mono small', r.verdict_md || '(the judge wrote no verdict.md)');
+    pre.style.cssText=PRE; det.appendChild(pre); c.appendChild(det);
+
+    // what the judge was given — lazily fetched, it is 20-30 KB per round
+    if(r.prompt_chars){
+      var pd=el('details'); pd.style.marginTop='8px';
+      var ps=el('summary','small muted'); ps.style.cursor='pointer';
+      ps.textContent='What this judge was given — charter + persona + assignment ('
+                    +r.prompt_chars.toLocaleString()+' chars)';
+      pd.appendChild(ps);
+      var ppre=el('pre','mono small','loading…'); ppre.style.cssText=PRE; pd.appendChild(ppre);
+      var loaded=false;
+      pd.addEventListener('toggle', async function(){
+        if(!pd.open || loaded) return; loaded=true;
+        try{
+          var d=await getJSON('/api/judge_review?part=prompt&case='+encodeURIComponent(cs)
+                              +'&round='+encodeURIComponent(r.round));
+          ppre.textContent=(d&&d.prompt)||'(prompt.md not on disk)';
+        }catch(e){ loaded=false; ppre.textContent='failed to load'; }
+      });
+      c.appendChild(pd);
+    }
+    return c;
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.rview'), function(b){
+    b.addEventListener('click', async function(){
+      var cs=b.getAttribute('data-case');
+      document.getElementById('rmtitle').textContent='Ruling — case '+cs;
+      rbody.innerHTML=''; rbody.appendChild(el('div','muted small','loading…'));
+      ropen();
+      var d;
+      try{ d=await getJSON('/api/judge_review?case='+encodeURIComponent(cs)); }
+      catch(e){ rbody.innerHTML=''; rbody.appendChild(el('div','flag','failed to load')); return; }
+      if(!d) return;                                  // 401 -> getJSON redirected
+      rbody.innerHTML='';
+      var rs=d.rounds||[];
+      if(!rs.length){ rbody.appendChild(el('div','muted','No rounds archived for this case.')); return; }
+      document.getElementById('rmtitle').textContent =
+        'Ruling — case '+cs+' · '+rs.length+' round'+(rs.length>1?'s':'')
+        +(d.critic?' · judge '+d.critic:'');
+      // a one-line arc so a multi-round review reads at a glance before the detail
+      if(rs.length>1){
+        var arc=el('div','small muted'); arc.style.margin='0 0 12px';
+        arc.textContent='Arc: '+rs.map(function(r){
+          return 'r'+r.round+' '+(r.verdict||'…'); }).join('  →  ');
+        rbody.appendChild(arc);
+      }
+      rs.forEach(function(r){ rbody.appendChild(roundCard(cs, r)); });
+    });
+  });
+
+  var btn=document.getElementById('jsubmit');
+  if(!btn) return;
+  var stat=document.getElementById('jstatus');
+  function val(id){ var el=document.getElementById(id); return el?(el.value||'').trim():''; }
+  btn.addEventListener('click', async function(){
+    var id=val('jid'), prompt=val('jprompt'), reason=val('jreason');
+    if(!/^[a-z][a-z0-9_-]{0,31}$/.test(id)){
+      stat.className='small flag';
+      stat.textContent='Judge id must be lowercase letters/digits/-/_ and start with a letter.'; return; }
+    if(prompt.length<80){
+      stat.className='small flag';
+      stat.textContent='Write a real custom prompt — the sheriff denies empty or trivial ones.'; return; }
+    if(!reason){ stat.className='small flag';
+      stat.textContent='A reason is required; the sheriff decides on it.'; return; }
+    stat.className='small muted'; stat.textContent='Filing the request…'; btn.disabled=true;
+    try{
+      var r=await fetch('/judges/propose',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:id, display_name:val('jname'), description:val('jdesc'),
+                             model:val('jmodel'), prompt:prompt, reason:reason})});
+      if(r.status===401){ location='/login'; return; }
+      var d={}; try{ d=await r.json(); }catch(e){}
+      if(r.ok && d.ok){
+        stat.className='small';
+        stat.textContent='Filed as request '+(d.request||'')+' — awaiting the sheriff\'s decision. '
+                         +'Reload in a moment to see the outcome.';
+      } else {
+        stat.className='small flag'; stat.textContent='Error: '+((d&&d.error)||('HTTP '+r.status));
+      }
+    }catch(e){ stat.className='small flag'; stat.textContent='Network error.'; }
+    finally{ btn.disabled=false; }
+  });
+})();
+"""
 
 
 _JTF_JS = _COMMON_JS + r"""
@@ -1142,7 +1546,7 @@ async function submitJTF(){
   if(!desc){ st.className='small flag'; st.textContent='Add a task description.'; return; }
   st.className='small muted'; st.textContent='Submitting…';
   var payload={ lead:JT.lead, collaborators:JT.collabs,
-    critic:document.getElementById('critic').checked, description:desc };
+    critic:document.getElementById('critic').value||'', description:desc };
   try{
     var r=await fetch('/api/jtf',{method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
@@ -1152,7 +1556,7 @@ async function submitJTF(){
       st.className='small'; st.textContent='JTF submitted — '+
         (d.note||'the inbox handler will materialize it and email an ACK.');
       JT.lead=null; JT.collabs=[]; document.getElementById('desc').value='';
-      document.getElementById('critic').checked=false; renderLead(); renderCollabs();
+      document.getElementById('critic').value=''; renderLead(); renderCollabs();
     } else {
       st.className='small flag'; st.textContent='Error: '+(d.error||('HTTP '+r.status));
     }
@@ -1316,8 +1720,9 @@ def precincts_page():
             "<tr>"
             f"<td><a href='/precinct?name={urllib.parse.quote(p['name'])}'><b>{e(p['name'])}</b></a></td>"
             f"<td><span class='small {mcls}'>{e(p['mode'])}</span></td>"
+            # Case 557: name the backend service too when it is not claude.
             f"<td class='small mono' title='{e(models.model_id(p.get('model', 'opus')))}'>"
-            f"{e(models.label(p.get('model', 'opus')))}</td>"
+            f"{e(models.label_with_service(p.get('model', 'opus')))}</td>"
             f"<td class='small'>{e(p['description'])}</td>"
             f"<td class='small'>{p['ledger_chars']:,} ch (~{p['ledger_tokens']:,} tok)</td>"
             f"<td class='small'>{p['log_cases']:,}</td>"
@@ -1339,7 +1744,33 @@ def precincts_page():
     return _shell("Precincts", banner + intro + table, active="precincts")
 
 
-_PRECINCT_DETAIL_JS = _COMMON_JS + r"""
+# Case 557: the create-case Service picker chooses a MODE, and the Model list has
+# to follow it — a mode may only offer models it can actually run. This map is
+# GENERATED from models.aliases_for_mode / models.MODES, so the browser-side filter
+# below cannot drift from the Python registry (add a mode there, it appears here).
+_CC_MODES_JS = (
+    "var CC_MODES=" + json.dumps({
+        m: {"label": models.mode_label(m),
+            "blurb": models.mode_spec(m)["blurb"],
+            "deputy": models.deputy_service(m),
+            "writer": models.writer_service(m),
+            "aliases": list(models.aliases_for_mode(m))}
+        for m in models.MODE_IDS}) + ";\n"
+    "var CC_DEFAULT_MODE=" + json.dumps(models.DEFAULT_MODE) + ";\n"
+    # Case 557 (uid=671): per-SERVICE alias lists + display labels, so the change
+    # handler can REBUILD each model <select> from scratch. The previous approach
+    # (optgroup.hidden / .disabled) does NOT work in a macOS native select popup —
+    # WebKit ignores `hidden` on <optgroup>, so ChatGPT models stayed visible in
+    # Claude mode, which is exactly the bug Steven reported.
+    "var CC_SVC_ALIASES=" + json.dumps(
+        {s: list(models.aliases_for(s)) for s in models.SERVICE_IDS}) + ";\n"
+    "var CC_MODEL_LABELS=" + json.dumps(
+        {a: models.label(a) for a in models.ALL_ALIASES}) + ";\n"
+    "var CC_SVC_LABELS=" + json.dumps(
+        {s: models.service_label(s) for s in models.SERVICE_IDS}) + ";\n"
+)
+
+_PRECINCT_DETAIL_JS = _COMMON_JS + _CC_MODES_JS + r"""
 // Case 440 (Feng uid=469): the precinct Case-log rows open the shared
 // showTask()/showCaseFile() popup (from _COMMON_JS, now prepended) inside a centered
 // MODAL overlay (#pcmodal) that floats on top of everything — not the old inline box
@@ -1444,6 +1875,64 @@ function pcCaseFile(cnum, path){ pcShow(); showCaseFile(cnum, path); }
     addFiles(got.map(renamePasted));
   });
 
+  // Case 557: the Service field picks a MODE (who works / who writes the report),
+  // so the Model list must follow it — offering a chatgpt model in claude-only mode
+  // would queue a case that cannot run. CC_MODES is generated from
+  // models.aliases_for_mode in Python, so this filter cannot drift from the registry.
+  // claude -> hide+disable the ChatGPT group; chatgpt -> hide+disable the Claude
+  // group; claude+chatgpt -> BOTH, relabelled by ROLE (there a ChatGPT pick is the
+  // report writer's model, not the deputy's). A now-invalid model falls back to the
+  // empty "precinct default" option rather than silently posting a model the mode
+  // cannot run.
+  // Case 557 (uid=671). Two fixes over the first attempt:
+  //  (a) REBUILD the option list instead of hiding optgroups. A macOS native select
+  //      popup ignores `hidden` on <optgroup> (WebKit), so ChatGPT models stayed
+  //      visible in Claude mode. Options that don't apply are now simply not in
+  //      the DOM, which no browser can get wrong.
+  //  (b) Claude + ChatGPT is TWO agents, so it needs TWO model pickers: the claude
+  //      DEPUTY that does the work and the chatgpt WRITER that writes the report.
+  //      The writer select's wrapper is display:none outside hybrid mode.
+  var svcSel=form.service, modelSel=form.model, wmSel=form.writer_model,
+      hint=document.getElementById('svc-hint'),
+      mCap=document.getElementById('model-cap'),
+      wWrap=document.getElementById('wmodel-wrap');
+  // Capture the server-rendered first option BEFORE any rebuild — it carries the
+  // precinct-specific default label ("precinct default (Opus 5)"), which the JS
+  // has no other way to know.
+  var MODEL_HEAD=(modelSel&&modelSel.options.length)?modelSel.options[0].textContent:'precinct default',
+      WRITER_HEAD=(wmSel&&wmSel.options.length)?wmSel.options[0].textContent:'default';
+  function fillModels(sel, aliases, headText){       // rebuild, preserving the pick
+    if(!sel) return;
+    var keep=sel.value;
+    sel.innerHTML='';
+    var o0=document.createElement('option'); o0.value=''; o0.textContent=headText;
+    sel.appendChild(o0);
+    for(var i=0;i<aliases.length;i++){
+      var a=aliases[i], o=document.createElement('option');
+      o.value=a; o.textContent=CC_MODEL_LABELS[a]||a; sel.appendChild(o);
+    }
+    sel.value=(aliases.indexOf(keep)>=0)?keep:'';     // invalid pick -> the default
+  }
+  function syncMode(){
+    if(!svcSel||!modelSel) return;
+    var spec=CC_MODES[svcSel.value]||CC_MODES[CC_DEFAULT_MODE];
+    if(hint) hint.textContent=spec.blurb;
+    var hybrid=!!spec.writer;
+    // the DEPUTY select always shows exactly the models the deputy service can run
+    fillModels(modelSel, CC_SVC_ALIASES[spec.deputy]||[], MODEL_HEAD);
+    if(mCap) mCap.innerHTML = hybrid
+      ? (CC_SVC_LABELS[spec.deputy]+" model <span class='muted'>(does the work)</span>")
+      : "Model <span class='muted'>(optional)</span>";
+    // the WRITER select exists only in hybrid mode
+    if(wWrap) wWrap.style.display = hybrid ? '' : 'none';
+    if(wmSel){
+      if(hybrid) fillModels(wmSel, CC_SVC_ALIASES[spec.writer]||[], WRITER_HEAD);
+      else { wmSel.innerHTML=''; wmSel.value=''; }   // posts '' when not hybrid
+    }
+  }
+  if(svcSel) svcSel.addEventListener('change', syncMode);
+  syncMode();                                  // initial state (Claude preselected)
+
   form.addEventListener('submit', async function(ev){
     ev.preventDefault();
     var desc=(form.description.value||'').trim();
@@ -1455,17 +1944,20 @@ function pcCaseFile(cnum, path){ pcShow(); showCaseFile(cnum, path); }
     try{
       var fd=new FormData();
       fd.append('precinct', form.precinct.value);
+      fd.append('service', (form.service&&form.service.value)||'');
       fd.append('model', form.model.value||'');
+      fd.append('writer_model', (form.writer_model&&form.writer_model.value)||'');
       fd.append('parent', parent);
       fd.append('description', desc);
+      fd.append('critic', (form.critic&&form.critic.value)||'');
       atts.forEach(function(a){ fd.append('files', a.file, a.file.name); });
       var r=await fetch('/precinct/create_case',{method:'POST',body:fd});
       if(r.status===401){ location='/login'; return; }
       var d={}; try{ d=await r.json(); }catch(e){}
       if(r.ok && d.ok){
         stat.className='small';
-        stat.textContent='Case '+(d.case||'')+' queued'+(d.files?(' with '+d.files+' file(s)'):'')+' — '+(d.note||'');
-        form.reset(); clearAtts();
+        stat.textContent='Case '+(d.case||'')+' queued'+(d.files?(' with '+d.files+' file(s)'):'')+(d.critic?(' — judge: '+d.critic):'')+' — '+(d.note||'');
+        form.reset(); clearAtts(); syncMode();   // reset restores Claude -> re-filter Model
       } else {
         stat.className='small flag'; stat.textContent='Error: '+((d&&d.error)||('HTTP '+r.status));
       }
@@ -1580,20 +2072,61 @@ def precinct_detail_page(name):
     # / multiple file+photo uploads. Submits multipart to the authed POST endpoint.
     ta_css = ("width:100%;padding:9px;border-radius:6px;border:1px solid var(--accent-border);"
               "background:var(--surface2);color:var(--fg);font:inherit;resize:vertical")
-    model_opts = "<option value=''>precinct default (" + e(models.label(cur_model)) + ")</option>" + "".join(
-        f"<option value='{m}'>{models.label(m)}</option>" for m in models.ALIASES)
+    # Case 557: the "Service" field picks a MODE — who does the work and who writes
+    # the report — not a raw vendor. Exactly the three MODE_IDS, no empty "default"
+    # entry (an empty option next to an explicit list rendered as
+    # "Claude (default) / Claude / ChatGPT", the first two being the same thing, and
+    # left hybrid mode unselectable). claude is preselected; each option carries its
+    # blurb as a hover tooltip, and #svc-hint below the field shows the same line.
+    # The POST field name stays "service" — the bridge reads record["service"] and
+    # normalizes it as a mode.
+    service_opts = "".join(
+        f"<option value='{e(m)}' title='{e(models.mode_spec(m)['blurb'])}'"
+        f"{' selected' if m == models.DEFAULT_MODE else ''}>{e(models.mode_label(m))}</option>"
+        for m in models.MODE_IDS)
+    # Case 557 (uid=671): TWO model selects, because Claude+ChatGPT is genuinely two
+    # agents — the claude DEPUTY that does the work and the chatgpt WRITER that writes
+    # the report — so there are two models to choose. `model` is the deputy's,
+    # `writer_model` the writer's; the latter's wrapper is shown ONLY in hybrid mode.
+    # Both are rendered server-side for the DEFAULT mode and then REBUILT by
+    # syncMode() on change (never hidden/disabled — WebKit ignores optgroup.hidden).
+    def _model_opts(aliases, cur=None):
+        head = ("<option value=''>precinct default ("
+                + e(models.label(cur or cur_model)) + ")</option>")
+        return head + "".join(
+            f"<option value='{m}'>{e(models.label(m))}</option>" for m in aliases)
+
+    _dm = models.DEFAULT_MODE
+    model_opts = _model_opts(models.aliases_for(models.deputy_service(_dm)))
+    # the writer select starts empty-but-valid; syncMode fills it when hybrid is picked
+    writer_opts = "<option value=''>default (GPT-5.6 Terra)</option>"
+    critic_opts = "<option value=''>none (default &mdash; no judge)</option>" + "".join(
+        f"<option value='{e(c['id'])}'>{e(c.get('display_name') or c['id'])}</option>"
+        for c in state.critics())
     create_card = (
         "<details class='card'><summary style='cursor:pointer;font-weight:600'>"
         f"&#43; Create new case in {e(d['name'])}</summary>"
         "<div class='small muted' style='margin:8px 0'>Spawns a deputy via the inbox handler, which "
-        "emails an ACK with your form + any uploads attached. Model and follow-up are optional; a "
-        "task description is required.</div>"
+        "emails an ACK with your form + any uploads attached. Service defaults to Claude; model and "
+        "follow-up are optional; a task description is required.</div>"
         "<form id='ccform' enctype='multipart/form-data' "
         "style='display:flex;flex-direction:column;gap:12px;max-width:680px'>"
         f"<input type='hidden' name='precinct' value='{e(d['name'])}'>"
         "<div style='display:flex;gap:12px;flex-wrap:wrap'>"
-        "<label class='small' style='flex:1;min-width:200px'>Model <span class='muted'>(optional)</span><br>"
+        "<label class='small' style='flex:1;min-width:200px'>Service "
+        "<span class='muted'>(who works / who writes)</span><br>"
+        f"<select name='service' style='{field_css};width:100%'>{service_opts}</select>"
+        "<span id='svc-hint' class='small muted' style='display:block;margin-top:4px'>"
+        f"{e(models.mode_spec(models.DEFAULT_MODE)['blurb'])}</span></label>"
+        "<label class='small' id='model-wrap' style='flex:1;min-width:200px'>"
+        "<span id='model-cap'>Model <span class='muted'>(optional)</span></span><br>"
         f"<select name='model' style='{field_css};width:100%'>{model_opts}</select></label>"
+        # Case 557 (uid=671): the WRITER's model — only shown in Claude + ChatGPT.
+        # Hidden on the LABEL wrapper via display:none, which every browser honours
+        # (unlike `hidden` on an <optgroup>, the bug this replaces).
+        "<label class='small' id='wmodel-wrap' style='flex:1;min-width:200px;display:none'>"
+        "<span id='wmodel-cap'>ChatGPT model <span class='muted'>(writes the report)</span></span><br>"
+        f"<select name='writer_model' style='{field_css};width:100%'>{writer_opts}</select></label>"
         "<label class='small' style='flex:1;min-width:200px'>Follow-up on task&nbsp;# "
         "<span class='muted'>(optional; empty = new task)</span><br>"
         f"<input type='text' name='parent' placeholder='e.g. 376' style='{field_css};width:100%'></label>"
@@ -1601,6 +2134,12 @@ def precinct_detail_page(name):
         "<label class='small'>Task description <span class='muted'>(required)</span><br>"
         f"<textarea name='description' rows='4' style='{ta_css}' "
         "placeholder='What should this case accomplish? Be specific about deliverables.'></textarea></label>"
+        # Case 551: pick a JUDGE. Default is none -- when one is chosen the deputy
+        # must iterate with it until it signs off before it may close the case.
+        "<label class='small'>Judge <span class='muted'>(optional; default none. "
+        "If set, the deputy must iterate with this judge until it signs off before "
+        "closing the case &mdash; see <a href='/judges'>Judge</a>.)</span><br>"
+        f"<select name='critic' style='{field_css};width:100%;max-width:340px'>{critic_opts}</select></label>"
         "<div class='small'>Attachments <span class='muted'>(optional — drag &amp; drop, "
         "paste a screenshot, or browse; max 10)</span>"
         # Case 421: paste/drag-drop drop zone + live previews. The file input is a

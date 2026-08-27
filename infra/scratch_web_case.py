@@ -42,7 +42,14 @@ REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_WEBCASES_ROOT = REPO_ROOT / "scratch_full_logs" / "web_cases"
 DEFAULT_INBOX_DIR = REPO_ROOT / "scratch_full_logs" / "inbox"
 DEFAULT_REQUESTER = os.environ.get("INFRA_OPERATOR_EMAIL", "")   # operator's address
-_MODELS = ("fable", "opus", "sonnet", "haiku")
+# Case 557: the accepted model set comes from the REGISTRY, not a hand-kept tuple —
+# a literal would silently reject every chatgpt model. Literal kept as a fallback.
+try:
+    import scratch_models as _sm
+    _MODELS = _sm.ALL_ALIASES
+except Exception:
+    _sm = None
+    _MODELS = ("fable", "opus", "sonnet", "haiku")
 
 
 def _root() -> Path:
@@ -82,8 +89,22 @@ def _keywords(precinct: str, case, description: str) -> str:
     return ",".join(out)
 
 
+def _hybrid_block(mode, case):
+    """Case 557: the HYBRID PROTOCOL block, or '' for the two single-agent modes.
+    Rendered from scratch_hybrid so the web form, e-mail and spawn paths all hand
+    the deputy the same instructions."""
+    try:
+        import scratch_models as sm
+        if not sm.is_hybrid(mode):
+            return ""
+        import scratch_hybrid as hy
+        return hy.protocol_block(case)
+    except Exception:
+        return ""
+
+
 def _write_spec(spec_path: Path, *, case, precinct, model, parent, deputy,
-                description, files):
+                description, files, mode="", writer_model=""):
     """Write the deputy's task spec (parent_task/precinct/deputy stamped at top)."""
     first = (description or "").strip().splitlines()[0] if description.strip() else "web-submitted case"
     title = first[:80]
@@ -91,11 +112,21 @@ def _write_spec(spec_path: Path, *, case, precinct, model, parent, deputy,
         f"parent_task: {parent if parent else 'none'}",
         f"precinct: {precinct}",
         f"deputy: {deputy}",
+    ]
+    # Case 557: stamp the mode + writer model so spawn_worker can recover them
+    # from the spec even if the env vars are lost, and a human can see them.
+    if mode:
+        lines.append(f"service: {mode}")
+    if writer_model:
+        lines.append(f"writer_model: {writer_model}")
+    lines += [
         "",
         f"# Case {case} — {title}",
         "",
         f"This case was submitted through the dashboard **Create new case** form for the "
         f"`{precinct}` precinct (model: {model or 'precinct default'}"
+        + (f"; mode: {mode}" if mode else "")
+        + (f"; writer model: {writer_model}" if writer_model else "")
         + (f"; follow-up on task {parent}" if parent else "; new task") + ").",
         "",
         "## Task description (verbatim from the form)",
@@ -108,6 +139,10 @@ def _write_spec(spec_path: Path, *, case, precinct, model, parent, deputy,
         lines.append("")
         lines += [f"  - {p}" for p in files]
         lines.append("")
+    hblock = _hybrid_block(mode, case)
+    if hblock:
+        lines += ["## Hybrid mode — ChatGPT writes the report (REQUIRED)", "",
+                  hblock, ""]
     lines += [
         "## Worker discipline",
         "",
@@ -196,6 +231,12 @@ def _spawn(record, *, case, deputy, spec_path, dry):
     env["WORKER_PRECINCT"] = precinct
     if record.get("model") in _MODELS:
         env["WORKER_MODEL"] = record["model"]
+    if record.get("service"):                       # Case 557: deputy service
+        env["WORKER_SERVICE"] = record["service"]
+    if record.get("mode"):                          # Case 557: the full mode
+        env["WORKER_MODE"] = record["mode"]
+    if record.get("writer_model"):                  # Case 557: hybrid writer model
+        env["WORKER_WRITER_MODEL"] = record["writer_model"]
     subprocess.run(["bash", "scratch_spawn_worker.sh", deputy, str(spec_path),
                     requester, keywords],
                    cwd=str(REPO_ROOT), env=env, timeout=120,
@@ -236,10 +277,36 @@ def process_one(rec_path: Path, dry=False) -> dict:
         inbox = _inbox_dir()
         spec_path = inbox / f"task_{case}.md"
         inbox.mkdir(parents=True, exist_ok=True)
+        # Case 557: the MODE (claude | claude+chatgpt | chatgpt). The record field is
+        # still called "service" (form field + email tag both post it) but its VALUE is
+        # a mode. Explicit wins; else inferred from the model; unknown -> claude default.
+        mode, service = "", ""
+        try:
+            raw = (record.get("mode") or record.get("service") or "").strip().lower()
+            if _sm is not None:
+                mode = _sm.normalize_mode(raw) if raw else (
+                    _sm.normalize_mode(_sm.service_of(model)) if model else _sm.DEFAULT_MODE)
+                service = _sm.deputy_service(mode)
+        except Exception:
+            mode, service = "", ""
+        record["mode"] = mode or None
+        record["service"] = service or None
+        # the hybrid WRITER's model; must belong to the mode's writer service
+        writer_model = None
+        try:
+            wm = (record.get("writer_model") or "").strip().lower()
+            if wm and _sm is not None and _sm.is_hybrid(mode):
+                if wm in _MODELS and _sm.service_of(wm) == _sm.writer_service(mode):
+                    writer_model = wm
+        except Exception:
+            writer_model = None
+        record["writer_model"] = writer_model
+
         _write_spec(spec_path, case=case, precinct=precinct, model=model,
                     parent=record.get("parent"), deputy=deputy,
                     description=record.get("description", ""),
-                    files=record.get("files") or [])
+                    files=record.get("files") or [],
+                    mode=mode, writer_model=writer_model)
 
         _spawn(record, case=case, deputy=deputy, spec_path=spec_path, dry=dry)
         _ack(record, case=case, deputy=deputy, spec_path=spec_path, dry=dry)

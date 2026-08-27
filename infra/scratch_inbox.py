@@ -403,6 +403,42 @@ def route(in_reply_to, references, subject, body):
     return "precinct:receptionist"
 
 
+# Case 557: the SERVICE tag — which vendor's agent should run this case.
+# Body form   "service: chatgpt"   (its own line, like 'model:' / 'judge:')
+# Subject form "[service:chatgpt]" — the bare "[chatgpt]" spelling is deliberately
+# NOT accepted, because an unqualified bracket tag is already the PRECINCT tag and
+# the two must never be confusable. Quoted-reply lines are excluded for the same
+# reason as the critic tag: quoting an old mail must not re-route a new case.
+_TAG_SERVICE_BODY = re.compile(r"(?im)^[ \t]*(?:service|mode)[ \t]*[:=][ \t]*([a-z0-9_+ -]+?)[ \t]*$")
+_TAG_SERVICE_SUBJ = re.compile(r"(?i)\[[ \t]*(?:service|mode)[ \t]*[:=][ \t]*([a-z0-9_+ -]+?)[ \t]*\]")
+
+
+def parse_service_tag(subject="", body=""):
+    """Return the canonical MODE named by a 'service:' (or 'mode:') tag, or '' when
+    none is asked for.
+
+    Case 557 (Feng uid=670): the value is a MODE, not a bare vendor —
+    claude | claude+chatgpt | chatgpt — because what the sender is choosing is who
+    does the work and who writes the report. The hybrid spellings ('hybrid',
+    'claude+gpt', ...) are accepted too. An unknown value degrades to '' (NOT to a
+    guess), so the case falls through to the normal model-derived default rather
+    than being routed to a vendor the sender never asked for."""
+    m = _TAG_SERVICE_BODY.search(body or "") or _TAG_SERVICE_SUBJ.search(subject or "")
+    if not m:
+        return ""
+    raw = m.group(1).strip().lower()
+    try:
+        import scratch_models as sm
+        # normalize_mode() maps ANYTHING unknown onto the default, which would
+        # silently swallow a typo — so only accept a value it genuinely knows.
+        known = (raw in sm.MODES or raw in sm._MODE_ALIASES or raw in sm.SERVICES
+                 or raw in ("openai", "gpt", "codex", "chat-gpt", "oai",
+                            "anthropic", "claude-code", "cc"))
+        return sm.normalize_mode(raw) if known else ""
+    except Exception:
+        return ""
+
+
 def drop_email_case(uid, precinct, frm, subject, body, atts):
     """Task 396: a precinct-tagged email spawns a deputy DIRECTLY (no receptionist) by
     dropping a web-case-style record for the existing scratch_web_case bridge to pick up
@@ -413,7 +449,8 @@ def drop_email_case(uid, precinct, frm, subject, body, atts):
     case = cs.allocate_for_uid(uid, kind="email")           # idempotent per uid
     pm = re.search(r"re:\s*(?:task|case)\s*(\d+)", subject or "", re.I)
     parent = pm.group(1) if pm else None                    # "Re: Task N" -> lineage
-    mm = re.search(r"(?im)^\s*model:\s*([a-z0-9-]+)\s*$", body or "")
+    # Case 557: '.' added so a FULL model id ("gpt-5.6-terra") works, not just an alias.
+    mm = re.search(r"(?im)^\s*model:\s*([a-z0-9.-]+)\s*$", body or "")
     model = mm.group(1).lower() if mm else None             # optional model override
     subj_clean = re.sub(r"\[[a-z_]+\]", "", subject or "", flags=re.I)
     subj_clean = re.sub(r"^\s*(re|fwd?):\s*", "", subj_clean.strip(), flags=re.I)
@@ -424,7 +461,9 @@ def drop_email_case(uid, precinct, frm, subject, body, atts):
            "model": model, "parent": parent,
            "description": f"SUBJECT: {subject}\n\n{body}".strip(),
            "files": list(atts or []), "case": case, "source": "email",
-           "requester": frm, "deputy_hint": deputy_hint}
+           "requester": frm, "deputy_hint": deputy_hint,
+           # Case 557: claude | claude+chatgpt | chatgpt; None = inferred from the model
+           "service": parse_service_tag(subject, body) or None}
     import scratch_web_case as wc          # write where the bridge reads (respects TSOMP_WEBCASES_ROOT)
     pend = wc._dirs()["pending"]
     pend.mkdir(parents=True, exist_ok=True)

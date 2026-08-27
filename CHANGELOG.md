@@ -11,6 +11,48 @@ To update an existing install to a new version, follow
 Versioning is [semantic](https://semver.org): `MAJOR.MINOR.PATCH` — MAJOR for a
 breaking change, MINOR for a backward-compatible feature, PATCH for a fix.
 
+## [1.3.0] — 2026-08-27
+
+### Added — ChatGPT / Codex support (Case 557)
+
+A case can now run on **Claude**, on **ChatGPT** (OpenAI's `codex` CLI), or in
+**hybrid**, chosen per case. Claude remains the default; nothing changes for a
+Claude-only install.
+
+- **Three modes**, on the create-case form (`Service`) and as an e-mail tag
+  (`service:` / `mode:`, subject `[service:claude+chatgpt]`):
+  `claude` · `claude+chatgpt` · `chatgpt`. Naming a ChatGPT model alone
+  (`model: luna`) implies the ChatGPT mode; an unrecognised value falls back to Claude.
+- **Hybrid mode** (`claude+chatgpt`): Claude does the work, a ChatGPT writer owns the
+  human-facing report, and the two iterate — the writer may not invent facts, so
+  anything it cannot verify comes back as a query for the deputy to answer. Runs only
+  for a PDF/LaTeX deliverable; falls back to the deputy's draft if the writer fails.
+  New `infra/scratch_hybrid.py`.
+- **Both auth modes**: `codex login` (ChatGPT subscription, default) or `~/.openai_key`
+  with `TSOMP_CODEX_AUTH=apikey`. New `infra/scratch_codex_auth.sh`, loaded by
+  `_daemon_env.sh` alongside the Claude switch; it resolves the `codex` binary (which is
+  often not on `PATH`) and clears any inherited `OPENAI_API_KEY` in subscription mode.
+- **Model registry** `infra/scratch_models.py` (new to the release): one file mapping
+  each alias to its service, exact model id and label. Claude `fable`/`opus`/`sonnet`/
+  `haiku`; ChatGPT `sol`/`terra`/`luna`/`gpt55` (GPT-5.6 Sol/Terra/Luna, GPT-5.5), taken
+  from the live `codex debug models` catalog. `gpt-5.4*` is deliberately absent — it
+  retires from Codex on 2026-08-31.
+- **Dashboard**: Service selector with the three modes; the Model list is rebuilt to the
+  chosen mode (options that don't apply are removed from the DOM, not merely hidden —
+  WebKit ignores `hidden` on `<optgroup>`), and hybrid shows two model pickers.
+- **Surgical kill** now recognises `codex` as an agent process. Previously it matched the
+  literal string `claude`, so interrupting a ChatGPT deputy fell back to
+  `tmux kill-session`, which also kills the deputy's CPU children.
+
+**Action required:** none. ChatGPT is opt-in per case — see
+[Using ChatGPT](README.md#using-chatgpt-optional) to enable it.
+
+**Known gap:** the release `infra/` mirror still predates several live-system changes
+(cases 466, 509, 520, 532, 551, 552), so the per-vendor **usage-limit detection** and the
+**judge** subsystem are not in this release. ChatGPT case creation, launch, resume and
+hybrid mode are complete and tested; limit handling for ChatGPT deputies is not. Tracked
+for a follow-up mirror resync.
+
 ## [1.2.0] — 2026-08-19
 
 _Action required: none — dashboard-only; pull + restart per "Updating Posse"._

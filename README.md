@@ -93,6 +93,11 @@ don't address:
 
 ## Features
 
+- 🤝 **Two vendors, chosen per case.** A case runs on Claude, on ChatGPT (OpenAI's
+  `codex`), or in **hybrid** — Claude does the work and ChatGPT writes the report, the
+  two iterating until the writer has no unanswered factual queries. Subscription or
+  API-key auth for either; usage limits are tracked per vendor, so hitting one does not
+  block the other. See [Using ChatGPT](#using-chatgpt-optional).
 - 📨 **Async messaging is the control plane.** A `[precinct]`-tagged message spawns a
   deputy in that precinct; a reply steers the deputy that sent it. Routing is
   deterministic and **zero-LLM**; an allow-list gates senders. (The reference
@@ -190,6 +195,9 @@ source ./infra_env.sh
 
 # 3) Claude auth — subscription (claude → /login) OR apikey (~/.anthropic_key + TSOMP_CLAUDE_AUTH=apikey)
 
+# 3b) ChatGPT/Codex auth — OPTIONAL, only if you want ChatGPT deputies. See
+#     "Using ChatGPT" below: codex login (subscription) OR ~/.openai_key (API key).
+
 # 4) Always-on daemons (each idempotent / flock-guarded):
 bash infra/scratch_jobmgr_start.sh          # job manager
 bash infra/scratch_gpu_manager_start.sh     # resource (GPU) queue — optional
@@ -210,6 +218,96 @@ Key env vars: `INFRA_STATE_ROOT` (state dir), `INFRA_OPERATOR_EMAIL` / `INFRA_MA
 (your identity + the sender allow-list), `INFRA_DASH_PORT` (default `8787`),
 `INFRA_DASH_PUBLIC=1` (bind `0.0.0.0` **and** enable TLS). Full list in
 [`ONBOARDING.md`](ONBOARDING.md) and [`dashboard/README.md`](dashboard/README.md).
+
+## Using ChatGPT (optional)
+
+A case can run on Anthropic's `claude` **or** OpenAI's `codex`, chosen per case. Claude
+is the default and nothing here is required for a Claude-only install.
+
+**1. Install the Codex CLI** so `codex` is on `PATH`:
+
+```bash
+npm install -g @openai/codex
+codex --version
+```
+
+Posse also finds a `codex` shipped inside the VS Code ChatGPT extension, or one named by
+`TSOMP_CODEX_BIN`, so an explicit install is not strictly required — but it is the
+simplest thing that keeps working across editor updates.
+
+**2. Authenticate**, either way:
+
+```bash
+# subscription — uses your ChatGPT plan, no per-token billing (default)
+codex login            # once, interactively; writes ~/.codex/auth.json
+
+# OR API key — bills the OpenAI API account; OpenAI recommends this for automation
+printf '%s' "sk-..." > ~/.openai_key && chmod 600 ~/.openai_key
+export TSOMP_CODEX_AUTH=apikey
+```
+
+`infra/scratch_codex_auth.sh` is the single switch, loaded by every launcher via
+`_daemon_env.sh` exactly like the Claude one. In subscription mode it *clears* any
+inherited `OPENAI_API_KEY`/`CODEX_API_KEY`, so a stray key can never silently move a
+subscription case onto paid tokens. It also warns when the ChatGPT access token is
+within 48 h of expiry.
+
+**3. Pick a mode when you create a case.** The create-case form's **Service** field
+offers exactly three:
+
+| Mode | Who does the work | Who writes the report |
+| --- | --- | --- |
+| `claude` | Claude | Claude |
+| `claude+chatgpt` | Claude | **ChatGPT** |
+| `chatgpt` | ChatGPT | ChatGPT |
+
+The Model dropdown follows the mode. In `claude+chatgpt` you get **two** pickers — the
+Claude model that does the work and the ChatGPT model that writes the report.
+
+By e-mail, tag the request:
+
+```
+[infra][service:claude+chatgpt]  in the subject
+service: claude+chatgpt          on its own line in the body  (or "mode: hybrid")
+model: opus                      optional — the deputy's model
+writer_model: sol                optional — the report writer's model
+```
+Naming a ChatGPT model alone is enough: `model: luna` implies the `chatgpt` mode. An
+unrecognised value falls back to Claude rather than guessing.
+
+**Models** (`python3 infra/scratch_models.py list`): Claude `fable` / `opus` / `sonnet` /
+`haiku`; ChatGPT `sol` (GPT-5.6 Sol) / `terra` (GPT-5.6 Terra, the default) / `luna`
+(GPT-5.6 Luna) / `gpt55` (GPT-5.5). Update ids in that one file when a vendor ships a new
+version — everything else reads them from there.
+
+### Hybrid mode: Claude works, ChatGPT writes
+
+`claude+chatgpt` exists because the two models are not equally good at the same things.
+Claude does the investigation, the code and the runs; ChatGPT owns the document you
+actually read. It is a two-way exchange, not a polish pass — the writer may not invent
+facts, so anything it cannot verify it raises as a **query** and the deputy answers it in
+the next round:
+
+```
+deputy --(draft + artifacts + answers to last round's queries)--> writer
+writer --(report + {status, queries, changes})-->                 deputy
+```
+
+The writer reads the artifacts directly, so it can catch a draft whose numbers disagree
+with its own evidence. It runs only for a **PDF/LaTeX** deliverable; a plain `.md` the
+deputy writes itself. Every round is archived under
+`scratch_full_logs/hybrid/case_<n>/round_<r>/`, and if the writer dies or times out the
+hand-off falls back to the deputy's own draft rather than losing work.
+
+```bash
+python3 infra/scratch_hybrid.py handoff --case 42 \
+    --draft draft.md --target reports/case42/REPORT.tex \
+    --artifact somefile.py --rounds 3
+python3 infra/scratch_hybrid.py queries --case 42     # what it needs from you
+```
+
+**Limits are per-vendor.** ChatGPT's 5-hour and weekly caps are tracked separately from
+Claude's, so hitting one does not block cases on the other.
 
 ## Updating Posse
 
@@ -285,7 +383,9 @@ posse/
 ## Secrets — never committed
 
 Messaging creds, API keys, OAuth tokens, and the dashboard `instance/` (password hash +
-cookie secret + TLS cert) all live **outside the repo** and are covered by
+cookie secret + TLS cert) all live **outside the repo** — `~/.smtp_env`,
+`~/.anthropic_key`, `~/.claude/.credentials.json`, and for ChatGPT `~/.openai_key` /
+`~/.codex/auth.json` — and are covered by
 [`.gitignore`](.gitignore). The code only ever *reads* them from those chmod-600 files;
 a secret scan guards every commit.
 

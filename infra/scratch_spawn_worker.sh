@@ -107,7 +107,55 @@ CASE_REL="scratch_full_logs/records/${WORKER_PRECINCT}/cases/task_${TASK_UID}.md
 if [ -z "$WORKER_MODEL" ]; then
   WORKER_MODEL="$(python3 scratch_records.py directory model --dept "$WORKER_PRECINCT" 2>/dev/null | tr -d '[:space:]')"
 fi
-case "$WORKER_MODEL" in fable|opus|sonnet|haiku) ;; *) WORKER_MODEL="opus" ;; esac
+# Case 557: the SERVICE MODE — claude | claude+chatgpt | chatgpt. WORKER_MODE wins,
+# then the legacy WORKER_SERVICE env, then a `service:`/`mode:` line in the task spec.
+# The DEPUTY service (which CLI to launch) is derived from it, so a hybrid case runs on
+# claude and only its REPORT goes to chatgpt.
+WORKER_MODE="${WORKER_MODE:-${WORKER_SERVICE:-}}"
+if [ -z "$WORKER_MODE" ]; then
+  WORKER_MODE="$(sed -n 's/^[[:space:]]*\(service\|mode\)[[:space:]]*[:=][[:space:]]*//Ip' "$TASKFILE" 2>/dev/null | head -1 | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_+-')"
+fi
+_MODEOUT="$(python3 scratch_models.py mode "${WORKER_MODE:-claude}" 2>/dev/null)"
+if [ -n "$_MODEOUT" ]; then
+  WORKER_MODE="$(printf '%s\n'    "$_MODEOUT" | sed -n 1p | tr -d '[:space:]')"
+  WORKER_SERVICE="$(printf '%s\n' "$_MODEOUT" | sed -n 2p | tr -d '[:space:]')"
+  WORKER_WRITER="$(printf '%s\n'  "$_MODEOUT" | sed -n 3p | tr -d '[:space:]')"
+else
+  WORKER_MODE="claude"; WORKER_SERVICE="claude"; WORKER_WRITER=""
+fi
+# The hybrid WRITER's model (its own picker on the create-case form). An explicit value
+# wins; absent one, a chatgpt model named as THE model on a hybrid case is taken as the
+# writer's, since it cannot be the claude deputy's.
+WORKER_WRITER_MODEL="${WORKER_WRITER_MODEL:-}"
+if [ -z "$WORKER_WRITER_MODEL" ]; then
+  WORKER_WRITER_MODEL="$(sed -n 's/^[[:space:]]*writer_model[[:space:]]*[:=][[:space:]]*//Ip' "$TASKFILE" 2>/dev/null | head -1 | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9._-')"
+fi
+if [ -n "$WORKER_WRITER" ]; then
+  if [ -n "$WORKER_WRITER_MODEL" ]; then
+    _WSVC="$(python3 scratch_models.py service "$WORKER_WRITER_MODEL" 2>/dev/null | tr -d '[:space:]')"
+    [ "$_WSVC" = "$WORKER_WRITER" ] || WORKER_WRITER_MODEL=""
+  fi
+  if [ -z "$WORKER_WRITER_MODEL" ] && [ -n "$WORKER_MODEL" ]; then
+    _MSVC="$(python3 scratch_models.py service "$WORKER_MODEL" 2>/dev/null | tr -d '[:space:]')"
+    if [ "$_MSVC" = "$WORKER_WRITER" ]; then
+      WORKER_WRITER_MODEL="$WORKER_MODEL"; WORKER_MODEL=""
+    fi
+  fi
+else
+  WORKER_WRITER_MODEL=""
+fi
+# Case 557: resolve (model, service) via the REGISTRY rather than a hardcoded list, and
+# pin the EXACT model id so a launch can't drift to a newer version.
+_RESOLVED="$(python3 scratch_models.py resolve "${WORKER_MODEL:--}" "$WORKER_SERVICE" 2>/dev/null)"
+if [ -n "$_RESOLVED" ]; then
+  WORKER_MODEL="$(printf '%s\n'    "$_RESOLVED" | sed -n 1p | tr -d '[:space:]')"
+  WORKER_MODEL_ID="$(printf '%s\n' "$_RESOLVED" | sed -n 2p | tr -d '[:space:]')"
+  WORKER_SERVICE="$(printf '%s\n'  "$_RESOLVED" | sed -n 3p | tr -d '[:space:]')"
+else
+  WORKER_MODEL="opus"; WORKER_MODEL_ID="claude-opus-5"; WORKER_SERVICE="claude"
+fi
+WORKER_EFFORT="$(python3 scratch_models.py effort "$WORKER_MODEL" 2>/dev/null | tr -d '[:space:]')"
+[ -n "$WORKER_EFFORT" ] || WORKER_EFFORT="max"
 
 # Task 377 #1: stamp a `deputy: <name>` line at the TOP of the case file (the task
 # spec) — like the parent_task:/precinct: lines — so the case file self-documents
@@ -418,6 +466,9 @@ cat > "$LAUNCH" <<EOF
 # Portable runtime env: cd into the infra/ dir (code + state root), optionally
 # activate a conda env (INFRA_CONDA_ENV), load Claude auth, and put claude on PATH.
 source "$HERE/_daemon_env.sh"
+# Case 557: which vendor runs this deputy, and where its codex session id lives.
+AGENT_SERVICE="$WORKER_SERVICE"
+CODEX_SESSION_FILE="scratch_full_logs/worker_${NAME}.codex_session"
 # Task 325: auto-attribute any GPU job this worker enqueues (submit_gpu.py reads
 # these) so the dashboard shows the owner instead of "?".
 export GPU_JOB_OWNER="$NAME"
@@ -429,6 +480,9 @@ export TSOMP_AGENT="$NAME"
 export WORKER_PRECINCT="$WORKER_PRECINCT"
 export TSOMP_CASE="$TASK_UID"
 export TSOMP_MODEL="$WORKER_MODEL"
+export TSOMP_SERVICE="$WORKER_SERVICE"
+export TSOMP_MODE="$WORKER_MODE"
+export TSOMP_HYBRID_MODEL="$WORKER_WRITER_MODEL"
 echo "[$NAME] starting \$(date) session=$SID" > $LOG
 # Task 170 F5(b): forensic bundle on signal-shaped claude exits.
 death_bundle() {
@@ -453,9 +507,27 @@ fi
 # Task 176: prompt via STDIN, not argv — task-spec text in the claude argv let
 # a worker's own \`pkill -f <pattern named in its spec>\` kill its own claude
 # (the noaa_fullds Jul-14 self-kill class). Pipeline rc = claude's rc.
-"\${STRACE_PREFIX[@]}" claude --session-id "$SID" -p \\
-  --dangerously-skip-permissions --model $WORKER_MODEL --effort max --max-turns 800 --verbose < "$PROMPT" >> $LOG 2>&1
-RC=\$?
+capture_codex_session() {
+  [ "\$AGENT_SERVICE" = "chatgpt" ] || return 0
+  [ -s "\$CODEX_SESSION_FILE" ] && return 0   # first id wins; stable across resumes
+  local sid
+  sid="\$(grep -oE 'session id:[[:space:]]*[0-9a-fA-F-]{36}' $LOG 2>/dev/null | grep -oE '[0-9a-fA-F-]{36}' | head -1)"
+  [ -n "\$sid" ] && printf '%s' "\$sid" > "\$CODEX_SESSION_FILE"
+}
+# Case 557: codex mints its OWN session id (claude accepts one via --session-id),
+# so capture it for the relaunch path. Prompt still via STDIN on both services.
+if [ "\$AGENT_SERVICE" = "chatgpt" ]; then
+  "\${STRACE_PREFIX[@]}" "\$TSOMP_CODEX_BIN" exec \\
+    --model $WORKER_MODEL_ID -c model_reasoning_effort="$WORKER_EFFORT" \\
+    --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \\
+    -C "\$(pwd)" - < "$PROMPT" >> $LOG 2>&1
+  RC=\$?
+  capture_codex_session
+else
+  "\${STRACE_PREFIX[@]}" claude --session-id "$SID" -p \\
+    --dangerously-skip-permissions --model $WORKER_MODEL_ID --effort $WORKER_EFFORT --max-turns 800 --verbose < "$PROMPT" >> $LOG 2>&1
+  RC=\$?
+fi
 echo "[$NAME] EXITED rc=\$RC \$(date)" >> $LOG
 death_bundle "\$RC"
 # Task 156 F4: sentinel trap. rc=0 without the done-sentinel = the worker ended

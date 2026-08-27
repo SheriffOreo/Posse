@@ -106,6 +106,15 @@ SHERIFF_CONFIG = RECORDS / "sheriff_config.json"
 # deputy that TAKES a new case shows the real current case (not its previous one).
 ACTIVE_DEPUTIES = RECORDS / "active_deputies.json"
 
+# Case 551: the CRITIC ("Judges") registry the sheriff owns. critics.json holds the
+# roster; critics/CHARTER.md is the FIXED system prompt shared by every critic and
+# critics/<id>.md each critic's CUSTOM (persona) prompt. The dashboard is READ-ONLY
+# here -- adding/changing a judge goes through the sheriff request queue.
+CRITICS_JSON = RECORDS / "critics.json"
+CRITICS_DIR = RECORDS / "critics"
+CRITIC_REVIEWS = SCRATCH / "critic_reviews"
+SHERIFF_REQUESTS = RECORDS / "sheriff_requests"
+
 # Task 377 #4: the web "Create new case" drop dir the inbox-handler bridge
 # (scratch_web_case.py) consumes. The POST handler writes pending/<sid>.json +
 # att/<sid>/<uploads> here. Caps for the authed multipart upload.

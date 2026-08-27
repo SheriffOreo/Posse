@@ -77,9 +77,30 @@ def descendants(roots):
     return out
 
 
-def is_claude(pid):
+# Case 557: the agent CLIs a deputy can be running under. This used to be the bare
+# literal "claude", which meant a chatgpt (codex) deputy matched NOTHING: main()
+# then exited 1 and scratch_interrupt_worker.sh fell back to `tmux kill-session`,
+# the blunt path that ALSO kills the worker's plain CPU children — precisely what
+# this surgical kill exists to prevent. Matching the union is right here because
+# the question is only "which process IS the agent", and a worker's pane tree never
+# contains the other vendor's CLI.
+#
+# Read from the registry, but never at the cost of the kill failing: an import
+# error falls back to the hardcoded pair rather than degrading to kill-session.
+try:
+    import scratch_models as _sm
+    _AGENT_CLIS = frozenset(s["cli"] for s in _sm.SERVICES.values())
+except Exception:
+    _AGENT_CLIS = frozenset({"claude", "codex"})
+
+
+def is_agent(pid):
     av = argv_of(pid)
-    return any(os.path.basename(a) == "claude" for a in av[:2])
+    return any(os.path.basename(a) in _AGENT_CLIS for a in av[:2])
+
+
+# Old name kept: Task 153B's vocabulary (and any external caller) still says "claude".
+is_claude = is_agent
 
 
 def main():
@@ -96,9 +117,10 @@ def main():
         return 1
 
     tree = descendants(pane_pids)
-    claudes = [p for p in tree if is_claude(p)]
+    claudes = [p for p in tree if is_agent(p)]
     if not claudes:
-        print(f"no claude process under panes {pane_pids} of {agent}", file=sys.stderr)
+        print(f"no agent process ({'/'.join(sorted(_AGENT_CLIS))}) under panes "
+              f"{pane_pids} of {agent}", file=sys.stderr)
         return 1
 
     # snapshot survivor candidates BEFORE killing (they reparent away afterwards)

@@ -8,7 +8,8 @@
 #   - Optionally activate a conda env: export INFRA_CONDA_ENV=<name> (e.g. on a dev
 #     host). Unset => use the python3 already on PATH. The daemons are pure-stdlib,
 #     so NO conda env is required for a fresh install.
-#   - Load Claude auth (subscription vs API key) via scratch_claude_auth.sh.
+#   - Load Claude auth (subscription vs API key) via scratch_claude_auth.sh,
+#     and the ChatGPT/codex switch via scratch_codex_auth.sh (Case 557).
 #   - Make sure the `claude` CLI is reachable (npm global bin on PATH).
 _INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 cd "$_INFRA_DIR" || return 1 2>/dev/null || exit 1
@@ -18,6 +19,11 @@ if [ -n "${INFRA_CONDA_ENV:-}" ]; then
   done
 fi
 [ -f "$_INFRA_DIR/scratch_claude_auth.sh" ] && . "$_INFRA_DIR/scratch_claude_auth.sh"
+# Case 557: the ChatGPT/codex switch — resolves TSOMP_CODEX_BIN (codex is often not
+# on PATH; it ships inside the VS Code ChatGPT extension) and selects subscription vs
+# API-key billing. Sourced unconditionally and cheap: it is a no-op for claude-only
+# installs, and only warns if a chatgpt case is actually launched without codex.
+[ -f "$_INFRA_DIR/scratch_codex_auth.sh" ] && . "$_INFRA_DIR/scratch_codex_auth.sh"
 export PATH="$HOME/.npm-global/bin:$PATH"
 
 # Operator identity: load the durable identity FILE (operator.json: name/email/

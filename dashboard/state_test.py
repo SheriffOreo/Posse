@@ -292,8 +292,148 @@ def test_emailed_attachments_downloadable_flag():
         config.SENT_EMAILS, config.resolve_download = orig_sent, orig_resolve
 
 
+# --------------------------------------------------------------------------- #
+# Case 555: critic_review_detail / critic_review_prompt — the full-ruling readers
+# behind the Judge page's "read ruling" button. Hermetic: a fake critic_reviews
+# tree in a tmpdir, so no live review is read and none can be written.
+# --------------------------------------------------------------------------- #
+def _fake_reviews(root):
+    """case_777: r1 REVISE (dict must_fix) -> r2 SIGN-OFF -> r10 (numeric-sort
+    canary) -> r11 pending (assigned, judge has not ruled).  case_778: a judge
+    that self-contradicted (SIGN-OFF carrying a must-fix) + string-shaped
+    findings, i.e. both tolerated deviations from the charter's schema."""
+    import json as _json
+
+    def w(case, rnd, meta, verdict=None, md=None, prompt=None):
+        d = root / f"case_{case}" / f"round_{rnd}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "meta.json").write_text(_json.dumps(meta))
+        if verdict is not None:
+            (d / "verdict.json").write_text(_json.dumps(verdict))
+        if md is not None:
+            (d / "verdict.md").write_text(md)
+        if prompt is not None:
+            (d / "prompt.md").write_text(prompt)
+
+    m = {"critic": "anonymous", "model": "opus", "anon": "critic_777_anonymous_r1",
+         "ts": 1000, "artifacts": ["/x/a.pdf", "/x/b.tex"], "missing_artifacts": []}
+    w("777", 1, m,
+      {"verdict": "REVISE", "one_line": "not yet",
+       "must_fix": [{"location": "a.tex:12", "problem": "wrong number", "fix": "say 37"}],
+       "should_fix": ["tighten §2"], "keep": ["the storage argument"],
+       "unverified": ["remote sizes"], "round": 1},
+      "VERDICT: REVISE\n\nround one prose " + "x" * 5000, "PROMPT ONE " + "p" * 900)
+    w("777", 2, dict(m, ts=2000),
+      {"verdict": "SIGN-OFF", "one_line": "fixed", "must_fix": [],
+       "should_fix": [], "keep": ["fix landed"], "unverified": [], "round": 2},
+      "VERDICT: SIGN-OFF\n\nround two prose", "PROMPT TWO")
+    w("777", 10, dict(m, ts=3000),
+      {"verdict": "SIGN-OFF", "one_line": "tenth", "round": 10},
+      "VERDICT: SIGN-OFF\n\nround ten prose", "PROMPT TEN")
+    w("777", 11, dict(m, ts=4000))                     # assigned, no verdict yet
+    w("778", 1, {"critic": "vyas", "model": "opus", "ts": 5000, "artifacts": []},
+      {"verdict": "signoff", "one_line": "contradiction",
+       "must_fix": ["a bare string finding"],
+       "should_fix": [{"location": "p3", "problem": "thin", "fix": "expand"}],
+       "keep": [], "unverified": [], "round": 1},
+      "VERDICT: SIGN-OFF\n\nbody", "P")
+
+
+def test_critic_review_detail_all_rounds():
+    import tempfile
+    import config
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _fake_reviews(root)
+        orig, config.CRITIC_REVIEWS = config.CRITIC_REVIEWS, root
+        try:
+            d = state.critic_review_detail("777")
+            rs = d["rounds"]
+            check("555 detail: every round returned", len(rs) == 4)
+            check("555 detail: chronological, round_10 sorts NUMERICALLY after 2",
+                  [r["round"] for r in rs] == [1, 2, 10, 11])
+            check("555 detail: verdict.md returned in FULL (not truncated)",
+                  len(rs[0]["verdict_md"]) == len("VERDICT: REVISE\n\nround one prose ") + 5000)
+            check("555 detail: must_fix dict normalised",
+                  rs[0]["must_fix"][0] == {"location": "a.tex:12",
+                                           "problem": "wrong number", "fix": "say 37"})
+            check("555 detail: should_fix/keep/unverified carried",
+                  rs[0]["should_fix"] == ["tighten §2"] and rs[0]["keep"] == ["the storage argument"]
+                  and rs[0]["unverified"] == ["remote sizes"])
+            check("555 detail: meta carried (judge/model/ts/artifacts)",
+                  rs[0]["critic"] == "anonymous" and rs[0]["model"] == "opus"
+                  and rs[0]["ts"] == 1000 and rs[0]["artifacts"] == ["/x/a.pdf", "/x/b.tex"])
+            check("555 detail: prompt NOT inlined, only sized",
+                  "prompt" not in rs[0] and rs[0]["prompt_chars"] == len("PROMPT ONE ") + 900)
+            check("555 detail: unruled round flagged pending, not blank-verdict",
+                  rs[3]["pending"] is True and rs[3]["verdict"] == "")
+            check("555 detail: latest = last RULED round; trailing unruled round "
+                  "reported as in_flight, not as 'no verdict'",
+                  d["latest"] == "SIGN-OFF" and d["in_flight"] is True
+                  and d["signed_off"] is True and d["critic"] == "anonymous")
+        finally:
+            config.CRITIC_REVIEWS = orig
+
+
+def test_critic_review_detail_failclosed_and_shapes():
+    import tempfile
+    import config
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _fake_reviews(root)
+        orig, config.CRITIC_REVIEWS = config.CRITIC_REVIEWS, root
+        try:
+            r = state.critic_review_detail("778")["rounds"][0]
+            # a SIGN-OFF carrying must-fixes is a REVISE (mirrors the harness), and
+            # the modal must be able to SAY the badge was coerced.
+            check("555 failclosed: 'signoff' normalised then downgraded",
+                  r["verdict"] == "REVISE" and r["raw_verdict"] == "SIGN-OFF"
+                  and r["coerced"] is True)
+            check("555 shapes: string must_fix survives as a problem",
+                  r["must_fix"] == [{"location": "", "problem": "a bare string finding",
+                                     "fix": ""}])
+            check("555 shapes: dict in should_fix flattened to a line",
+                  r["should_fix"] == ["p3 — thin — expand"])
+        finally:
+            config.CRITIC_REVIEWS = orig
+
+
+def test_critic_review_prompt_and_path_guard():
+    import tempfile
+    import config
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _fake_reviews(root)
+        # a file the guard must never reach by climbing out of critic_reviews/
+        (root.parent / "secret.md").write_text("TOP SECRET")
+        orig, config.CRITIC_REVIEWS = config.CRITIC_REVIEWS, root
+        try:
+            check("555 prompt: fetched per round",
+                  state.critic_review_prompt("777", 2) == "PROMPT TWO")
+            check("555 prompt: string round number accepted",
+                  state.critic_review_prompt("777", "2") == "PROMPT TWO")
+            check("555 prompt: unknown/non-numeric round -> empty, no raise",
+                  state.critic_review_prompt("777", 99) == ""
+                  and state.critic_review_prompt("777", "x") == "")
+            bad = ["../", "..", "777/../778", "/etc/passwd", "", None, "a" * 33,
+                   "case_777", "777\x00", "77.7"]
+            check("555 guard: traversal/junk case ids yield no rounds",
+                  all(not state.critic_review_detail(b)["rounds"] for b in bad))
+            check("555 guard: traversal case ids yield no prompt",
+                  all(state.critic_review_prompt(b, 1) == "" for b in bad))
+            check("555 guard: unknown but well-formed case is empty, not an error",
+                  state.critic_review_detail("999") ==
+                  {"case": "999", "rounds": [], "critic": "", "latest": "",
+                   "in_flight": False, "signed_off": False})
+        finally:
+            config.CRITIC_REVIEWS = orig
+
+
 def main():
-    for fn in (test_composes_both_loops,
+    for fn in (test_critic_review_detail_all_rounds,
+               test_critic_review_detail_failclosed_and_shapes,
+               test_critic_review_prompt_and_path_guard,
+               test_composes_both_loops,
                test_emailed_attachments_downloadable_flag,
                test_watchdog_down_and_limit_active,
                test_active_only_true_is_passed_to_workers,

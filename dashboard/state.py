@@ -260,6 +260,247 @@ def precincts():
     return _cached("precincts", 10, build)
 
 
+# ---------------------------------------------------------------------------
+# Case 551: critics ("Judges"). READ-ONLY -- the registry is sheriff-owned, so the
+# dashboard only renders it and files PROPOSALS onto the sheriff request queue.
+# ---------------------------------------------------------------------------
+def critics(include_retired=False):
+    """The critic roster from records/critics.json, newest-facing fields only.
+    The default critic sorts first. Never raises: a missing/corrupt registry is an
+    empty roster (the create-case form then simply offers 'none')."""
+    def build():
+        d = _read_json(config.CRITICS_JSON, {}) or {}
+        cs = d.get("critics", {}) if isinstance(d, dict) else {}
+        out = []
+        for cid in sorted(cs):
+            e = cs[cid] if isinstance(cs[cid], dict) else {}
+            status = e.get("status", "active")
+            out.append({
+                "id": cid,
+                "display_name": e.get("display_name") or cid,
+                "description": e.get("description", ""),
+                "model": e.get("model") or "",
+                "status": status,
+                "added_by": e.get("added_by", ""),
+                "added_ts": e.get("added_ts"),
+                "request_id": e.get("request_id", ""),
+                "prompt_chars": len(_read_text(config.RECORDS / (e.get("prompt_file") or ""))),
+            })
+        out.sort(key=lambda c: (c["id"] != "anonymous", c["id"]))
+        return out
+    all_ = _cached("critics", 10, build)
+    return all_ if include_retired else [c for c in all_ if c["status"] == "active"]
+
+
+def critic_charter():
+    """The FIXED system prompt every critic shares."""
+    return _read_text(config.CRITICS_DIR / "CHARTER.md")
+
+
+def critic_prompt(cid):
+    """One critic's CUSTOM (persona) prompt."""
+    for c in critics(include_retired=True):
+        if c["id"] == cid:
+            d = _read_json(config.CRITICS_JSON, {}) or {}
+            e = (d.get("critics") or {}).get(cid) or {}
+            return _read_text(config.RECORDS / (e.get("prompt_file") or ""))
+    return ""
+
+
+def critic_requests(limit=20):
+    """Recent critic_* sheriff requests across pending/done/denied, newest first --
+    so the Judges tab can show that 'add a judge' really is gated on approval."""
+    def build():
+        out = []
+        for stt in ("pending", "done", "denied"):
+            d = config.SHERIFF_REQUESTS / stt
+            if not d.is_dir():
+                continue
+            for p in d.glob("*.json"):
+                r = _read_json(p, {}) or {}
+                if not str(r.get("op", "")).startswith("critic_"):
+                    continue
+                out.append({
+                    "id": r.get("id", p.stem), "state": stt, "op": r.get("op"),
+                    "critic": r.get("target", ""), "deputy": r.get("deputy", ""),
+                    "requester": r.get("requester", ""), "reason": r.get("reason", ""),
+                    "ts": r.get("ts") or 0,
+                    "decision": r.get("decision", ""),
+                    "decision_reason": r.get("decision_reason") or r.get("denied_reason", ""),
+                })
+        out.sort(key=lambda r: r["ts"] or 0, reverse=True)
+        return out
+    return _cached("critic_requests", 10, build)[:limit]
+
+
+def critic_reviews(limit=25):
+    """Recent review rounds across all cases (newest case first) so the tab shows
+    the judges actually being used, not just configured."""
+    def build():
+        root = config.CRITIC_REVIEWS
+        if not root.is_dir():
+            return []
+        out = []
+        for cd in root.iterdir():
+            if not cd.is_dir() or not cd.name.startswith("case_"):
+                continue
+            case = cd.name[5:]
+            rounds = []
+            for rd in cd.iterdir():
+                if not rd.is_dir() or not rd.name.startswith("round_"):
+                    continue
+                meta = _read_json(rd / "meta.json", {}) or {}
+                v = _read_json(rd / "verdict.json", {}) or {}
+                verdict = str(v.get("verdict", "")).upper().replace("SIGNOFF", "SIGN-OFF")
+                if verdict == "SIGN-OFF" and (v.get("must_fix") or []):
+                    verdict = "REVISE"      # mirror the harness's fail-closed coercion
+                try:
+                    n = int(rd.name[6:])
+                except ValueError:
+                    continue
+                rounds.append({"round": n, "critic": meta.get("critic", ""),
+                               "ts": meta.get("ts") or 0, "verdict": verdict,
+                               "one_line": v.get("one_line", ""),
+                               "must_fix": len(v.get("must_fix") or [])})
+            if not rounds:
+                continue
+            rounds.sort(key=lambda r: r["round"])
+            out.append({"case": case, "rounds": rounds,
+                        "critic": rounds[-1]["critic"],
+                        "latest": rounds[-1]["verdict"],
+                        "signed_off": any(r["verdict"] == "SIGN-OFF" for r in rounds),
+                        "ts": max(r["ts"] or 0 for r in rounds)})
+        out.sort(key=lambda r: r["ts"] or 0, reverse=True)
+        return out
+    return _cached("critic_reviews", 15, build)[:limit]
+
+
+# Case 555: a case id used to build a path under critic_reviews/. Query params are
+# attacker-controlled, so a review id is whitelisted (no dots, no separators) before
+# it is ever joined onto a path -- '../../etc' must never resolve.
+_REVIEW_CASE_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+
+def _round_dirs(case):
+    """Sorted (round_no, dir) for one case's review rounds; [] if the id is bad or
+    the case has never been reviewed."""
+    if not _REVIEW_CASE_RE.match(str(case or "")):
+        return []
+    cd = config.CRITIC_REVIEWS / f"case_{case}"
+    if not cd.is_dir():
+        return []
+    out = []
+    for rd in cd.iterdir():
+        if not rd.is_dir() or not rd.name.startswith("round_"):
+            continue
+        try:
+            out.append((int(rd.name[6:]), rd))
+        except ValueError:
+            continue
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def _as_finding(x):
+    """Normalise one must_fix/should_fix entry. The charter asks for
+    {location, problem, fix} dicts in must_fix and plain strings elsewhere, but a
+    judge is an LLM: accept either shape rather than dropping the finding."""
+    if isinstance(x, dict):
+        return {"location": str(x.get("location", "")),
+                "problem": str(x.get("problem", "") or x.get("issue", "")),
+                "fix": str(x.get("fix", "") or x.get("suggestion", ""))}
+    return {"location": "", "problem": str(x), "fix": ""}
+
+
+def _as_lines(x):
+    """should_fix / keep / unverified -> a list of display strings (a judge that
+    wrote dicts there still renders)."""
+    if not isinstance(x, list):
+        return []
+    out = []
+    for i in x:
+        if isinstance(i, dict):
+            f = _as_finding(i)
+            out.append(" — ".join(p for p in (f["location"], f["problem"], f["fix"]) if p))
+        else:
+            out.append(str(i))
+    return [s for s in out if s.strip()]
+
+
+def critic_review_detail(case):
+    """Case 555: EVERY round of one case's review, in full — the structured
+    verdict.json fields plus the verbatim verdict.md the judge actually wrote.
+
+    Rounds come back in chronological order (round 1 first) so the arc reads the
+    way it happened: REVISE -> fix -> SIGN-OFF. prompt.md is deliberately NOT
+    inlined (20-33 KB per round); its size is reported and
+    :func:`critic_review_prompt` fetches it on demand.
+
+    Never raises: an unknown/ill-formed case id, or a round still in flight, comes
+    back as an empty/pending entry rather than an error."""
+    rounds = []
+    for n, rd in _round_dirs(case):
+        meta = _read_json(rd / "meta.json", {}) or {}
+        v = _read_json(rd / "verdict.json", {}) or {}
+        md = _read_text(rd / "verdict.md")
+        raw = str(v.get("verdict", "")).upper().replace("SIGNOFF", "SIGN-OFF")
+        must = [_as_finding(x) for x in (v.get("must_fix") or [])]
+        # Mirror the harness's fail-closed coercion (scratch_critic: a SIGN-OFF
+        # carrying must-fixes is a REVISE) and SAY so, so the badge can never
+        # disagree with the findings printed under it.
+        verdict, coerced = raw, False
+        if raw == "SIGN-OFF" and must:
+            verdict, coerced = "REVISE", True
+        rounds.append({
+            "round": n,
+            "critic": meta.get("critic", ""),
+            "model": meta.get("model", ""),
+            "anon": meta.get("anon", ""),
+            "ts": meta.get("ts") or 0,
+            "artifacts": [str(a) for a in (meta.get("artifacts") or [])],
+            "missing_artifacts": [str(a) for a in (meta.get("missing_artifacts") or [])],
+            "verdict": verdict,
+            "raw_verdict": raw,
+            "coerced": coerced,
+            "one_line": str(v.get("one_line", "")),
+            "must_fix": must,
+            "should_fix": _as_lines(v.get("should_fix")),
+            "keep": _as_lines(v.get("keep")),
+            "unverified": _as_lines(v.get("unverified")),
+            "error": str(v.get("error", "")),
+            "verdict_md": md,
+            "prompt_chars": len(_read_text(rd / "prompt.md")),
+            # A round whose judge has not written verdict.json yet is IN FLIGHT,
+            # not a silent blank — the modal labels it as such.
+            "pending": not v and not md,
+        })
+    # "latest" is the most recent round that actually RULED. A trailing round the
+    # judge has been given but not yet answered is reported as in_flight instead of
+    # blanking the verdict -- an unfinished round must not read as "no verdict".
+    ruled = [r for r in rounds if r["verdict"]]
+    return {
+        "case": str(case),
+        "rounds": rounds,
+        "critic": rounds[-1]["critic"] if rounds else "",
+        "latest": ruled[-1]["verdict"] if ruled else "",
+        "in_flight": bool(rounds and rounds[-1]["pending"]),
+        "signed_off": any(r["verdict"] == "SIGN-OFF" for r in rounds),
+    }
+
+
+def critic_review_prompt(case, round_no):
+    """The exact prompt one review round was given (charter + persona + assignment).
+    Loaded on demand so the ruling payload stays small."""
+    try:
+        want = int(round_no)
+    except (TypeError, ValueError):
+        return ""
+    for n, rd in _round_dirs(case):
+        if n == want:
+            return _read_text(rd / "prompt.md")
+    return ""
+
+
 def precinct_detail(name):
     """Full detail for one precinct: ledger, parsed case log (newest first),
     case files, deputies, mode."""
