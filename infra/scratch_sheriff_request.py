@@ -81,8 +81,13 @@ _STATES = ("pending", "done", "denied")
 # receptionist on the user's behalf) may request. Phase D (Case 384d) makes
 # ``precinct_delete`` a real, guarded op (soft-delete + emailed YES confirm + 14-day
 # trash) and adds ``precinct_restore``.
+# The CRITIC ops work the same way: the judge registry (records/critics.json) is
+# sheriff-owned exactly like precincts.json, so adding/changing/retiring a judge is
+# a request, never a self-serve write -- whether it originates from a deputy, from
+# the dashboard's Judges tab, or from a user e-mail via the receptionist.
 OPS = ("log_remove", "ledger_modify", "precinct_create", "precinct_delete",
-       "precinct_restore", "case_number")
+       "precinct_restore", "case_number",
+       "critic_add", "critic_update", "critic_remove")
 
 # Phase D: the precinct-lifecycle ops are USER-authorized (the user asks; the
 # receptionist HANDS OFF). They may be posted WITHOUT a deputy session -- with an
@@ -90,8 +95,13 @@ OPS = ("log_remove", "ledger_modify", "precinct_create", "precinct_delete",
 # because the real authority is the user's mailbox: create/restore are non-
 # destructive + user-notified, and delete cannot complete without the user's emailed
 # YES (the hard gate). Every OTHER op still requires a verified (deputy, session).
+# The critic ops join them -- the user is the one who decides the fleet should have a
+# new judge, so "e-mail the receptionist" and "the dashboard Judges tab" must both be
+# able to post one without a deputy session. The sheriff still decides every one of
+# them; nothing here is self-approving.
 RECEPTIONIST_ORIGIN = "receptionist"
-USER_AUTHORIZED_OPS = ("precinct_create", "precinct_delete", "precinct_restore")
+USER_AUTHORIZED_OPS = ("precinct_create", "precinct_delete", "precinct_restore",
+                       "critic_add", "critic_update", "critic_remove")
 try:                                        # reuse the inbox allow-list if importable
     import scratch_inbox as _inbox          # noqa: E402
     ALLOWED_REQUESTERS = set(_inbox.ALLOWED)
@@ -562,6 +572,12 @@ def _cli(argv=None) -> int:
     r.add_argument("--model", default=None, help="precinct_create: default model")
     r.add_argument("--case-description", dest="case_description", default=None,
                    help="case_number: short description of the new case")
+    r.add_argument("--critic-prompt", dest="critic_prompt", default=None,
+                   help="critic_add/critic_update: the judge's CUSTOM prompt (persona) text")
+    r.add_argument("--critic-prompt-file", dest="critic_prompt_file", default=None,
+                   help="critic_add/critic_update: read the custom prompt from a file")
+    r.add_argument("--critic-display-name", dest="critic_display_name", default=None,
+                   help="critic_add/critic_update: human-readable name")
     r.add_argument("--origin", default=None,
                    help="'receptionist' for a user-authorized precinct create/delete/restore hand-off")
     r.add_argument("--requester", default=None,
@@ -599,7 +615,12 @@ def _cli(argv=None) -> int:
             extra["new_content"] = Path(a.new_content_file).read_text(encoding="utf-8")
         elif a.new_content is not None:
             extra["new_content"] = a.new_content
-        for k in ("drop_contains", "description", "mode", "model", "case_description"):
+        if a.critic_prompt_file:
+            extra["critic_prompt"] = Path(a.critic_prompt_file).read_text(encoding="utf-8")
+        elif a.critic_prompt is not None:
+            extra["critic_prompt"] = a.critic_prompt
+        for k in ("drop_contains", "description", "mode", "model", "case_description",
+                  "critic_display_name"):
             val = getattr(a, k)
             if val is not None:
                 extra[k] = val

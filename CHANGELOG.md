@@ -11,6 +11,64 @@ To update an existing install to a new version, follow
 Versioning is [semantic](https://semver.org): `MAJOR.MINOR.PATCH` — MAJOR for a
 breaking change, MINOR for a backward-compatible feature, PATCH for a fix.
 
+## [1.4.0] — 2026-08-28
+
+### Added — Judges: independent review, in the release (Case 583)
+
+v1.3.0 shipped a dashboard **Judges** tab reading a registry that nothing in the
+release ever created — the UI was real, the backend was not. It is now real.
+
+- **`infra/scratch_critic.py`** (new): the judge harness — registry, prompt
+  composition, review rounds, verdict parsing, and the deputy-facing prompt blocks.
+  A judge = a shared **charter** (rules, the SIGN-OFF/REVISE/REJECT vocabulary, the
+  `verdict.json` + `verdict.md` output contract, and a mandatory page-inspection pass
+  for any PDF deliverable) + a per-judge **persona** supplying taste and priority order.
+- **Two judges ship**: `anonymous` (the default — is it true, is it readable) and
+  `vyas` (papers/talks/decks — clarity of communication first). Their prompts are
+  tracked files in **`infra/judges/`**, installed into the sheriff-owned records root by
+  `python3 infra/scratch_critic.py seed`, which `setup.py` now runs. Seeding only ever
+  ADDS a judge that is missing, so editing or retiring one survives every later upgrade.
+- **Assign per case** via the create-case form's Judge selector or a `judge: <id>` body
+  line / `[judge:<id>]` subject tag. An assigned case gets a JUDGE PROTOCOL section and
+  **cannot close** until the judge signs off; an unknown id degrades to no judge rather
+  than wedging the launch.
+- **Sheriff-owned registry**: new `critic_add` / `critic_update` / `critic_remove`
+  request ops. Nobody writes the roster directly — the sheriff decides each request and
+  journals it. Registry writes are gated on **process** authorization (a token only the
+  sheriff daemon holds), not on a role string any caller can simply claim.
+- **Every deputy is told judges exist** — and told **not** to run one unless asked. An
+  unrequested review costs a whole extra agent, so the default is no judge.
+
+### Added — ChatGPT in the setup program (Case 583)
+
+`setup.py` gained **step 5, "ChatGPT (Codex) — optional second service"**. v1.3.0 ported
+the ChatGPT backend and documented it in the README, but the installer never mentioned
+it, so a fresh operator could select ChatGPT on the create-case form with no `codex`
+installed, no auth and nothing configured.
+
+- Detects the `codex` binary using the **same resolution order** as
+  `scratch_codex_auth.sh` — including the copy inside the VS Code ChatGPT extension,
+  which never lands on `PATH` — and records `TSOMP_CODEX_BIN` when it is not on `PATH`.
+- Offers both billing modes (`codex login` subscription, or `~/.openai_key` +
+  `TSOMP_CODEX_AUTH=apikey`), writes the key `chmod 600`, and persists the choice to
+  `infra_env.local.sh`.
+- Entirely optional: decline it and the install is Claude-only, with no ChatGPT
+  variables written.
+
+### Fixed
+
+- The spawn preamble advertised "a CRITIC that reviews your draft" as the archetypal
+  anonymous helper — an open invitation for deputies to run reviews nobody asked for.
+  Replaced with neutral examples plus an explicit "not for reviewing your own
+  deliverables".
+
+### Known gaps
+
+Per-vendor limit detection, auth-expiry recovery, the HTML-only-mail fallback and
+mid-case model switching remain out of the release (unchanged from 1.3.0). The mirror's
+records manager still gates its *ledger/log* ops on the older role-string check; only
+the judge registry uses the process-authorization gate added here.
+
 ## [1.3.0] — 2026-08-27
 
 ### Added — ChatGPT / Codex support (Case 557)

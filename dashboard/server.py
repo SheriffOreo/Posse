@@ -18,7 +18,6 @@ import re
 import ssl
 import subprocess
 import sys
-import tempfile
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -56,6 +55,10 @@ def _api_status():
         },
         "jobs": state.jobmgr_jobs(active_only=True),
         "limit": state.limit_state(),
+        # Case 582: ALL live limits (both vendors' account walls + per-model caps).
+        # "limit" stays so nothing already reading it breaks; the banner uses this,
+        # because a ChatGPT wall is invisible in "limit" by construction.
+        "limits": state.limit_states(),
     }
 
 
@@ -227,6 +230,12 @@ class Handler(BaseHTTPRequestHandler):
     # -- POST ---------------------------------------------------------------
     # Whitelisted set for the model write path (mirrors scratch_records._MODELS).
     _MODELS = ("fable", "opus", "sonnet", "haiku")
+    # Case 561 (Feng uid=676): a PRECINCT's default may be any registered model, so
+    # that "each precinct has a default service and model" is actually expressible —
+    # the alias is globally unique, so naming the model names the service. The
+    # narrow _MODELS above stays for the GLOBAL SHERIFF model, whose ledger
+    # compaction is a Claude call.
+    _PRECINCT_MODELS = tuple(models.ALL_ALIASES)
 
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
@@ -329,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
         model = (form.get("model") or [""])[0].strip().lower()
         back = "/precinct?name=" + urllib.parse.quote(name)
         known = {p["name"] for p in state.precincts()}
-        if name in known and model in self._MODELS:
+        if name in known and model in self._PRECINCT_MODELS:
             # Delegate to the records manager (its precincts.json is the source of
             # truth the dashboard reads). Force the LIVE records root by dropping any
             # TSOMP_RECORDS_ROOT override the server might inherit.
@@ -413,6 +422,11 @@ class Handler(BaseHTTPRequestHandler):
         parent = (fields.get("parent") or "").strip()
         description = (fields.get("description") or "").strip()
         critic = (fields.get("critic") or "").strip().lower()      # Case 551
+        # Case 561: the work split's REPORT lane + the judge's own service/model.
+        report_model = (fields.get("report_model") or "").strip().lower()
+        report_service = (fields.get("report_service") or "").strip().lower()
+        judge_model = (fields.get("judge_model") or "").strip().lower()
+        judge_service = (fields.get("judge_service") or "").strip().lower()
 
         known = {p["name"] for p in state.precincts()}
         if precinct not in known:
@@ -442,6 +456,20 @@ class Handler(BaseHTTPRequestHandler):
         # user picked a judge and must be told if it did not take.
         if critic and critic not in {c["id"] for c in state.critics()}:
             return self._json({"ok": False, "error": f"unknown judge '{critic}'"}, 400)
+        # Case 561: the report lane and the judge each get their own service+model.
+        # Rejected here rather than silently dropped by the bridge -- the user made
+        # a choice and must be told if it did not take (the Case 551 rule).
+        # An EMPTY report_service means "same as work", which is the default and is
+        # what makes an unsplit case behave exactly as it did before.
+        for _lbl, _m, _s in (("report", report_model, report_service),
+                             ("judge", judge_model, judge_service)):
+            if _m and _m not in models.ALL_ALIASES:
+                return self._json({"ok": False, "error": f"invalid {_lbl}_model '{_m}'"}, 400)
+            if _s and _s not in models.SERVICE_IDS:
+                return self._json({"ok": False, "error": f"invalid {_lbl}_service '{_s}'"}, 400)
+            if _m and _s and models.service_of(_m) != _s:
+                return self._json({"ok": False, "error":
+                                   f"{_lbl} model '{_m}' does not belong to service '{_s}'"}, 400)
 
         sid = time.strftime("%Y%m%d%H%M%S") + "_" + os.urandom(4).hex()
         saved, skipped = [], 0
@@ -472,6 +500,12 @@ class Handler(BaseHTTPRequestHandler):
                   "parent": parent or None,
                   "description": description, "files": saved, "case": case,
                   "critic": critic or None,
+                  # Case 561: the work split (work lane = model/service above) and
+                  # the judge's own service+model. None = inherit / registry default.
+                  "report_model": report_model or None,
+                  "report_service": report_service or None,
+                  "judge_model": judge_model or None,
+                  "judge_service": judge_service or None,
                   "source": "web", "requester": config.OPERATOR.get("email") or ""}
         try:
             pend = config.WEB_CASES / "pending"
@@ -488,15 +522,40 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"ok": True, "case": case, "sid": sid, "critic": critic or "",
                            "files": len(saved), "note": note})
 
-    # -- authed write: PROPOSE a critic ("judge") (Case 551) -----------------
-    def _propose_critic(self):
-        """File a critic_add request on the SHERIFF queue.
+    # -- authed write: PROPOSE a critic ("judge") (Case 551; rewritten Case 569) --
+    _JUDGE_RESERVED = ("charter", "none", "no", "off", "false", "0", "default")
 
-        Deliberately does not touch records/critics.json: the critic registry is
-        sheriff-owned (scratch_critic refuses a write from any process that is not
-        the authorized sheriff daemon), so the dashboard's role here is to propose
-        and then show the outcome. Same queue, same decision, same journal as the
-        email path -- the two entry points differ only in who typed the prompt."""
+    @staticmethod
+    def _judge_id_from_name(name):
+        """Derive a judge id from the NAME the user typed (Case 569: one field, not
+        an id AND a display name -- the two were the same answer asked twice).
+
+        Drops a leading article ("The Vyas Judge" -> vyas) and the trailing noun
+        ("... Judge"/"Critic"/"Reviewer"), because those words are in every name
+        and carry no distinguishing information. Whatever survives is slugged."""
+        words = re.findall(r"[A-Za-z0-9]+", str(name or ""))
+        words = [w.lower() for w in words]
+        while words and words[0] in ("the", "a", "an"):
+            words.pop(0)
+        while len(words) > 1 and words[-1] in ("judge", "critic", "reviewer", "review"):
+            words.pop()
+        cid = "_".join(words)[:32].strip("_-")
+        if cid and not cid[0].isalpha():        # the id must start with a letter
+            cid = "j_" + cid[:30]
+        return cid
+
+    def _propose_critic(self):
+        """Open a RECEPTIONIST CASE to write a new judge's prompt (Case 569).
+
+        This used to file the critic_add itself, from a prompt the user typed into
+        the form. It no longer does: the form now collects a name and a
+        plain-language description of what the judge should care about, and this
+        handler turns that into a case. The deputy reads the charter and the live
+        personas, writes the prompt, writes the roster description and the sheriff
+        reason, and files the critic_add. The sheriff still decides every one.
+
+        The dashboard still spawns nothing -- it drops a web-case record for the
+        inbox-side bridge, exactly like the 'Create new case' form."""
         n = int(self.headers.get("Content-Length", 0) or 0)
         if n <= 0 or n > config.WEB_CASE_MAX_BODY:
             return self._json({"ok": False, "error": "bad request size"}, 400)
@@ -507,56 +566,63 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             return self._json({"ok": False, "error": "invalid payload"}, 400)
 
-        cid = str(payload.get("id") or "").strip().lower()
-        prompt = str(payload.get("prompt") or "")
-        reason = str(payload.get("reason") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        description = str(payload.get("description") or "").strip()
         model = str(payload.get("model") or "").strip().lower()
-        if not re.match(r"^[a-z][a-z0-9_-]{0,31}$", cid):
-            return self._json({"ok": False, "error": "invalid judge id"}, 400)
-        if not prompt.strip():
-            return self._json({"ok": False, "error": "a custom prompt is required"}, 400)
-        if not reason:
-            return self._json({"ok": False, "error": "a reason for the sheriff is required"}, 400)
-        if model and model not in self._MODELS:
+        if len(name) < 2:
+            return self._json({"ok": False, "error": "give the judge a name"}, 400)
+        if len(description) < 40:
+            return self._json({"ok": False, "error":
+                               "describe what this judge should care about — a sentence or "
+                               "two at minimum, or the deputy has nothing to write from"}, 400)
+        # Case 561: a judge may run on either service, so validate against the full
+        # cross-service registry (self._MODELS stays claude-only for the precinct
+        # and sheriff write paths it guards).
+        if model and model not in models.ALL_ALIASES:
             return self._json({"ok": False, "error": f"invalid model '{model}'"}, 400)
 
-        # The prompt can be long, so hand it to the CLI through a temp file rather
-        # than the argv (argv-embedded prompts are the Task 176 self-kill footgun).
-        env = {k: v for k, v in os.environ.items() if k != "TSOMP_RECORDS_ROOT"}
-        tmp = None
+        cid = self._judge_id_from_name(name)
+        if not re.match(r"^[a-z][a-z0-9_-]{0,31}$", cid):
+            return self._json({"ok": False, "error":
+                               "could not make an id from that name — use letters and "
+                               "digits (e.g. 'The Reproducibility Judge')"}, 400)
+        if cid in self._JUDGE_RESERVED:
+            return self._json({"ok": False, "error": f"'{cid}' is a reserved id"}, 400)
+        # Taken ids are rejected HERE rather than left for the deputy to discover:
+        # the user would otherwise wait for a whole case to be told the name clashes.
+        # Retired judges count as taken (the registry keeps them, so the id is not free).
+        taken = set()
+        with contextlib.suppress(Exception):
+            taken = {c["id"] for c in state.critics(include_retired=True)}
+        if cid in taken:
+            return self._json({"ok": False, "error":
+                               f"a judge with id '{cid}' already exists — pick another name"}, 400)
+
+        precinct = "receptionist"
+        if precinct not in {p["name"] for p in state.precincts()}:
+            return self._json({"ok": False, "error":
+                               "the receptionist precinct is not registered"}, 500)
+
+        sid = time.strftime("%Y%m%d%H%M%S") + "_" + os.urandom(4).hex()
+        case = self._allocate_case()
+        record = {"id": sid, "ts": time.time(), "precinct": precinct,
+                  "model": None, "service": None, "parent": None,
+                  "description": description, "files": [], "case": case,
+                  "critic": None,
+                  "judge_proposal": {"id": cid, "name": name, "model": model or ""},
+                  "deputy_hint": f"judge_{case}",
+                  "source": "web_judge", "requester": config.OPERATOR.get("email") or ""}
         try:
-            fd, tmp = tempfile.mkstemp(prefix="critic_prompt_", suffix=".md")
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(prompt)
-            cmd = [sys.executable, str(config.STATE_ROOT / "scratch_critic.py"), "propose",
-                   "--critic", cid, "--op", "critic_add",
-                   "--display-name", str(payload.get("display_name") or "").strip(),
-                   "--description", str(payload.get("description") or "").strip(),
-                   "--prompt-file", tmp, "--reason", reason,
-                   "--origin", "receptionist",
-                   "--requester", config.OPERATOR.get("email") or ""]
-            if model:
-                cmd += ["--model", model]
-            out = subprocess.run(cmd, cwd=str(config.STATE_ROOT), env=env, timeout=60,
-                                 capture_output=True, text=True, check=False)
+            pend = config.WEB_CASES / "pending"
+            pend.mkdir(parents=True, exist_ok=True)
+            tmp = pend / (sid + ".json.tmp")
+            tmp.write_text(json.dumps(record, indent=2))
+            os.replace(tmp, pend / (sid + ".json"))
         except Exception as ex:
-            return self._json({"ok": False, "error": f"could not file the request: {ex}"}, 500)
-        finally:
-            if tmp:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp)
-        if out.returncode != 0:
-            err = (out.stderr or out.stdout or "").strip().splitlines()
-            return self._json({"ok": False,
-                               "error": (err[-1] if err else "request failed")}, 400)
-        try:
-            res = json.loads(out.stdout)
-        except Exception:
-            res = {}
-        return self._json({"ok": True, "request": res.get("id", ""),
-                           "state": res.get("state", "pending"),
-                           "note": "filed on the sheriff queue; the sheriff decides it "
-                                   "on its next pass."})
+            return self._json({"ok": False, "error": f"could not queue submission: {ex}"}, 500)
+        return self._json({"ok": True, "case": case, "id": cid, "sid": sid,
+                           "note": "opened as a receptionist case; the deputy writes the "
+                                   "prompt and files it with the sheriff."})
 
     # -- authed write: create a JTF (Joint Task Force) (Case 384e) -----------
     @staticmethod

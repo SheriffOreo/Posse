@@ -157,6 +157,40 @@ fi
 WORKER_EFFORT="$(python3 scratch_models.py effort "$WORKER_MODEL" 2>/dev/null | tr -d '[:space:]')"
 [ -n "$WORKER_EFFORT" ] || WORKER_EFFORT="max"
 
+# Does this case have a JUDGE that must sign off before it can close?
+# Resolution: WORKER_CRITIC env (exported by the web-case bridge for a dashboard
+# selection or an emailed 'judge:'/'critic:' tag) -> a 'judge:' or 'critic:' line in
+# the task spec -> none, which is the DEFAULT. 'judge' is the current spelling;
+# 'critic' stays accepted so specs already written keep working. normalize_choice()
+# degrades an unknown or retired id to '' so a typo can never wedge a launch.
+WORKER_CRITIC="${WORKER_CRITIC:-}"
+if [ -z "$WORKER_CRITIC" ]; then
+  WORKER_CRITIC="$(sed -n 's/^[[:space:]]*judge[[:space:]]*[:=][[:space:]]*//Ip' "$TASKFILE" 2>/dev/null | head -1 | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_-')"
+fi
+if [ -z "$WORKER_CRITIC" ]; then
+  WORKER_CRITIC="$(sed -n 's/^[[:space:]]*critic[[:space:]]*[:=][[:space:]]*//Ip' "$TASKFILE" 2>/dev/null | head -1 | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_-')"
+fi
+if [ -n "$WORKER_CRITIC" ]; then
+  WORKER_CRITIC="$(python3 -c 'import sys,scratch_critic as c;print(c.normalize_choice(sys.argv[1]))' "$WORKER_CRITIC" 2>/dev/null | tr -d '[:space:]')"
+fi
+# The deputy-facing judge text comes from scratch_critic (one source of truth).
+# EVERY deputy is told the judge mechanism exists and how to use it, whether or not
+# THIS case has one -- a deputy that never heard of it cannot act on a mid-case
+# request for a review or propose a judge. The awareness block leads with "do not
+# run one unless you were asked to": an unrequested review costs a whole extra
+# worker, so the default is NO judge.
+JUDGE_AWARENESS="$(python3 scratch_critic.py awareness --case "$TASK_UID" 2>/dev/null)"
+CRITIC_BLOCK=""
+CRITIC_GATE=""
+if [ -n "$WORKER_CRITIC" ]; then
+  CRITIC_BLOCK="$(python3 scratch_critic.py protocol --critic "$WORKER_CRITIC" --case "$TASK_UID" 2>/dev/null)"
+  if [ -n "$CRITIC_BLOCK" ]; then
+    CRITIC_GATE="FIRST make sure the JUDGE has SIGNED OFF (\`python scratch_critic.py status --case $TASK_UID\` must say SIGNED OFF — see JUDGE PROTOCOL above), THEN "
+  else
+    WORKER_CRITIC=""
+  fi
+fi
+
 # Task 377 #1: stamp a `deputy: <name>` line at the TOP of the case file (the task
 # spec) — like the parent_task:/precinct: lines — so the case file self-documents
 # who worked it. Idempotent (skips if a deputy line already exists) + atomic
@@ -347,6 +381,10 @@ fellow members. Act in this order:
 Even without an interrupt, continue to check the mailbox between every major step
 (before and after each long operation) using: bash scratch_read_mailbox.sh $NAME
 
+$JUDGE_AWARENESS
+
+$CRITIC_BLOCK
+
 DEPARTMENT (precinct): you are the deputy on this case in the "$WORKER_PRECINCT" precinct.
 Its big-picture LEDGER, the GLOBAL PRECINCT DIRECTORY, and your precinct's recent CASE
 LOG are appended at the very end of this prompt — skim them for prior context before you
@@ -354,7 +392,7 @@ start. All records are reached ONLY through the records-manager program
 (python scratch_records.py ...), never the raw files.
 
 When you are FULLY finished (FINAL email sent, all deliverables exist), CLOSE THE CASE:
-file TWO records for your precinct, THEN touch the done-sentinel — in this exact order:
+${CRITIC_GATE}file TWO records for your precinct, THEN touch the done-sentinel — in this exact order:
   1. python scratch_records.py log append --dept $WORKER_PRECINCT --role deputy --task $TASK_UID \\
        --deputy $NAME --summary "<ONE sentence: what this case delivered>" --case-file $CASE_REL
   2. python scratch_records.py ledger append --dept $WORKER_PRECINCT --role deputy \\
@@ -373,8 +411,11 @@ COLLABORATION — spawning helpers (Task 384). You have TWO ways to get help; ne
 raw \`claude\`/setsid/background process:
 
   (1) ANONYMOUS WORKER — a helper YOU own and manage yourself. Use it for a
-      throwaway helper whose result only you consume — e.g. a CRITIC that reviews
-      your draft. It has NO case number, is NOT registered with the sheriff/watchdog
+      throwaway helper whose result only you consume — e.g. sweeping a large tree
+      for every call site of a symbol, or running a fixture you need measured.
+      NOT for reviewing your own deliverables: that is a JUDGE, it is governed by
+      THE JUDGE MECHANISM above, and you run one only when you were asked to.
+      It has NO case number, is NOT registered with the sheriff/watchdog
       (the sheriff does NOT monitor it, it does NOT show on the board), files NO
       paperwork, and reports ONLY to you. You write its prompt and you monitor it
       (poll its log / tmux, or submit it to the job manager) and relaunch it if it

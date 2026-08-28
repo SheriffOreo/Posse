@@ -118,7 +118,11 @@ don't address:
   at a time from a file-backed queue; jobs survive the owner being interrupted.
 - 👥 **Multi-agent coordination.** Tracked *sub-deputies* (numbered `Na`, `Nb`, …),
   *manager-wake* on subtask completion, *joint task forces* (a lead + collaborators),
-  and deputy-owned *anonymous critics*.
+  and deputy-owned *anonymous helpers*.
+- ⚖️ **Judges review the work.** An independent agent reads a deliverable it did not
+  produce and returns **SIGN-OFF / REVISE / REJECT**; every round is archived, so a
+  sign-off is an artifact rather than a claim in a status mail. Assign one per case and
+  the deputy cannot close until it signs off. See [Judges](#judges-independent-review).
 - 👁️ **Read-only dashboard.** Login-gated (your **email is the username**, set via a
   one-time registration link), pure-stdlib web UI: live Status, active deputies, case
   lineage, a job-history calendar, per-precinct records.
@@ -203,6 +207,9 @@ bash infra/scratch_jobmgr_start.sh          # job manager
 bash infra/scratch_gpu_manager_start.sh     # resource (GPU) queue — optional
 bash infra/scratch_inbox_loop.sh            # message router
 bash infra/scratch_sheriff_start.sh         # Sheriff — system manager (+ watchdog; see ONBOARDING.md)
+
+# 4b) Judges: install the two that ship with Posse (idempotent; setup.py does this too).
+python3 infra/scratch_critic.py seed
 
 # 5) Dashboard: register your login (email = username), then serve it.
 cd dashboard
@@ -309,6 +316,56 @@ python3 infra/scratch_hybrid.py queries --case 42     # what it needs from you
 **Limits are per-vendor.** ChatGPT's 5-hour and weekly caps are tracked separately from
 Claude's, so hitting one does not block cases on the other.
 
+## Judges (independent review)
+
+A **judge** is an agent that reviews a deliverable it did not produce and returns one of
+three verdicts — **SIGN-OFF**, **REVISE**, **REJECT**. Each round is archived under
+`infra/scratch_full_logs/critic_reviews/case_<n>/round_<r>/` (the prompt, the verdict
+JSON, the full written ruling), so a sign-off is an artifact you can open rather than a
+claim in a status mail. Assign one to a case and its deputy **cannot close** until the
+judge signs off.
+
+Every judge is composed from two parts: a **charter** shared by all of them (the rules,
+the verdict vocabulary, the output contract, and a mandatory page-inspection pass for any
+PDF) plus a per-judge **persona** that supplies taste and priority order. Two ship with
+Posse:
+
+| Judge | Best for | Leads with |
+| --- | --- | --- |
+| `anonymous` (default) | anything — the general-purpose reviewer | Is it TRUE, and is it READABLE by someone who was not in the room? |
+| `vyas` | papers, talks, decks, posters, proposals | Clarity of communication: what is the message, is the story line clear, is the claim clear, is it visualized? |
+
+```bash
+python3 infra/scratch_critic.py list                     # the roster
+python3 infra/scratch_critic.py show --critic vyas --full # the composed system prompt
+python3 infra/scratch_critic.py status --case 42          # every round so far
+```
+
+`setup.py` installs both on first run. They are **not** run automatically: a deputy runs
+a judge only when its case was assigned one, or when you ask — an unrequested review
+costs a whole extra agent.
+
+**Assign a judge** on the create-case form's *Judge* selector, or by tag:
+
+```
+[infra][judge:vyas]     in the subject
+judge: vyas             on its own line in the body
+```
+
+**The registry is sheriff-owned.** Nobody edits it directly — adding, changing or
+retiring a judge is a request the sheriff decides and journals:
+
+```bash
+python3 infra/scratch_critic.py propose --critic myjudge --op critic_add \
+    --display-name "The My Judge" --description "one line" \
+    --prompt-file myjudge.md --reason "why the fleet needs it" --wait 180
+```
+
+The dashboard's **Judges** tab shows the roster, each judge's full prompt, recent
+rulings, and a one-question form that opens a case whose deputy *writes* the new judge's
+prompt for you. The two shipped prompts live in `infra/judges/`; the seeder only ever
+adds a judge that is missing, so once you edit or retire one, that decision sticks.
+
 ## Updating Posse
 
 Posse is a git repo. Updating means **pulling the new code and restarting the
@@ -371,6 +428,7 @@ posse/
 ├── assets/               # brand: Posse banner + logo (SVG/PNG) + the architecture figure
 ├── design/               # POSSE_DESIGN.pdf — the design paper (+ sources)
 ├── infra/                # the core daemon + helper scripts (+ their tests)
+│   └── judges/           # the judge prompts Posse ships with (installed on first run)
 ├── dashboard/            # login-protected, read-only status/history dashboard (stdlib)
 ├── infra_env.sh          # your instance config (state dir, identity, allow-list, bind)
 ├── ONBOARDING.md         # step-by-step new-operator setup guide  ← start here

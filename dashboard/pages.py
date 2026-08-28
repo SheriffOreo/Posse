@@ -730,16 +730,33 @@ async function tick(){
   var s; try{ s=await getJSON('/api/status'); }catch(e){ return; }
   if(!s) return;
   daemonsBar(s.daemons);
-  // limit banner
+  // limit banner — Case 582. One banner per LIVE limit, each naming WHAT SERVICE
+  // and WHICH limit (Feng's ask). Reads s.limits (both vendors' account walls +
+  // per-model caps); s.limit was claude's account marker only, so a ChatGPT wall
+  // rendered nothing at all. A reset we GUESSED is labelled as a guess rather than
+  // printed as the vendor's word — printing one as fact is what put "Reset: ~Fri
+  // 18:32" in Feng's inbox for a wall that lifted at 17:47.
   var L=document.getElementById('limit'); L.innerHTML='';
-  if(s.limit){ var b=el('div','banner');
-    b.textContent='USAGE LIMIT HIT ('+(s.limit.kind||'?')+') — reset at '+
-      (s.limit.reset_str||fmtTs(s.limit.reset_epoch))+'  · source: '+(s.limit.source_worker||'?');
-    L.appendChild(b);}
+  var lims=s.limits||(s.limit?[s.limit]:[]);
+  lims.forEach(function(x){
+    var b=el('div','banner');
+    var scope=x.scope_label||((x.service_label||x.service||'?')+' account');
+    var kind=x.kind_label||x.kind||'usage';
+    // the vendor's fragment is already a phrase ("resets 4:50pm", "try again at
+    // 5:47 PM"), so show it verbatim + the absolute clock; prefixing it printed
+    // "resets resets Tue 6pm".
+    var when=x.reset_known===false
+      ? 'reset time not stated by the vendor — retrying ~'+fmtTs(x.reset_epoch)
+      : (x.reset_str ? x.reset_str+' (~'+fmtTs(x.reset_epoch)+')'
+                     : 'resets ~'+fmtTs(x.reset_epoch));
+    b.textContent='USAGE LIMIT — '+scope+' · '+kind+' limit · '+when+
+      ' · source: '+(x.source_worker||'?');
+    L.appendChild(b);
+  });
   // workers — Task 377 #3: lead with deputy / case# / precinct, then state/etc.
   document.getElementById('wc').textContent='('+s.workers.length+' active)';
   var wt=el('table'); wt.innerHTML='<tr><th>deputy</th><th>case#</th><th>precinct</th>'+
-    '<th>state</th><th>description</th><th>requester</th><th class=nowrap>mail</th><th>rl</th></tr>';
+    '<th>state</th><th>model</th><th>description</th><th>requester</th><th class=nowrap>mail</th><th>rl</th></tr>';
   s.workers.forEach(function(w){var tr=el('tr');
     tr.appendChild(td(w.name,'mono'));                       // deputy = worker name
     // case# — Task 391 #2: a NUMERIC case opens its detail popup; an alphanumeric
@@ -756,6 +773,22 @@ async function tick(){
     var st=el('td'); var cls=w.state==='running'?'b-running':(w.state==='failed'?'b-failed':
       (String(w.state).indexOf('wait')>=0?'b-parked':'b-done'));
     st.appendChild(el('span','badge '+cls, w.state_label||w.state)); tr.appendChild(st);
+    // Case 561: the model this case is running RIGHT NOW. A case may change model
+    // mid-flight (the deputy switches itself between the work and report lanes),
+    // so this comes from the watchdog roster the switch handler rewrites, never
+    // from the launch script. The service is appended only when it is NOT the
+    // default vendor, so an all-claude board stays uncluttered; a case that has
+    // switched carries a counter whose tooltip names the last switch.
+    var mt=el('td'); mt.className='small';
+    var mlab=(w.model_label||w.model||'');
+    if(w.service && w.service!=='claude') mlab+=' \u00b7 '+w.service;
+    mt.textContent=mlab;
+    if(w.switches>0){
+      var sw=el('span','badge b-parked','\u21c4'+w.switches);
+      sw.title=(w.last_switch||('switched '+w.switches+' time(s)'));
+      sw.style.marginLeft='6px'; mt.appendChild(sw);
+    }
+    tr.appendChild(mt);
     // description = the task's title (fall back to the registry desc when unresolved)
     tr.appendChild(td(w.task_title||w.desc||'',''));
     tr.appendChild(td(w.requester||'','small muted'));
@@ -1134,40 +1167,48 @@ def judges_page():
         f"<pre class='mono small' style='white-space:pre-wrap;max-height:460px;overflow:auto'>"
         f"{e(charter) or '(not seeded yet)'}</pre></details>")
 
-    # ---- propose a judge (files a SHERIFF REQUEST) ------------------------
+    # ---- propose a judge (files a RECEPTIONIST CASE) ----------------------
+    # Case 569: this form used to ask the user to type the judge's system prompt,
+    # plus an id AND a display name, plus a one-line description, plus the reason
+    # the sheriff should approve it — five fields of prompt engineering and
+    # paperwork to answer one question, "what should this judge care about".
+    # It now asks that question and nothing else. The submission becomes a case in
+    # the receptionist precinct; the deputy there reads the charter and the live
+    # personas, writes the prompt, writes the roster description and the sheriff
+    # reason, and files the critic_add. The sheriff still decides.
     fc = ("padding:8px;border-radius:6px;border:1px solid var(--accent-border);"
           "background:var(--surface2);color:var(--fg);font:inherit")
-    ta = fc + ";width:100%;resize:vertical;font-family:ui-monospace,Menlo,monospace;font-size:12px"
+    ta = fc + ";width:100%;resize:vertical"
     propose = (
         "<details class='card'><summary style='cursor:pointer;font-weight:600'>"
         "&#43; Propose a new judge</summary>"
-        "<div class='small muted' style='margin:8px 0'>This does <b>not</b> add the judge. It "
-        "files a <code>critic_add</code> request on the sheriff queue; the sheriff reads the "
-        "prompt you wrote and approves or denies it, and only the sheriff writes the registry. "
-        "You can do the same by email &mdash; see the note under the request list below.</div>"
+        "<div class='small muted' style='margin:8px 0'>Describe the judge you want; you do "
+        "<b>not</b> write its prompt. Submitting opens a case in the <b>receptionist</b> "
+        "precinct: a deputy reads the charter and the judges already on the roster, writes "
+        "this judge's prompt from your description, and files the <code>critic_add</code> "
+        "for the <b>sheriff</b> to approve or deny. Nothing joins the roster until the "
+        "sheriff approves it. You can start the same case by email &mdash; see the note "
+        "under the request list below.</div>"
         "<div style='display:flex;flex-direction:column;gap:12px;max-width:760px'>"
         "<div style='display:flex;gap:12px;flex-wrap:wrap'>"
-        "<label class='small' style='flex:1;min-width:170px'>Judge id "
-        "<span class='muted'>(lowercase, e.g. <code>vyas</code>)</span><br>"
-        f"<input type='text' id='jid' style='{fc};width:100%'></label>"
-        "<label class='small' style='flex:1;min-width:170px'>Display name<br>"
-        f"<input type='text' id='jname' style='{fc};width:100%'></label>"
+        "<label class='small' style='flex:2;min-width:220px'>Name<br>"
+        f"<input type='text' id='jname' placeholder='e.g. The Reproducibility Judge' "
+        f"style='{fc};width:100%'></label>"
         "<label class='small' style='flex:1;min-width:150px'>Model "
         "<span class='muted'>(optional)</span><br>"
         f"<select id='jmodel' style='{fc};width:100%'><option value=''>deputy default</option>"
         + "".join(f"<option value='{m}'>{models.label(m)}</option>" for m in models.ALIASES)
         + "</select></label></div>"
-        "<label class='small'>One-line description<br>"
-        f"<input type='text' id='jdesc' style='{fc};width:100%'></label>"
-        "<label class='small'>Custom prompt <span class='muted'>(the persona/taste — what this "
-        "judge looks for, in what order, in what voice. The charter above is prepended "
-        "automatically; do not repeat it.)</span><br>"
-        f"<textarea id='jprompt' rows='12' style='{ta}'></textarea></label>"
-        "<label class='small'>Why should the sheriff approve this? "
-        "<span class='muted'>(required)</span><br>"
-        f"<input type='text' id='jreason' style='{fc};width:100%'></label>"
+        "<label class='small'>Description &mdash; what should this judge care about?<br>"
+        "<span class='muted'>Plain words. What it should look for, what should be worth "
+        "blocking a case over, what kind of work it is for, whose taste it stands in for. "
+        "The more concrete the better &mdash; &ldquo;every number in the report must be "
+        "traceable to a command I can re-run&rdquo; gives a far better judge than "
+        "&ldquo;be rigorous&rdquo;.</span><br>"
+        f"<textarea id='jdesc' rows='9' placeholder='What should this judge refuse to sign "
+        f"off on?' style='{ta}'></textarea></label>"
         "<div style='display:flex;gap:12px;align-items:center'>"
-        "<button type='button' id='jsubmit'>Submit for sheriff approval</button>"
+        "<button type='button' id='jsubmit'>Submit</button>"
         "<span id='jstatus' class='small muted'></span></div>"
         "</div></details>")
 
@@ -1234,9 +1275,10 @@ def judges_page():
     howto = (
         "<div class='card'><b>By email</b>"
         "<div class='small muted' style='margin-top:6px'>"
-        "Add a judge: email the receptionist (no precinct tag) asking for it and include the "
-        "prompt &mdash; it files the same <code>critic_add</code> request and the sheriff "
-        "decides.<br>"
+        "Add a judge: email the receptionist (no precinct tag) describing the judge you want "
+        "&mdash; same as the form above. The receptionist writes the prompt and files the "
+        "<code>critic_add</code>; the sheriff decides. If you would rather write the prompt "
+        "yourself, attach it and say so.<br>"
         "Use a judge on a case: put <code>judge: &lt;id&gt;</code> on its own line in the body "
         "of a precinct-tagged email (or <code>[judge:&lt;id&gt;]</code> in the subject), exactly "
         "like the existing <code>precinct:</code> and <code>model:</code> tags. "
@@ -1423,27 +1465,29 @@ _JUDGES_JS = _COMMON_JS + r"""
   var stat=document.getElementById('jstatus');
   function val(id){ var el=document.getElementById(id); return el?(el.value||'').trim():''; }
   btn.addEventListener('click', async function(){
-    var id=val('jid'), prompt=val('jprompt'), reason=val('jreason');
-    if(!/^[a-z][a-z0-9_-]{0,31}$/.test(id)){
+    // Case 569: two fields — a name and a description of what the judge should
+    // care about. The id is derived server-side from the name; the prompt, the
+    // roster description and the sheriff reason are written by the deputy this
+    // submission spawns, not typed here.
+    var name=val('jname'), desc=val('jdesc');
+    if(name.length<2){
+      stat.className='small flag'; stat.textContent='Give the judge a name.'; return; }
+    if(desc.length<40){
       stat.className='small flag';
-      stat.textContent='Judge id must be lowercase letters/digits/-/_ and start with a letter.'; return; }
-    if(prompt.length<80){
-      stat.className='small flag';
-      stat.textContent='Write a real custom prompt — the sheriff denies empty or trivial ones.'; return; }
-    if(!reason){ stat.className='small flag';
-      stat.textContent='A reason is required; the sheriff decides on it.'; return; }
-    stat.className='small muted'; stat.textContent='Filing the request…'; btn.disabled=true;
+      stat.textContent='Describe what this judge should care about — a sentence or two at '
+                      +'minimum, or the deputy has nothing to write a prompt from.'; return; }
+    stat.className='small muted'; stat.textContent='Opening the case…'; btn.disabled=true;
     try{
       var r=await fetch('/judges/propose',{method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({id:id, display_name:val('jname'), description:val('jdesc'),
-                             model:val('jmodel'), prompt:prompt, reason:reason})});
+        body:JSON.stringify({name:name, description:desc, model:val('jmodel')})});
       if(r.status===401){ location='/login'; return; }
       var d={}; try{ d=await r.json(); }catch(e){}
       if(r.ok && d.ok){
         stat.className='small';
-        stat.textContent='Filed as request '+(d.request||'')+' — awaiting the sheriff\'s decision. '
-                         +'Reload in a moment to see the outcome.';
+        stat.textContent='Case '+(d.case||'')+' opened for judge \''+(d.id||'')+'\' — a '
+                         +'receptionist deputy is writing its prompt and will file it with '
+                         +'the sheriff. You will get an email.';
       } else {
         stat.className='small flag'; stat.textContent='Error: '+((d&&d.error)||('HTTP '+r.status));
       }
@@ -1653,9 +1697,14 @@ def precincts_page():
     cur_model = sh.get("model", "fable")
     field_css = ("padding:5px 9px;border-radius:6px;border:1px solid var(--accent-border);"
                  "background:var(--surface2);color:var(--fg);font:inherit")
+    # Case 561 (Feng uid=676): the precinct default may be ANY registered model, so
+    # a precinct can genuinely have "a default service and model". Grouped by service
+    # and labelled with it, since the alias alone no longer tells you the vendor.
     model_opts = "".join(
-        f"<option value='{m}'{' selected' if m == cur_model else ''}>{models.label(m)}</option>"
-        for m in models.ALIASES)
+        "".join(f"<option value='{m}'{' selected' if m == cur_model else ''}>"
+                f"{models.label(m)} &middot; {models.service_label(svc)}</option>"
+                for m in models.aliases_for(svc))
+        for svc in models.SERVICE_IDS)
     # Task 384b / Phase C: the ONE global sheriff model (system-wide), authed write.
     # Case 509: show the SPECIFIC model (label + exact id), not the bare alias.
     model_form = (
@@ -1768,6 +1817,15 @@ _CC_MODES_JS = (
         {a: models.label(a) for a in models.ALL_ALIASES}) + ";\n"
     "var CC_SVC_LABELS=" + json.dumps(
         {s: models.service_label(s) for s in models.SERVICE_IDS}) + ";\n"
+    # Case 561: the WORK TYPES a case splits into. Generated from
+    # models.WORK_TYPES so the form's wording is the same wording the deputy's
+    # prompt and the switch CLI use — the definition of "human report writing"
+    # only exists in one place.
+    + "var CC_WORK_TYPES=" + json.dumps(
+        {w: {"label": models.WORK_TYPES[w]["label"],
+             "blurb": models.WORK_TYPES[w]["blurb"]}
+         for w in models.WORK_TYPE_IDS}) + ";\n"
+    + "var CC_SERVICE_IDS=" + json.dumps(list(models.SERVICE_IDS)) + ";\n"
 )
 
 _PRECINCT_DETAIL_JS = _COMMON_JS + _CC_MODES_JS + r"""
@@ -1913,25 +1971,63 @@ function pcCaseFile(cnum, path){ pcShow(); showCaseFile(cnum, path); }
     }
     sel.value=(aliases.indexOf(keep)>=0)?keep:'';     // invalid pick -> the default
   }
+  // Case 561: the form now expresses a WORK SPLIT, not a mode. Each work type
+  // (work / human report writing) picks its own service+model, and the deputy
+  // switches ITSELF between them mid-case — one case, one context, several
+  // models. The `service` field still posts a SERVICE id, which is also a valid
+  // single-agent MODE id, so the server, the email tag and the bridge all keep
+  // working unchanged.
+  //
+  // The report lane defaults to "same as work", which is what makes the split
+  // free: leave it alone and the case behaves exactly as it did before.
+  var rsvcSel=form.report_service, rmodelSel=form.report_model,
+      rWrap=document.getElementById('rmodel-wrap'),
+      jsvcSel=form.judge_service, jmodelSel=form.judge_model,
+      jWrap=document.getElementById('judge-models'),
+      criticSel=form.critic;
+  var RMODEL_HEAD=(rmodelSel&&rmodelSel.options.length)?rmodelSel.options[0].textContent:'default',
+      JMODEL_HEAD=(jmodelSel&&jmodelSel.options.length)?jmodelSel.options[0].textContent:'default';
+
   function syncMode(){
     if(!svcSel||!modelSel) return;
-    var spec=CC_MODES[svcSel.value]||CC_MODES[CC_DEFAULT_MODE];
-    if(hint) hint.textContent=spec.blurb;
-    var hybrid=!!spec.writer;
-    // the DEPUTY select always shows exactly the models the deputy service can run
-    fillModels(modelSel, CC_SVC_ALIASES[spec.deputy]||[], MODEL_HEAD);
-    if(mCap) mCap.innerHTML = hybrid
-      ? (CC_SVC_LABELS[spec.deputy]+" model <span class='muted'>(does the work)</span>")
-      : "Model <span class='muted'>(optional)</span>";
-    // the WRITER select exists only in hybrid mode
-    if(wWrap) wWrap.style.display = hybrid ? '' : 'none';
-    if(wmSel){
-      if(hybrid) fillModels(wmSel, CC_SVC_ALIASES[spec.writer]||[], WRITER_HEAD);
-      else { wmSel.innerHTML=''; wmSel.value=''; }   // posts '' when not hybrid
+    var work=svcSel.value||'claude';
+    if(hint) hint.textContent=CC_WORK_TYPES.work.blurb;
+    // The WORK model list is exactly the models the work service can run. Rebuilt
+    // rather than hidden — WebKit ignores `hidden` on <optgroup> (Case 557 uid=671).
+    fillModels(modelSel, CC_SVC_ALIASES[work]||[], MODEL_HEAD);
+    if(mCap) mCap.innerHTML = "Work model <span class='muted'>(does the work)</span>";
+    // the Case 557 two-agent writer select is gone from this form; keep the field
+    // present-but-empty so the POST shape is unchanged.
+    if(wWrap) wWrap.style.display='none';
+    if(wmSel){ wmSel.innerHTML=''; wmSel.value=''; }
+
+    // REPORT lane: '' means "same as work" -> no model select at all, and the
+    // case is not a split.
+    var rep=rsvcSel?rsvcSel.value:'';
+    if(rWrap) rWrap.style.display = rep ? '' : 'none';
+    if(rmodelSel){
+      if(rep) fillModels(rmodelSel, CC_SVC_ALIASES[rep]||[], RMODEL_HEAD);
+      else { rmodelSel.innerHTML=''; rmodelSel.value=''; }
+    }
+  }
+  function syncJudge(){
+    // The judge's own service/model only matter once a judge is actually chosen.
+    var on = !!(criticSel && criticSel.value);
+    // 'flex' explicitly, not '': the wrapper is a <div> whose default display
+    // is block, which would drop the inline flex layout on the two selects.
+    if(jWrap) jWrap.style.display = on ? 'flex' : 'none';
+    if(!on){ if(jsvcSel) jsvcSel.value=''; if(jmodelSel){ jmodelSel.innerHTML=''; jmodelSel.value=''; } return; }
+    var js=jsvcSel?jsvcSel.value:'';
+    if(jmodelSel){
+      if(js) fillModels(jmodelSel, CC_SVC_ALIASES[js]||[], JMODEL_HEAD);
+      else { jmodelSel.innerHTML=''; jmodelSel.value=''; }
     }
   }
   if(svcSel) svcSel.addEventListener('change', syncMode);
-  syncMode();                                  // initial state (Claude preselected)
+  if(rsvcSel) rsvcSel.addEventListener('change', syncMode);
+  if(criticSel) criticSel.addEventListener('change', syncJudge);
+  if(jsvcSel) jsvcSel.addEventListener('change', syncJudge);
+  syncMode(); syncJudge();                     // initial state
 
   form.addEventListener('submit', async function(ev){
     ev.preventDefault();
@@ -1947,6 +2043,12 @@ function pcCaseFile(cnum, path){ pcShow(); showCaseFile(cnum, path); }
       fd.append('service', (form.service&&form.service.value)||'');
       fd.append('model', form.model.value||'');
       fd.append('writer_model', (form.writer_model&&form.writer_model.value)||'');
+      // Case 561: the report lane and the judge's own service/model. Empty =
+      // "same as work" / "default", which is the no-split, pre-561 behaviour.
+      fd.append('report_service', (form.report_service&&form.report_service.value)||'');
+      fd.append('report_model', (form.report_model&&form.report_model.value)||'');
+      fd.append('judge_service', (form.judge_service&&form.judge_service.value)||'');
+      fd.append('judge_model', (form.judge_model&&form.judge_model.value)||'');
       fd.append('parent', parent);
       fd.append('description', desc);
       fd.append('critic', (form.critic&&form.critic.value)||'');
@@ -1957,7 +2059,7 @@ function pcCaseFile(cnum, path){ pcShow(); showCaseFile(cnum, path); }
       if(r.ok && d.ok){
         stat.className='small';
         stat.textContent='Case '+(d.case||'')+' queued'+(d.files?(' with '+d.files+' file(s)'):'')+(d.critic?(' — judge: '+d.critic):'')+' — '+(d.note||'');
-        form.reset(); clearAtts(); syncMode();   // reset restores Claude -> re-filter Model
+        form.reset(); clearAtts(); syncMode(); syncJudge();   // reset restores the defaults -> re-filter every model list
       } else {
         stat.className='small flag'; stat.textContent='Error: '+((d&&d.error)||('HTTP '+r.status));
       }
@@ -2080,10 +2182,19 @@ def precinct_detail_page(name):
     # blurb as a hover tooltip, and #svc-hint below the field shows the same line.
     # The POST field name stays "service" — the bridge reads record["service"] and
     # normalizes it as a mode.
+    # Case 561: the WORK lane's service. This field now offers SERVICES, not modes.
+    # The two single-agent mode ids are identical to their service ids, so the POST
+    # value is still a valid mode and the server/bridge contract is unchanged — but
+    # "Claude + ChatGPT" is deliberately GONE from this form: it meant a second
+    # agent (one case, two contexts), and mixing vendors on a case is now expressed
+    # by the work split below, which keeps one context and switches its model.
+    # (The old mode remains reachable by an explicit `mode: claude+chatgpt` email
+    # tag for anyone who still wants the two-agent behaviour.)
     service_opts = "".join(
-        f"<option value='{e(m)}' title='{e(models.mode_spec(m)['blurb'])}'"
-        f"{' selected' if m == models.DEFAULT_MODE else ''}>{e(models.mode_label(m))}</option>"
-        for m in models.MODE_IDS)
+        f"<option value='{e(s)}' title='{e(models.WORK_TYPES['work']['blurb'])}'"
+        f"{' selected' if s == models.DEFAULT_SERVICE else ''}>"
+        f"{e(models.service_label(s))}</option>"
+        for s in models.SERVICE_IDS)
     # Case 557 (uid=671): TWO model selects, because Claude+ChatGPT is genuinely two
     # agents — the claude DEPUTY that does the work and the chatgpt WRITER that writes
     # the report — so there are two models to choose. `model` is the deputy's,
@@ -2100,6 +2211,23 @@ def precinct_detail_page(name):
     model_opts = _model_opts(models.aliases_for(models.deputy_service(_dm)))
     # the writer select starts empty-but-valid; syncMode fills it when hybrid is picked
     writer_opts = "<option value=''>default (GPT-5.6 Terra)</option>"
+    # Case 561: the REPORT lane's service. "same as work" is FIRST and is the
+    # default — a case that ignores the split runs entirely on one model, exactly
+    # as before. Choosing the SAME service here is still meaningful: it is how you
+    # ask for e.g. Opus to work and Fable to write.
+    report_service_opts = (
+        "<option value=''>same as work (no switch)</option>"
+        + "".join(f"<option value='{s}'>{e(models.service_label(s))}</option>"
+                  for s in models.SERVICE_IDS))
+    report_model_opts = "<option value=''>service default</option>"
+    # Case 561: the JUDGE's own service+model (Feng: "For the judge, also get user
+    # select service/model"). Empty = the judge's registered default, which is how
+    # every judge has run so far.
+    judge_service_opts = (
+        "<option value=''>default</option>"
+        + "".join(f"<option value='{s}'>{e(models.service_label(s))}</option>"
+                  for s in models.SERVICE_IDS))
+    judge_model_opts = "<option value=''>default</option>"
     critic_opts = "<option value=''>none (default &mdash; no judge)</option>" + "".join(
         f"<option value='{e(c['id'])}'>{e(c.get('display_name') or c['id'])}</option>"
         for c in state.critics())
@@ -2107,26 +2235,49 @@ def precinct_detail_page(name):
         "<details class='card'><summary style='cursor:pointer;font-weight:600'>"
         f"&#43; Create new case in {e(d['name'])}</summary>"
         "<div class='small muted' style='margin:8px 0'>Spawns a deputy via the inbox handler, which "
-        "emails an ACK with your form + any uploads attached. Service defaults to Claude; model and "
-        "follow-up are optional; a task description is required.</div>"
+        "emails an ACK with your form + any uploads attached. Only a task description is required; "
+        "everything else has a working default.</div>"
         "<form id='ccform' enctype='multipart/form-data' "
         "style='display:flex;flex-direction:column;gap:12px;max-width:680px'>"
         f"<input type='hidden' name='precinct' value='{e(d['name'])}'>"
-        "<div style='display:flex;gap:12px;flex-wrap:wrap'>"
-        "<label class='small' style='flex:1;min-width:200px'>Service "
-        "<span class='muted'>(who works / who writes)</span><br>"
-        f"<select name='service' style='{field_css};width:100%'>{service_opts}</select>"
-        "<span id='svc-hint' class='small muted' style='display:block;margin-top:4px'>"
-        f"{e(models.mode_spec(models.DEFAULT_MODE)['blurb'])}</span></label>"
-        "<label class='small' id='model-wrap' style='flex:1;min-width:200px'>"
-        "<span id='model-cap'>Model <span class='muted'>(optional)</span></span><br>"
+        # Case 561: THE WORK SPLIT. A case picks a service+model per work type; the
+        # deputy launches on the work lane and switches ITSELF to the report lane
+        # when it starts the deliverable document. This REPLACES the Case 557
+        # Service (mode) picker, whose "Claude + ChatGPT" spawned a SECOND agent —
+        # one case with two contexts, which is the design Feng rejected here.
+        "<fieldset style='border:1px solid #3a3a3a;border-radius:8px;padding:10px 12px;margin:0'>"
+        "<legend class='small' style='padding:0 6px'><b>Work split</b> "
+        "<span class='muted'>&mdash; which model does what</span></legend>"
+        "<div class='small muted' style='margin-bottom:8px'>The deputy is launched on the "
+        "<b>work</b> model and switches itself to the <b>report</b> model when it starts writing "
+        "a document for you &mdash; same case, same context, different model. Leave the report "
+        "row on &ldquo;same as work&rdquo; to run the whole case on one model.</div>"
+        "<div style='display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start'>"
+        "<label class='small' style='flex:1;min-width:190px'>Work &mdash; service<br>"
+        f"<select name='service' style='{field_css};width:100%'>{service_opts}</select></label>"
+        "<label class='small' id='model-wrap' style='flex:1;min-width:190px'>"
+        "<span id='model-cap'>Work model <span class='muted'>(does the work)</span></span><br>"
         f"<select name='model' style='{field_css};width:100%'>{model_opts}</select></label>"
-        # Case 557 (uid=671): the WRITER's model — only shown in Claude + ChatGPT.
-        # Hidden on the LABEL wrapper via display:none, which every browser honours
-        # (unlike `hidden` on an <optgroup>, the bug this replaces).
-        "<label class='small' id='wmodel-wrap' style='flex:1;min-width:200px;display:none'>"
+        "</div>"
+        "<div class='small muted' id='svc-hint' style='margin:4px 0 10px'>"
+        f"{e(models.WORK_TYPES['work']['blurb'])}</div>"
+        "<div style='display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start'>"
+        "<label class='small' style='flex:1;min-width:190px'>Human report writing &mdash; service<br>"
+        f"<select name='report_service' style='{field_css};width:100%'>{report_service_opts}</select></label>"
+        "<label class='small' id='rmodel-wrap' style='flex:1;min-width:190px;display:none'>"
+        "Report model<br>"
+        f"<select name='report_model' style='{field_css};width:100%'>{report_model_opts}</select></label>"
+        "</div>"
+        "<div class='small muted' style='margin-top:4px'>"
+        f"{e(models.WORK_TYPES['report']['blurb'])}</div>"
+        "</fieldset>"
+        # Case 557 (uid=671): the two-agent writer's model. No longer offered by this
+        # form (Case 561 replaced that design) but kept in the DOM as an empty field,
+        # so the POST shape and the server contract are unchanged.
+        "<label class='small' id='wmodel-wrap' style='display:none'>"
         "<span id='wmodel-cap'>ChatGPT model <span class='muted'>(writes the report)</span></span><br>"
         f"<select name='writer_model' style='{field_css};width:100%'>{writer_opts}</select></label>"
+        "<div style='display:flex;gap:12px;flex-wrap:wrap'>"
         "<label class='small' style='flex:1;min-width:200px'>Follow-up on task&nbsp;# "
         "<span class='muted'>(optional; empty = new task)</span><br>"
         f"<input type='text' name='parent' placeholder='e.g. 376' style='{field_css};width:100%'></label>"
@@ -2140,6 +2291,14 @@ def precinct_detail_page(name):
         "If set, the deputy must iterate with this judge until it signs off before "
         "closing the case &mdash; see <a href='/judges'>Judge</a>.)</span><br>"
         f"<select name='critic' style='{field_css};width:100%;max-width:340px'>{critic_opts}</select></label>"
+        # Case 561: the judge's OWN service+model. Shown only once a judge is
+        # picked — until then there is nothing for them to configure.
+        "<div id='judge-models' style='display:none;gap:12px;flex-wrap:wrap'>"
+        "<label class='small' style='flex:1;min-width:190px'>Judge &mdash; service<br>"
+        f"<select name='judge_service' style='{field_css};width:100%'>{judge_service_opts}</select></label>"
+        "<label class='small' style='flex:1;min-width:190px'>Judge model<br>"
+        f"<select name='judge_model' style='{field_css};width:100%'>{judge_model_opts}</select></label>"
+        "</div>"
         "<div class='small'>Attachments <span class='muted'>(optional — drag &amp; drop, "
         "paste a screenshot, or browse; max 10)</span>"
         # Case 421: paste/drag-drop drop zone + live previews. The file input is a

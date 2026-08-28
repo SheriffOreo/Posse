@@ -97,10 +97,24 @@ sys.path.insert(0, str(ROOT))
 import scratch_records as rec  # noqa: E402
 import scratch_sheriff_request as sreq  # noqa: E402  (Case 384a: the request queue)
 
+# Loading the sheriff module AUTHORIZES this process for the sheriff-only registry
+# writes (today: the judge registry). Only the sheriff daemon (and its tests) import
+# scratch_sheriff; deputies import scratch_records alone, so they never get this
+# authorization -- their role='sheriff' attempts are refused and redirected to the
+# request queue. Guarded so a token-file hiccup can never crash sheriff startup.
+try:
+    rec.authorize_sheriff(rec.sheriff_token(create=True))
+except Exception:  # pragma: no cover - defensive; enforcement simply stays off then
+    pass
+
 # Task 376: A/B are TOKENS. Chars<->tokens uses the SAME heuristic as the records
 # manager (ledger_length -> approx_tokens = ceil(chars/4)); mechanical compaction
 # works in chars, so it converts the B-token target to a char budget as B*4.
 CHARS_PER_TOKEN = rec._CHARS_PER_TOKEN  # == 4
+
+# The judge-registry ops. A judge has no home precinct, so these are described,
+# performed and journalled differently from the precinct ops -- see _journal_decision.
+CRITIC_OPS = ("critic_add", "critic_update", "critic_remove")
 
 
 def _records_root():
@@ -488,8 +502,7 @@ def apply_edit_requests(cfg):
 # Appendix A of reports/task382/SHERIFF_REDESIGN_PLAN.md -- the fixed sheriff prompt.
 SHERIFF_SYSTEM_PROMPT = """\
 You are the SHERIFF of the Rookery -- the single system manager of a "Sheriff &
-Deputies" multi-agent operation (the time-series-omp / OMPGen project). You run as
-an always-on daemon. Almost all of your work is mechanical and makes NO API call;
+Deputies" multi-agent operation. You run as an always-on daemon. Almost all of your work is mechanical and makes NO API call;
 you (this call) are invoked ONLY to (1) APPROVE/DENY a deputy's change-request, or
 (2) COMPACT a precinct ledger. Be decisive, terse, conservative, and never
 destructive by default.
@@ -497,8 +510,9 @@ destructive by default.
 HOW THE SYSTEM WORKS
 - Work is organized into PRECINCTS (departments). Each precinct has: a big-picture
   LEDGER (mutable digest), an append-only CASE LOG (index of closed cases), and
-  per-case files. Precincts: eval, infra, omp, paper, query, and the receptionist
-  (a fixed-ledger front desk).
+  per-case files. The OPERATOR defines the precincts, so they differ per instance;
+  every instance has the receptionist (a fixed-ledger front desk). Judge each request
+  by the precinct it names -- never assume a fixed set of precincts.
 - DEPUTIES are ephemeral worker agents. Each works ONE CASE (a numbered unit of
   work) to completion, emails the user a plan / milestones / FINAL, then closes it:
   appends ONE case-log line + ONE ledger paragraph, and touches a done-sentinel.
@@ -621,6 +635,32 @@ def _decide_prompt(req):
                      f"model={req.get('model', '(default)')} description={req.get('description', '')!r}")
     elif op == "case_number":
         lines.append(f"case description: {req.get('case_description', '')!r}")
+    elif op in CRITIC_OPS:
+        # Judging a JUDGE. The prompt IS the artifact here, so show a real slice of
+        # it -- a judge prompt that is empty, off-charter (tries to re-define the
+        # verdict vocabulary), or an instruction to rubber-stamp is exactly what the
+        # sheriff must catch.
+        lines.append(f"critic id: {req.get('target')}")
+        if req.get("critic_display_name"):
+            lines.append(f"display name: {req['critic_display_name']!r}")
+        if req.get("description"):
+            lines.append(f"description: {req['description']!r}")
+        if req.get("model"):
+            lines.append(f"model: {req['model']}")
+        cp = str(req.get("critic_prompt") or "")
+        if cp:
+            lines.append(f"CUSTOM PROMPT ({len(cp)} chars); first 1200:")
+            lines.append(cp[:1200] + ("..." if len(cp) > 1200 else ""))
+        elif op == "critic_add":
+            lines.append("CUSTOM PROMPT: (none supplied -- an add with no prompt is malformed)")
+        lines.append(
+            "Judge it as the fleet's gatekeeper for review quality: APPROVE a "
+            "well-formed, honestly-scoped judge persona; DENY one that is empty, "
+            "that instructs the judge to rubber-stamp / always sign off / go easy, "
+            "that overrides the charter's verdict vocabulary or output contract, that "
+            "impersonates a real person as if it WERE them, or that is abusive. "
+            "Retiring a judge is low-risk and reversible; the default judge "
+            "'anonymous' must never be retired.")
     lines += ["", 'Respond with STRICT JSON and nothing else: '
               '{"decision":"approve"|"deny","reason":"<one line>"}.']
     return "\n".join(lines)
@@ -791,6 +831,27 @@ def perform_op(req):
             raise ValueError("precinct_restore needs a target precinct name")
         rec.precinct_restore(name, role="sheriff")
         return {"precinct": name, "restored": True}
+    if op in CRITIC_OPS:
+        # The judge registry is sheriff-owned. scratch_critic refuses these writes
+        # unless the calling process is the authorized sheriff -- which this one is
+        # (rec.authorize_sheriff at import).
+        import scratch_critic as cri
+        if not target:
+            raise ValueError(f"{op} needs a target (the critic id)")
+        if op == "critic_add":
+            out = cri.register(target, display_name=req.get("critic_display_name", ""),
+                               description=req.get("description", ""),
+                               prompt=req.get("critic_prompt", ""),
+                               model=req.get("model"), added_by=req.get("deputy", ""),
+                               request_id=req.get("id", ""))
+        elif op == "critic_update":
+            out = cri.update(target, display_name=req.get("critic_display_name"),
+                             description=req.get("description"),
+                             prompt=req.get("critic_prompt"), model=req.get("model"))
+        else:
+            out = cri.remove(target)
+        return {"critic": out.get("id", target), "op": op,
+                "status": out.get("status", "ok")}
     raise ValueError(f"unknown op {op!r}")
 
 
@@ -813,12 +874,27 @@ def notify_deputy(deputy, subject, body):
         _log(f"notify_deputy({deputy}) failed: {ex}")
 
 
+def _journal_decision(jprecinct, req, reason, tag, extra=""):
+    """Write the audit line for a decided request.
+
+    A judge is a GLOBAL entity with no home precinct (the request even carries
+    precinct=""), so a per-precinct journal has nowhere to put it. Route the critic
+    ops to the system lifecycle journal instead -- same reasoning as the precinct-
+    lifecycle ops, and it keeps every registry change in one auditable file."""
+    op = req.get("op")
+    if op in CRITIC_OPS:
+        sreq.lifecycle_journal_append(req.get("target"), req.get("deputy"), op,
+                                      tag, reason, extra=extra)
+        return
+    sreq.journal_append(jprecinct, req.get("deputy"), op, req.get("target"),
+                        reason, tag, extra=extra)
+
+
 def _deny(path, req, reason, tag, jprecinct):
     """Move a request to denied/ with `reason`, journal it, notify the deputy."""
     req.update({"decision": "deny", "denied_reason": reason, "decided_ts": time.time()})
     with contextlib.suppress(Exception):
-        sreq.journal_append(jprecinct, req.get("deputy"), req.get("op"),
-                            req.get("target"), reason, tag)
+        _journal_decision(jprecinct, req, reason, tag)
     with contextlib.suppress(Exception):
         sreq.move_to(path, "denied", req)
     notify_deputy(req.get("deputy"), f"sheriff DENIED your {req.get('op')} request", reason)
@@ -909,8 +985,8 @@ def process_request(path, cfg):
         return
     req["result"] = result
     with contextlib.suppress(Exception):
-        sreq.journal_append(jprecinct, deputy, op, target, decision["reason"], "approve",
-                            extra=json.dumps(result, ensure_ascii=False))
+        _journal_decision(jprecinct, req, decision["reason"], "approve",
+                          extra=json.dumps(result, ensure_ascii=False))
     with contextlib.suppress(Exception):
         sreq.move_to(path, "done", req)
     notify_deputy(deputy, f"sheriff APPROVED your {op} request",

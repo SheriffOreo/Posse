@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import config
+import models          # Case 561: alias -> label/service for the live model column
 
 # --------------------------------------------------------------------------- #
 # low-level helpers
@@ -760,6 +761,39 @@ def _worker_precinct_case(name):
     return precinct, case
 
 
+def _worker_model_fields(entry):
+    """Case 561: the CURRENT model/service of a worker, for the Status board.
+
+    Reads the watchdog roster, which the switch handler rewrites as part of
+    applying a switch -- so this is the live value, not the launch-time one. Falls
+    back to the platform default for a pre-561 entry that never stored a model
+    (every such worker is a claude worker, which is what resolve() returns).
+    """
+    alias = (entry.get("model") or "").strip()
+    service = (entry.get("service") or "").strip()
+    label = alias or "?"
+    try:
+        if alias:
+            alias = models.alias_of(alias)
+            label = models.label(alias)
+            # A roster entry written before Case 557 has no `service` field; the
+            # model itself names its vendor, so derive rather than show a blank.
+            service = service or models.service_of(alias)
+        else:
+            service = service or models.DEFAULT_SERVICE
+            alias = models.default_model(service)
+            label = models.label(alias)
+    except Exception:
+        pass
+    return {
+        "model": alias,
+        "model_label": label,
+        "service": service,
+        "switches": int(entry.get("switches") or 0),
+        "last_switch": entry.get("last_switch") or "",
+    }
+
+
 def workers(active_only=False):
     wd = _read_json(config.WATCHDOG_JOBS, []) or []
     reg = registry()
@@ -839,6 +873,12 @@ def workers(active_only=False):
                 "reset_epoch": e.get("reset_epoch"),
                 "last_progress_ts": e.get("last_progress_ts"),
                 "mailbox_pending": _mailbox_pending(name),
+                # Case 561: the model this case is running RIGHT NOW. It is not a
+                # constant any more -- a deputy switches its own model mid-case
+                # (scratch_model_switch.py), so the roster's `model`/`service` are
+                # rewritten by the watchdog on every switch and are the live truth.
+                # `switches` is how many times this case has changed model.
+                **_worker_model_fields(e),
             }
         )
     rows.sort(
@@ -966,6 +1006,66 @@ def limit_state():
     if not isinstance(d, dict) or not d.get("active"):
         return None
     return d
+
+
+# Human labels for the two axes the banner must state (Feng, Case 582: "Make sure
+# on the banner state what service what limit"). Kept as a local table rather than
+# imported from the live registry: this reader must work against a STATE_ROOT that
+# is only a state directory, and an unknown id falls through to itself rather than
+# rendering blank — the Case-561 trap where a mirror helper died in its own except
+# and showed an empty service.
+_SERVICE_LABEL = {"claude": "Claude", "chatgpt": "ChatGPT"}
+_KIND_LABEL = {"weekly": "weekly", "session": "5-hour session",
+               "5-hour": "5-hour session", "daily": "daily",
+               "credits": "workspace-credit", "usage": "usage"}
+
+
+def limit_states(now=None):
+    """EVERY live usage limit: each vendor's ACCOUNT-wide marker plus any
+    per-MODEL cap, each already labelled for display.
+
+    Case 582. Two independent reasons the page showed nothing while ChatGPT was
+    walled: limit_state() reads only claude's marker (Case 557 made them
+    per-service and did not update this reader), and a per-model weekly cap was
+    recorded in no file at all until Case 582 added one. Expired records are
+    filtered here, so a stale marker cannot keep a banner up forever.
+
+    Each entry adds: service_label, kind_label, scope ('account'|'model'),
+    scope_label, and reset_known — False meaning the vendor stated no time and the
+    epoch is our own retry guess, which the banner must not present as fact."""
+    now = time.time() if now is None else now
+    out = []
+    for svc, path in config.LIMIT_STATE_SERVICES.items():
+        d = _read_json(path)
+        if not isinstance(d, dict) or not d.get("active"):
+            continue
+        if now >= (d.get("reset_epoch") or 0):
+            continue                       # reset has passed — not a live wall
+        rec = dict(d)
+        rec["service"] = rec.get("service") or svc
+        rec["scope"] = "account"
+        rec.setdefault("reset_known", True)   # markers written before Case 582
+        out.append(rec)
+    models = _read_json(config.MODEL_LIMIT_STATE, {})
+    if isinstance(models, dict):
+        for rec in models.values():
+            if not isinstance(rec, dict) or not rec.get("active"):
+                continue
+            if now >= (rec.get("reset_epoch") or 0):
+                continue
+            rec = dict(rec)
+            rec["scope"] = "model"
+            out.append(rec)
+    for rec in out:
+        svc = rec.get("service") or "claude"
+        rec["service_label"] = _SERVICE_LABEL.get(svc, svc)
+        rec["kind_label"] = _KIND_LABEL.get(rec.get("kind"), rec.get("kind") or "usage")
+        rec["scope_label"] = (f"{rec['service_label']} account"
+                              if rec["scope"] == "account"
+                              else f"{rec['service_label']} model "
+                                   f"{rec.get('model') or '?'}")
+    out.sort(key=lambda r: r.get("reset_epoch") or 0)
+    return out
 
 
 # --------------------------------------------------------------------------- #

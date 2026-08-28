@@ -90,6 +90,14 @@ WATCHDOG_JOBS = SCRATCH / "watchdog_jobs.json"
 REGISTRY = STATE_ROOT / "scratch_agents_registry.json"
 SENT_EMAILS = SCRATCH / "sent_emails.jsonl"
 LIMIT_STATE = JOBS / "limit_state.json"
+# Case 582: the limit markers are PER SERVICE (claude keeps the original filename;
+# every other vendor gets a suffixed one, Case 557) plus a per-MODEL record file.
+# The status page read LIMIT_STATE alone, so a ChatGPT wall could never render a
+# banner — on 2026-08-28 limit_state_chatgpt.json was active for over an hour while
+# the page showed nothing, which is exactly what Feng reported.
+LIMIT_STATE_SERVICES = {"claude": LIMIT_STATE,
+                        "chatgpt": JOBS / "limit_state_chatgpt.json"}
+MODEL_LIMIT_STATE = JOBS / "limit_state_models.json"
 
 # Task 372 (Sheriff & Deputies precincts): the records room.
 RECORDS = SCRATCH / "records"

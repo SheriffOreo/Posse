@@ -81,6 +81,7 @@ import json
 import math
 import os
 import re
+import secrets
 import shutil
 import sys
 import tempfile
@@ -306,6 +307,96 @@ def ledger_append(dept: str, text: str, role: str = "deputy") -> None:
         else:
             current = ""
         _atomic_write(target, current + entry + "\n")
+
+
+# ---------------------------------------------------------------------------
+# sheriff authorization
+# ---------------------------------------------------------------------------
+# A role string is a CLAIM, not a credential: any caller can pass role='sheriff'
+# and hand-rewrite sheriff-owned state. For the registries that are sheriff-owned
+# (the judge registry today), the calling PROCESS must ALSO be authorized. Only the
+# sheriff daemon authorizes itself: it imports scratch_sheriff, which calls
+# authorize_sheriff() at load with the sheriff token. Deputies import
+# scratch_records but never scratch_sheriff and never hold the token, so their
+# role='sheriff' attempts -- CLI or in-process -- are refused and redirected to the
+# request queue (scratch_sheriff_request.py). Escape hatch:
+# TSOMP_RECORDS_ENFORCE_SHERIFF=0.
+#
+# Honest scope: all deputies currently run as the SAME OS user, so a DELIBERATE
+# circumventer could still read the token file or import scratch_sheriff. This gate
+# stops NAIVE/accidental self-elevation and makes any bypass a flagrant, auditable
+# act; airtight confinement needs per-precinct OS isolation.
+_SHERIFF_AUTHORIZED = False
+
+
+def _sheriff_token_path() -> Path:
+    return _records_root() / ".sheriff_token"
+
+
+def sheriff_token(create: bool = False) -> str:
+    """Return the sheriff token (a secret only the sheriff daemon/owner holds).
+    With create=True, generate + persist it (0600) if absent. Lock-free reads;
+    the O_EXCL create is race-safe (a loser just reads the winner's token)."""
+    p = _sheriff_token_path()
+    try:
+        tok = p.read_text().strip()
+        if tok:
+            return tok
+    except FileNotFoundError:
+        pass
+    if not create:
+        return ""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, (secrets.token_hex(32) + "\n").encode())
+        finally:
+            os.close(fd)
+    except FileExistsError:
+        pass                                    # concurrent creator won; read theirs
+    return p.read_text().strip()
+
+
+def authorize_sheriff(token: str = None) -> bool:
+    """Authorize THIS process for the sheriff-only WRITE ops. The sheriff daemon
+    calls this at startup with the sheriff token (scratch_sheriff imports do it at
+    load). Returns True on success; idempotent. A missing/empty/wrong token is a
+    no-op that leaves the process UNauthorized (so a deputy cannot self-authorize
+    by calling this without the secret)."""
+    global _SHERIFF_AUTHORIZED
+    if token is None:
+        token = os.environ.get("TSOMP_SHERIFF_TOKEN", "")
+    want = sheriff_token(create=False)
+    if want and token and token == want:
+        _SHERIFF_AUTHORIZED = True
+    return _SHERIFF_AUTHORIZED
+
+
+def sheriff_authorized() -> bool:
+    """True iff this process has been authorized as the sheriff (test/debug)."""
+    return _SHERIFF_AUTHORIZED
+
+
+def _sheriff_enforced() -> bool:
+    return os.environ.get("TSOMP_RECORDS_ENFORCE_SHERIFF", "1") != "0"
+
+
+def _require_sheriff_authorization(op: str, request_op: str = None) -> None:
+    """Mechanical companion to the role=='sheriff' check: raise PermissionError
+    unless THIS process is the AUTHORIZED sheriff. No-op when enforcement is off
+    (TSOMP_RECORDS_ENFORCE_SHERIFF=0)."""
+    if not _sheriff_enforced() or _SHERIFF_AUTHORIZED:
+        return
+    how = (f"Request it via: python scratch_sheriff_request.py request --op {request_op} "
+           f"--precinct <p> --deputy <you> --session <your session> --reason '...' [--wait 180]"
+           if request_op else
+           "This is sheriff-daemon-only system state; a deputy cannot set it.")
+    raise PermissionError(
+        f"{op}: role='sheriff' is not sufficient -- this process is NOT the authorized "
+        f"sheriff daemon. Deputies must NEVER pass --role sheriff or hand-edit "
+        f"records; you may only *append*. {how}"
+    )
 
 
 def ledger_write(dept: str, new_content: str, role: str) -> None:

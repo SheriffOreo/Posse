@@ -86,6 +86,37 @@ MODES = {
 MODE_IDS = ("claude", "claude+chatgpt", "chatgpt")
 DEFAULT_MODE = "claude"
 
+# ---------------------------------------------------------------------------
+# WORK TYPES — the LANES a case splits into (Case 561). MIRROR of
+# scratch_models.WORK_TYPES; models_test.py diffs the two.
+#
+# A case picks a service+model per lane. The deputy launches on the WORK lane and
+# switches ITSELF into the report lane when it starts the deliverable document —
+# one case, one context, several models. This REPLACES the Case 557 two-agent
+# hybrid as the way to mix vendors on a case.
+#
+# EMAIL IS NOT REPORT WRITING (Feng uid=674): the report lane is a deliverable
+# DOCUMENT, not correspondence. An ACK/milestone/FINAL email is written in
+# whatever model is running.
+# ---------------------------------------------------------------------------
+WORK_TYPES = {
+    "work": {
+        "label": "Work",
+        "blurb": ("thinking, planning, web search, code, experiments, tests, the "
+                  "case file, records entries, messages to other agents, and ALL "
+                  "email correspondence with Steven"),
+    },
+    "report": {
+        "label": "Human report writing",
+        "blurb": ("a deliverable DOCUMENT written for a human to read — a PDF "
+                  "report and the LaTeX behind it, a README, a design doc, a "
+                  "slide deck; NOT code, NOT the case file, and NOT email "
+                  "(an ACK/milestone/FINAL email is never a reason to switch)"),
+    },
+}
+WORK_TYPE_IDS = ("work", "report")
+DEFAULT_WORK_TYPE = "work"
+
 # Spellings accepted from a human (email tag / form post) for the hybrid mode —
 # generous, because this is the value most likely to be typed by hand.
 _MODE_ALIASES = {

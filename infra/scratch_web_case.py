@@ -237,6 +237,8 @@ def _spawn(record, *, case, deputy, spec_path, dry):
         env["WORKER_MODE"] = record["mode"]
     if record.get("writer_model"):                  # Case 557: hybrid writer model
         env["WORKER_WRITER_MODEL"] = record["writer_model"]
+    if record.get("critic"):                        # this case's JUDGE, if one was picked
+        env["WORKER_CRITIC"] = record["critic"]
     subprocess.run(["bash", "scratch_spawn_worker.sh", deputy, str(spec_path),
                     requester, keywords],
                    cwd=str(REPO_ROOT), env=env, timeout=120,
@@ -301,6 +303,16 @@ def process_one(rec_path: Path, dry=False) -> dict:
         except Exception:
             writer_model = None
         record["writer_model"] = writer_model
+        # The case's JUDGE. An unknown or retired id degrades to NO judge rather than
+        # failing intake -- the same treatment a bad model or mode gets. The spawn
+        # re-normalizes too, so a stale id can never wedge a launch.
+        critic = ""
+        try:
+            import scratch_critic as cri
+            critic = cri.normalize_choice(record.get("critic"))
+        except Exception:
+            critic = ""
+        record["critic"] = critic or None
 
         _write_spec(spec_path, case=case, precinct=precinct, model=model,
                     parent=record.get("parent"), deputy=deputy,

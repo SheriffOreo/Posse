@@ -6,21 +6,23 @@ Posse onboarding — one interactive program that stands up your instance.
     python3 setup.py --no-launch     # configure only; don't start the daemons/dashboard
 
 It replaces the manual ONBOARDING.md walkthrough: it asks you a handful of
-questions (your name + email, the posse's mailbox, Claude auth, the web
-host/port), writes every config file for you, seeds the front desk, registers
-your dashboard login, starts the daemons + dashboard, and prints the URL to
-open. Re-runnable: it shows current values as defaults and only rewrites what
-you change.
+questions (your name + email, the posse's mailbox, Claude auth, optional
+ChatGPT/Codex auth, the web host/port), writes every config file for you, seeds
+the front desk and the judges, registers your dashboard login, starts the
+daemons + dashboard, and prints the URL to open. Re-runnable: it shows current
+values as defaults and only rewrites what you change.
 
 Nothing here is Posse-specific to any one operator — the released repo carries
 no identity. You supply yours once, into files that are git-ignored (your
 name/email in infra/operator.json, mail creds in ~/.smtp_env, Claude auth in
-~/.anthropic_key or ~/.claude/.credentials.json).
+~/.anthropic_key or ~/.claude/.credentials.json, ChatGPT auth in ~/.openai_key
+or ~/.codex/auth.json).
 """
 import argparse
 import getpass
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +36,8 @@ ENV_LOCAL = REPO / "infra_env.local.sh"
 SMTP_ENV = Path(os.path.expanduser("~/.smtp_env"))
 ANTHROPIC_KEY = Path(os.path.expanduser("~/.anthropic_key"))
 CLAUDE_CREDS = Path(os.path.expanduser("~/.claude/.credentials.json"))
+OPENAI_KEY = Path(os.path.expanduser("~/.openai_key"))
+CODEX_CREDS = Path(os.path.expanduser("~/.codex/auth.json"))
 
 # ---------------------------------------------------------------------------
 # tiny terminal helpers (color degrades gracefully when not a tty)
@@ -118,7 +122,54 @@ def write_anthropic_key(key):
     return ANTHROPIC_KEY
 
 
-def write_env_local(conda_env, claude_auth, dash_host, dash_port, dash_public):
+def write_openai_key(key):
+    """The ChatGPT sibling of write_anthropic_key. scratch_codex_auth.sh reads this
+    file in apikey mode and exports CODEX_API_KEY/OPENAI_API_KEY from it."""
+    OPENAI_KEY.write_text(key.strip())
+    os.chmod(OPENAI_KEY, 0o600)
+    return OPENAI_KEY
+
+
+def find_codex():
+    """Resolve the `codex` binary the way scratch_codex_auth.sh does: an explicit
+    TSOMP_CODEX_BIN, then PATH, then the usual manual installs, then the newest VS Code
+    ChatGPT extension (where codex ships without ever landing on PATH). Returns the
+    path as a string, or '' if there is none.
+
+    Kept in step with that script deliberately: setup must not report "not found" for a
+    codex the launchers will happily use, nor the reverse."""
+    explicit = os.environ.get("TSOMP_CODEX_BIN", "")
+    if explicit and os.access(explicit, os.X_OK):
+        return explicit
+    p = shutil.which("codex")
+    if p:
+        return p
+    for cand in ("~/.npm-global/bin/codex", "~/.local/bin/codex",
+                 "/usr/local/bin/codex", "~/.cargo/bin/codex"):
+        cand = os.path.expanduser(cand)
+        if os.access(cand, os.X_OK):
+            return cand
+    # The VS Code ChatGPT extension bundle, remote-server or local install. The binary
+    # sits under bin/<arch>/codex, and the newest EXTENSION VERSION wins -- compared
+    # numerically, since a plain string sort puts 26.9.x above 26.10.x (the same trap
+    # scratch_codex_auth.sh avoids with `sort -V`).
+    def _ver(path):
+        m = re.search(r"openai\.chatgpt-([0-9][0-9.]*)", str(path))
+        return [int(n) for n in m.group(1).split(".") if n.isdigit()] if m else []
+
+    cands = []
+    for root in ("~/.vscode-server/extensions", "~/.vscode/extensions"):
+        root = Path(os.path.expanduser(root))
+        if root.is_dir():
+            cands += list(root.glob("openai.chatgpt-*/bin/*/codex"))
+    for cand in sorted(cands, key=_ver, reverse=True):
+        if os.access(cand, os.X_OK):
+            return str(cand)
+    return ""
+
+
+def write_env_local(conda_env, claude_auth, dash_host, dash_port, dash_public,
+                    codex_auth="", codex_bin=""):
     """Write infra_env.local.sh (git-ignored): the non-identity, non-secret runtime
     env sourced before starting the daemons. Identity lives in operator.json; secrets
     live in ~/.smtp_env and the Claude auth files."""
@@ -133,6 +184,10 @@ def write_env_local(conda_env, claude_auth, dash_host, dash_port, dash_public):
         f'export INFRA_DASH_HOST="{dash_host}"',
         f'export INFRA_DASH_PORT="{dash_port}"',
     ]
+    if codex_auth:                       # only when ChatGPT deputies were enabled
+        lines.append(f'export TSOMP_CODEX_AUTH="{codex_auth}"')
+    if codex_bin:                        # a codex that is not on PATH (e.g. the VS Code one)
+        lines.append(f'export TSOMP_CODEX_BIN="{codex_bin}"')
     if dash_public:
         lines.append('export INFRA_DASH_PUBLIC="1"   # bind 0.0.0.0 + TLS')
     ENV_LOCAL.write_text("\n".join(lines) + "\n")
@@ -211,6 +266,15 @@ def seed_receptionist(env=None):
     """Idempotently seed the front-desk precinct so the dashboard Precincts tab is
     never empty on a fresh install."""
     return _run([sys.executable, "scratch_records.py", "directory", "ensure-receptionist"],
+                cwd=str(INFRA), env=env or _base_env())
+
+
+def seed_judges(env=None):
+    """Install the judges the repo ships with (the charter + anonymous + vyas), so the
+    dashboard's Judge tab and the per-case judge selector work on a fresh install
+    rather than pointing at an empty registry. Idempotent, and it never overrides a
+    judge the operator has since edited or retired."""
+    return _run([sys.executable, "scratch_critic.py", "seed"],
                 cwd=str(INFRA), env=env or _base_env())
 
 
@@ -318,7 +382,7 @@ def main(argv=None):
                     help="configure everything but do NOT start the daemons/dashboard")
     args = ap.parse_args(argv)
 
-    TOTAL = 8
+    TOTAL = 9
     print(_c("1;35", "\n╭──────────────────────────────────────────────────────────────╮"))
     print(_c("1;35", "│   Posse — set up & run your own agent-management instance    │"))
     print(_c("1;35", "╰──────────────────────────────────────────────────────────────╯"))
@@ -401,8 +465,56 @@ def main(argv=None):
             warn("~/.claude/.credentials.json not found — run `claude` then /login before "
                  "sending tasks, or deputies won't start.")
 
-    # -- 5. permissions (the common question) --------------------------------
-    step(5, TOTAL, "Autonomous deputies & permissions")
+    # -- 5. ChatGPT / Codex auth (OPTIONAL) ----------------------------------
+    # A case may run on `codex` instead of `claude`, chosen per case. Everything here
+    # is optional: skipping it leaves a fully working Claude-only posse. It exists
+    # because v1.3.0 shipped the ChatGPT backend and a create-case form that offers
+    # ChatGPT, while setup never mentioned it — so the mode was selectable before
+    # anything had been installed or authenticated.
+    step(5, TOTAL, "ChatGPT (Codex) — optional second service")
+    codex_auth = codex_bin_env = ""
+    info("A case can run on OpenAI's `codex` instead of `claude`, picked per case.")
+    info("Claude-only is perfectly fine — skip this and the ChatGPT modes stay unused.")
+    if ask_yesno("Enable ChatGPT deputies?", default=False):
+        found = find_codex()
+        if found:
+            ok(f"codex: found ({found})")
+            # PATH-invisible copies (the VS Code extension) must be pinned in the env
+            # file, or only THIS shell would ever find them.
+            if not shutil.which("codex"):
+                codex_bin_env = found
+                info("(not on PATH — recording TSOMP_CODEX_BIN so the daemons find it)")
+        else:
+            warn("codex: NOT found — install it, then re-run setup.py:")
+            info("    npm install -g @openai/codex")
+            info("    codex --version")
+            info("  Posse also finds a codex inside the VS Code ChatGPT extension, or one")
+            info("  named by TSOMP_CODEX_BIN.")
+        info("Two billing modes, exactly like Claude's:")
+        info("  subscription — your ChatGPT plan OAuth (default; run `codex login` once)")
+        info("  apikey       — an OpenAI API key, pay-per-token (OpenAI's advice for automation)")
+        cmode = ask("ChatGPT auth mode (subscription/apikey)", "subscription").lower()
+        codex_auth = "apikey" if cmode.startswith("a") else "subscription"
+        if codex_auth == "apikey":
+            key = ask_secret("OpenAI API key (hidden)")
+            if key:
+                write_openai_key(key)
+                ok(f"wrote {OPENAI_KEY} (chmod 600)")
+            else:
+                warn(f"no key entered — put it in {OPENAI_KEY} later (chmod 600).")
+        else:
+            if CODEX_CREDS.exists():
+                ok(f"found {_rel(CODEX_CREDS)} (ChatGPT plan login present)")
+            else:
+                warn(f"{CODEX_CREDS} not found — run `codex login` before sending a "
+                     "ChatGPT case, or its deputy won't start.")
+        info("Pick the service per case on the create-case form, or by e-mail tag")
+        info("(service: chatgpt). See README → 'Using ChatGPT'.")
+    else:
+        info("skipped — Claude-only. Re-run setup.py any time to add it.")
+
+    # -- 6. permissions (the common question) --------------------------------
+    step(6, TOTAL, "Autonomous deputies & permissions")
     info("Do you need to set up a Claude permission bypass to run deputies autonomously?")
     ok("Short answer: it's already built in — you do NOT add anything.")
     info("A deputy is a HEADLESS claude run with no human to approve each tool call, so every")
@@ -410,8 +522,8 @@ def main(argv=None):
     info("lane once you send a task. One-time step: run `claude` once interactively and accept")
     info("the trust prompt for this folder (and finish /login) so headless runs start cleanly.")
 
-    # -- 6. web host & port --------------------------------------------------
-    step(6, TOTAL, "Dashboard web address")
+    # -- 7. web host & port --------------------------------------------------
+    step(7, TOTAL, "Dashboard web address")
     info("Localhost (default, safest) = reach via SSH tunnel. Public = bind 0.0.0.0 + TLS.")
     public = ask_yesno("Expose the dashboard publicly with TLS (else localhost-only)?", default=False)
     advertise = ""
@@ -424,11 +536,12 @@ def main(argv=None):
         dash_host = ask("Bind host", "127.0.0.1")
     dash_port = ask("Port", "8787")
     conda_env = ask("Conda env for the daemons (blank = system python3)", os.environ.get("INFRA_CONDA_ENV", ""))
-    write_env_local(conda_env, claude_auth, dash_host, dash_port, public)
+    write_env_local(conda_env, claude_auth, dash_host, dash_port, public,
+                    codex_auth=codex_auth, codex_bin=codex_bin_env)
     ok(f"wrote {_rel(ENV_LOCAL)} (state root, auth mode, web bind)")
 
-    # -- 7. bootstrap the front desk + dashboard account ---------------------
-    step(7, TOTAL, "Seed the front desk + your dashboard login")
+    # -- 8. bootstrap the front desk + dashboard account ---------------------
+    step(8, TOTAL, "Seed the front desk + your dashboard login")
     env = _base_env()
     env["INFRA_OPERATOR_EMAIL"] = email
     env["INFRA_OPERATOR_NAME"] = name
@@ -437,6 +550,11 @@ def main(argv=None):
        if r.returncode == 0 else "receptionist seed reported: " + r.stderr.strip()[:160])
     if seed_registry():
         ok("seeded an empty deputy registry (scratch_agents_registry.json)")
+    r = seed_judges(env)
+    if r.returncode == 0:
+        ok(f"judges: {r.stdout.strip() or 'already registered'} (Judge tab + per-case selector)")
+    else:
+        warn("judge seed reported: " + (r.stderr.strip()[:160] or r.stdout.strip()[:160]))
     if ask_yesno("Set your dashboard password now (username = your email)?", default=True):
         pw = ask_secret("Dashboard password (min 8, hidden)")
         pw2 = ask_secret("Confirm password")
@@ -447,8 +565,8 @@ def main(argv=None):
         else:
             warn("passwords empty or mismatched — set later with dashboard/set_password.py.")
 
-    # -- 8. launch -----------------------------------------------------------
-    step(8, TOTAL, "Launch the system")
+    # -- 9. launch -----------------------------------------------------------
+    step(9, TOTAL, "Launch the system")
     url = dashboard_url(dash_host, dash_port, public, advertise)
     if args.no_launch:
         warn("--no-launch: skipping daemon/dashboard start. Start later with ONBOARDING.md step 8.")
