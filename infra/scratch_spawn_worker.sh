@@ -179,6 +179,30 @@ fi
 # request for a review or propose a judge. The awareness block leads with "do not
 # run one unless you were asked to": an unrequested review costs a whole extra
 # worker, so the default is NO judge.
+# The case's WORK SPLIT: the REPORT lane's own service+model. Explicit env wins,
+# then a `report_model:`/`report_service:` line in the spec. An unset report lane
+# INHERITS the work lane, so a case that ignores the split behaves exactly as a
+# single-model case does.
+WORKER_REPORT_MODEL="${WORKER_REPORT_MODEL:-}"
+WORKER_REPORT_SERVICE="${WORKER_REPORT_SERVICE:-}"
+if [ -z "$WORKER_REPORT_MODEL" ]; then
+  WORKER_REPORT_MODEL="$(sed -n 's/^[[:space:]]*report_model[[:space:]]*[:=][[:space:]]*//Ip' "$TASKFILE" 2>/dev/null | head -1 | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9._-')"
+fi
+if [ -z "$WORKER_REPORT_SERVICE" ]; then
+  WORKER_REPORT_SERVICE="$(sed -n 's/^[[:space:]]*report_service[[:space:]]*[:=][[:space:]]*//Ip' "$TASKFILE" 2>/dev/null | head -1 | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9_-')"
+fi
+_LANES="$(python3 scratch_models.py lanes "${WORKER_MODEL:--}" "${WORKER_SERVICE:--}" "${WORKER_REPORT_MODEL:--}" "${WORKER_REPORT_SERVICE:--}" 2>/dev/null)"
+if [ -n "$_LANES" ]; then
+  WORKER_REPORT_SERVICE="$(printf '%s\n' "$_LANES" | sed -n 5p | tr -d '[:space:]')"
+  WORKER_REPORT_MODEL="$(printf '%s\n'   "$_LANES" | sed -n 6p | tr -d '[:space:]')"
+else
+  WORKER_REPORT_SERVICE="$WORKER_SERVICE"; WORKER_REPORT_MODEL="$WORKER_MODEL"
+fi
+# The deputy-facing WORK SPLIT text, from ONE source of truth so the web form, an
+# email-tagged case and a direct spawn all describe the split identically.
+SPLIT_BLOCK="$(python3 scratch_model_switch.py protocol --case "$TASK_UID" \
+  --work-model "$WORKER_MODEL" --work-service "$WORKER_SERVICE" \
+  --report-model "$WORKER_REPORT_MODEL" --report-service "$WORKER_REPORT_SERVICE" 2>/dev/null)"
 JUDGE_AWARENESS="$(python3 scratch_critic.py awareness --case "$TASK_UID" 2>/dev/null)"
 CRITIC_BLOCK=""
 CRITIC_GATE=""
@@ -380,6 +404,9 @@ fellow members. Act in this order:
 
 Even without an interrupt, continue to check the mailbox between every major step
 (before and after each long operation) using: bash scratch_read_mailbox.sh $NAME
+
+THE WORK SPLIT — WHICH MODEL DOES WHAT.
+$SPLIT_BLOCK
 
 $JUDGE_AWARENESS
 
@@ -592,7 +619,19 @@ EOF
 # through so launch and relaunch agree. Task 372/376: pass the precinct + case
 # number so the relaunch script re-exports WORKER_PRECINCT/TSOMP_CASE/TSOMP_MODEL
 # (the context-header env) across a watchdog revival.
-bash scratch_gen_relaunch.sh "$NAME" "$SID" "$REQUESTER" "$WORKER_MODEL" max "$WORKER_PRECINCT" "$TASK_UID"
+# Persist the case's WORK SPLIT (plus the judge and the mode) beside the worker
+# files. The deputy reads it via `scratch_model_switch.py lanes`, `--to report`
+# resolves against it, and the system manager reads it when it applies a switch.
+# This record is the COMPLETE set of settings a case was created with: it is what a
+# follow-up to an already-closed case revives the deputy on.
+python3 scratch_model_switch.py write-lanes --worker "$NAME" \
+  --work-model "$WORKER_MODEL" --work-service "$WORKER_SERVICE" \
+  --report-model "$WORKER_REPORT_MODEL" --report-service "$WORKER_REPORT_SERVICE" \
+  --judge "$WORKER_CRITIC" --mode "$WORKER_MODE" \
+  --case "$TASK_UID" --precinct "$WORKER_PRECINCT" --requester "$REQUESTER" \
+  >/dev/null 2>&1 || echo "WARN: could not write the lanes file for $NAME" >&2
+
+bash scratch_gen_relaunch.sh "$NAME" "$SID" "$REQUESTER" "$WORKER_MODEL" "$WORKER_EFFORT" "$WORKER_PRECINCT" "$TASK_UID" "$WORKER_SERVICE"
 
 # 4) register the job with the watchdog so a killed worker gets revived
 python3 - "$NAME" "$SID" "$LOG" "$RELAUNCH" "$REQUESTER" <<'PY'

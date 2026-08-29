@@ -225,6 +225,8 @@ def _spawn(record, *, case, deputy, spec_path, dry):
     if dry:
         print(f"[dry-spawn] WORKER_PRECINCT={precinct} "
               f"WORKER_MODEL={record.get('model') or '(default)'} "
+              f"REPORT={record.get('report_service') or '-'}:{record.get('report_model') or '-'} "
+              f"JUDGE={record.get('critic') or '-'} "
               f"scratch_spawn_worker.sh {deputy} {spec_path} {requester} {keywords!r}")
         return
     env = dict(os.environ)
@@ -239,6 +241,13 @@ def _spawn(record, *, case, deputy, spec_path, dry):
         env["WORKER_WRITER_MODEL"] = record["writer_model"]
     if record.get("critic"):                        # this case's JUDGE, if one was picked
         env["WORKER_CRITIC"] = record["critic"]
+    # The WORK SPLIT's report lane. Absent = "same as work", which the launcher
+    # resolves; passing it through is what makes the form's split real rather than
+    # a promise the backend drops.
+    if record.get("report_model"):
+        env["WORKER_REPORT_MODEL"] = record["report_model"]
+    if record.get("report_service"):
+        env["WORKER_REPORT_SERVICE"] = record["report_service"]
     subprocess.run(["bash", "scratch_spawn_worker.sh", deputy, str(spec_path),
                     requester, keywords],
                    cwd=str(REPO_ROOT), env=env, timeout=120,
@@ -313,6 +322,13 @@ def process_one(rec_path: Path, dry=False) -> dict:
         except Exception:
             critic = ""
         record["critic"] = critic or None
+        # The report lane. An unknown model/service is dropped rather than failing
+        # intake (same treatment as a bad work model); the launcher then inherits
+        # the work lane, which is the documented default.
+        rep_m = (record.get("report_model") or "").strip().lower()
+        rep_s = (record.get("report_service") or "").strip().lower()
+        record["report_model"] = rep_m if rep_m in _MODELS else None
+        record["report_service"] = rep_s if (_sm is not None and rep_s in _sm.SERVICE_IDS) else None
 
         _write_spec(spec_path, case=case, precinct=precinct, model=model,
                     parent=record.get("parent"), deputy=deputy,

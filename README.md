@@ -93,11 +93,14 @@ don't address:
 
 ## Features
 
-- 🤝 **Two vendors, chosen per case.** A case runs on Claude, on ChatGPT (OpenAI's
-  `codex`), or in **hybrid** — Claude does the work and ChatGPT writes the report, the
-  two iterating until the writer has no unanswered factual queries. Subscription or
-  API-key auth for either; usage limits are tracked per vendor, so hitting one does not
-  block the other. See [Using ChatGPT](#using-chatgpt-optional).
+- 🤝 **Two vendors, and a case can change model mid-flight.** A case runs on Claude or
+  on ChatGPT (OpenAI's `codex`) — and it is **one case, one context, several models**:
+  the deputy switches *its own* model between **lanes** (the work lane vs. the
+  human-report lane), rather than handing off to a second agent. So "Claude does the
+  thinking, ChatGPT writes the report" is one deputy crossing a jurisdiction line, and
+  nothing is lost in a hand-off. Subscription or API-key auth for either; usage limits
+  are tracked per vendor, so hitting one does not block the other.
+  See [Using ChatGPT](#using-chatgpt-optional).
 - 📨 **Async messaging is the control plane.** A `[precinct]`-tagged message spawns a
   deputy in that precinct; a reply steers the deputy that sent it. Routing is
   deterministic and **zero-LLM**; an allow-list gates senders. (The reference
@@ -259,58 +262,79 @@ inherited `OPENAI_API_KEY`/`CODEX_API_KEY`, so a stray key can never silently mo
 subscription case onto paid tokens. It also warns when the ChatGPT access token is
 within 48 h of expiry.
 
-**3. Pick a mode when you create a case.** The create-case form's **Service** field
-offers exactly three:
+**3. Choose the service — and, if you want, a per-lane split.** A case belongs to ONE
+deputy with ONE context. What can change over that case's life is the **model generating
+it**, and the unit of choice is a **work type**, or *lane*:
 
-| Mode | Who does the work | Who writes the report |
-| --- | --- | --- |
-| `claude` | Claude | Claude |
-| `claude+chatgpt` | Claude | **ChatGPT** |
-| `chatgpt` | ChatGPT | ChatGPT |
+| Lane | What it covers |
+| --- | --- |
+| **work** | thinking, planning, search, code, experiments, tests, the case file, records, messages to other agents — and **all** e-mail correspondence with you |
+| **report** | a deliverable **document** a human sits down and read: a PDF and the LaTeX behind it, a README, a design doc, a slide deck |
 
-The Model dropdown follows the mode. In `claude+chatgpt` you get **two** pickers — the
-Claude model that does the work and the ChatGPT model that writes the report.
+The create-case form asks for a service+model for each lane; the report lane defaults to
+**"same as work"**, so a case that ignores the split behaves exactly like a single-model
+case. Set the two lanes differently — say work on `claude:opus`, report on
+`chatgpt:terra` — and the deputy **switches its own model** when it starts the document:
+it writes a switch request and exits, and the system manager confirms it is really gone,
+carries the context across, and relaunches it on the other lane.
+
+> **E-mail is not report writing.** The tempting rule — "anything a human reads" — would
+> sweep in every ACK, milestone and FINAL, and the case would switch models a dozen times
+> to write five-line notes. Correspondence stays in whatever model is running; only a
+> deliverable document crosses the line, and the switch CLI **refuses** an email-shaped
+> reason.
+
+Two fidelity classes, and the difference is worth knowing:
+
+- **Same service, different model** (e.g. `opus` → `fable`): *lossless*. Same session, one
+  flag; nothing is re-read or re-summarised.
+- **Across services** (`claude` ↔ `chatgpt`): *reconstructed*. The two CLIs keep
+  transcripts in stores neither can read, so the outgoing transcript is rendered into a
+  budgeted hand-off that seeds a fresh session on the other side.
+
+```bash
+python3 infra/scratch_model_switch.py lanes  --worker <name>   # this case's split
+python3 infra/scratch_model_switch.py request --to report --reason "write the PDF report"
+python3 infra/scratch_model_switch.py status --worker <name>
+```
 
 By e-mail, tag the request:
 
 ```
-[infra][service:claude+chatgpt]  in the subject
-service: claude+chatgpt          on its own line in the body  (or "mode: hybrid")
-model: opus                      optional — the deputy's model
-writer_model: sol                optional — the report writer's model
+[infra][service:chatgpt]   in the subject
+service: chatgpt           on its own line in the body — the deputy's service
+model: opus                optional — the work lane's model
+report_service: chatgpt    optional — the report lane's service
+report_model: terra        optional — the report lane's model
 ```
-Naming a ChatGPT model alone is enough: `model: luna` implies the `chatgpt` mode. An
-unrecognised value falls back to Claude rather than guessing.
+Naming a ChatGPT model alone is enough: `model: luna` implies the `chatgpt` service. An
+unrecognised value falls back rather than guessing. `python3 infra/scratch_inbox.py
+email-protocol` prints the whole tag vocabulary, generated from the live registries so it
+cannot go stale.
 
 **Models** (`python3 infra/scratch_models.py list`): Claude `fable` / `opus` / `sonnet` /
 `haiku`; ChatGPT `sol` (GPT-5.6 Sol) / `terra` (GPT-5.6 Terra, the default) / `luna`
 (GPT-5.6 Luna) / `gpt55` (GPT-5.5). Update ids in that one file when a vendor ships a new
 version — everything else reads them from there.
 
-### Hybrid mode: Claude works, ChatGPT writes
+### The older two-agent hybrid
 
-`claude+chatgpt` exists because the two models are not equally good at the same things.
-Claude does the investigation, the code and the runs; ChatGPT owns the document you
-actually read. It is a two-way exchange, not a polish pass — the writer may not invent
-facts, so anything it cannot verify it raises as a **query** and the deputy answers it in
-the next round:
+Before the work split there was a `claude+chatgpt` **hybrid mode**: a Claude deputy plus a
+*separate* ChatGPT writer that read the artifacts and asked the deputy questions between
+rounds. It still ships (`infra/scratch_hybrid.py`, archived per round under
+`scratch_full_logs/hybrid/case_<n>/round_<r>/`, falling back to the deputy's own draft if
+the writer dies), and it is still the only way to get a genuine second reader.
 
-```
-deputy --(draft + artifacts + answers to last round's queries)--> writer
-writer --(report + {status, queries, changes})-->                 deputy
-```
-
-The writer reads the artifacts directly, so it can catch a draft whose numbers disagree
-with its own evidence. It runs only for a **PDF/LaTeX** deliverable; a plain `.md` the
-deputy writes itself. Every round is archived under
-`scratch_full_logs/hybrid/case_<n>/round_<r>/`, and if the writer dies or times out the
-hand-off falls back to the deputy's own draft rather than losing work.
+But it is **not** how a case expresses "one model works, another writes" any more. Two
+agents means two contexts for one case, and everything the writer knows has to survive a
+hand-off; the work split gives you the same division of labour inside a single context.
+Prefer the split; reach for hybrid only when you specifically want an independent second
+model reading your artifacts.
 
 ```bash
 python3 infra/scratch_hybrid.py handoff --case 42 \
     --draft draft.md --target reports/case42/REPORT.tex \
     --artifact somefile.py --rounds 3
-python3 infra/scratch_hybrid.py queries --case 42     # what it needs from you
 ```
 
 **Limits are per-vendor.** ChatGPT's 5-hour and weekly caps are tracked separately from

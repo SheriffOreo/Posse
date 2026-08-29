@@ -203,6 +203,15 @@ PACKAGED_JUDGES = {
                         "concise, clear, self-contained and free of AI slop."),
         "model": None,
     },
+    "code": {
+        "display_name": "The Code Judge",
+        "description": ("Judges source code: correctness and functionality first "
+                        "(paths traced, callers followed, something actually run), "
+                        "then naming, readability, comment discipline (concise or "
+                        "none -- no narration, no boilerplate) and human, non-slop "
+                        "style. Use it for a diff, patch, module, script or test suite."),
+        "model": "opus",
+    },
     "vyas": {
         "display_name": "The Vyas Judge",
         "description": ("Judges papers, talks, decks, posters and proposals with "

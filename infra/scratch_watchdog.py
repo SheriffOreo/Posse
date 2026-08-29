@@ -317,6 +317,15 @@ def classify(job):
     rc=N' string (None when there is no marker; Task 170 F4 surfaces it in the
     crash email). 'no_marker' = dead without any exit evidence (typical of
     tmux kill-session) — tick() decides what to do with it."""
+    # A MODEL SWITCH request outranks every other signal, and is checked while the
+    # worker may still be alive. The deputy writes the request and then exits on
+    # purpose, so this is the one death that is neither a crash nor a completion —
+    # and classify() must know a switch is pending BEFORE the process is gone, so
+    # the caller can verify the exit rather than race it. Deliberately ahead of the
+    # done-sentinel check too: a stale sentinel from an earlier park must not
+    # swallow a switch.
+    if switch_pending(job):
+        return ("switch_requested", None, None)
     if alive(job):
         return ("running", None, None)
     if Path(job.get("done_sentinel", "/nonexistent")).exists():
@@ -621,6 +630,166 @@ def dark_guard(jobs, now):
     return changed
 
 
+
+# ---------------------------------------------------------------------------
+# MODEL SWITCH (one case, one context, several models)
+#
+# A deputy that wants a different model writes a switch request and exits. The
+# watchdog is the only thing that can act on it: the deputy is gone by then, and
+# something outside the process has to confirm that, move the context and start
+# it again. That is exactly the done-sentinel's shape, so it reuses it.
+#
+# The ORDER here is the whole safety argument: confirm-gone, THEN apply, THEN
+# relaunch. Applying while the old process still lives would rewrite the relaunch
+# script (and, cross-service, mint a new session) underneath a running agent.
+# ---------------------------------------------------------------------------
+SWITCH_KILL_GRACE = 300   # s to wait for a voluntary exit before killing it
+
+try:
+    import scratch_model_switch
+except Exception as _e:      # never let a missing helper take the watchdog down
+    scratch_model_switch = None
+    log(f"WARNING: scratch_model_switch unavailable ({_e}) — model switching is OFF")
+
+
+def switch_pending(job):
+    """The worker's pending switch request, or None."""
+    if scratch_model_switch is None:
+        return None
+    try:
+        rec = scratch_model_switch.status(job["name"])
+    except Exception:
+        return None
+    if not isinstance(rec, dict) or rec.get("state") not in ("requested", "applying"):
+        return None
+    # a SYSTEM-initiated restore (the inbox loop putting a CLOSED case
+    # back on its work lane before a follow-up relaunch) is applied synchronously
+    # by the caller that wrote it. This loop must not also apply it: we poll every
+    # ~45 s and :1158 honours a switch for exactly the done/failed state such a
+    # deputy is in, so both sides would race — two scratch_gen_relaunch.sh runs
+    # sharing one fixed temp name, two minted session ids, and a watchdog relaunch
+    # on top of the inbox loop's own.
+    if rec.get("origin") == "case576_followup":
+        return None
+    return rec
+
+
+def agent_really_gone(job):
+    """Has the requesting agent actually exited?
+
+    Feng's requirement in the Case 561 request was literally "make sure it
+    actually exited". Two independent checks, and BOTH must say gone: the tmux
+    session, and a live non-zombie CLI process inside it. tmux alone is not
+    enough — the wrapper script outlives the agent by design (it drains mail and
+    runs the sentinel trap), so a live session does not mean a live agent.
+    """
+    if tmux_has(job["name"]) and agent_alive_nonzombie(job):
+        return False
+    return True
+
+
+def handle_switch(job, rec, jobs, now):
+    """Apply a pending model switch and relaunch. Returns True if state changed."""
+    name = job["name"]
+    if not agent_really_gone(job):
+        waited = now - (rec.get("requested_ts") or now)
+        if waited < SWITCH_KILL_GRACE:
+            log(f"{name} switch requested ({rec['from_model']} -> {rec['to_model']}), "
+                f"agent still alive — waiting for it to exit ({int(waited)}s)")
+            return False
+        # It asked to be switched and then did not leave. Take the process down
+        # SURGICALLY (Case 557: matches the {claude,codex} union) so its detached
+        # CPU children survive, exactly as an interrupt would.
+        log(f"{name} still alive {int(waited)}s after requesting a switch -> "
+            f"surgical kill")
+        subprocess.run([sys.executable, "scratch_kill_agent_only.py", name],
+                       cwd=str(ROOT), stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+        return False        # re-check next tick; never apply against a live agent
+
+    # Case 561 (Feng uid=676) BUG 1: a switching worker is BY DEFINITION not done,
+    # but the done-sentinel may still be on disk — a deputy that closed an earlier
+    # case, or one that parked with scratch_job_sleep.sh (parking TOUCHES the
+    # sentinel, Case 508). Left in place, the very next tick after the switch
+    # classifies the freshly relaunched, actively-working deputy as "done" and
+    # emails Steven "✅ completed" in the middle of its model switch. Clearing it
+    # here mirrors what scratch_interrupt_worker.sh:141 already does when it
+    # revives a worker for more work.
+    try:
+        sp = Path(job.get("done_sentinel", "/nonexistent"))
+        if sp.exists():
+            sp.unlink()
+            log(f"{name} cleared a stale done-sentinel before switching "
+                f"(a switching worker is not finished)")
+    except Exception as e:
+        log(f"{name} could not clear the done-sentinel before switching: {e}")
+
+    try:
+        done = scratch_model_switch.apply(name, rec)
+    except Exception as e:
+        log(f"{name} MODEL SWITCH FAILED: {e}")
+        # Fail SAFE: drop the request so the worker is not stuck in a switch loop,
+        # and let the ordinary crash path relaunch it on the model it already has.
+        try:
+            scratch_model_switch.cancel(name)
+        except Exception:
+            pass
+        email(f"⚠️ watchdog: model switch FAILED for '{name}'",
+              f"Worker '{name}' asked to switch "
+              f"{rec.get('from_service')}:{rec.get('from_model')} -> "
+              f"{rec.get('to_service')}:{rec.get('to_model')} and the switch could "
+              f"not be applied:\n\n  {e}\n\nThe request was dropped and the worker "
+              f"will be relaunched on its CURRENT model by the normal path, so the "
+              f"case continues — but it continues in the wrong lane, so the "
+              f"deliverable may be written by the model you did not pick.", jobs)
+        return True
+
+    # Roster now reflects the new model/service — this is what the Status page and
+    # every later limit decision read.
+    job["model"] = done["to_model"]
+    job["service"] = done["to_service"]
+    job["session"] = done.get("session") or job.get("session")
+    job["switches"] = job.get("switches", 0) + 1
+    job["last_switch_ts"] = done.get("applied_ts", now)
+    job["last_switch"] = scratch_model_switch.describe(done)
+
+    # A switch is NOT a crash: preserve the relaunch counter across it, or a case
+    # that legitimately switches a few times would burn its MAX_RELAUNCH budget
+    # and be declared failed for working correctly.
+    # Case 561 (uid=676) BUG 2: stamp a run-start marker in the worker's log BEFORE
+    # relaunching. relaunch() spawns tmux via Popen, which returns before the session
+    # exists, so a tick can land in that gap; without this marker last_run_tail()
+    # still ends on the "EXITED rc=0" the deputy wrote when it deliberately exited to
+    # switch, and classify() reads that as `exited_incomplete` -> a spurious
+    # "exited incomplete — auto-relaunching" email plus a redundant relaunch. With
+    # the marker the tail is empty, so the gap degrades to `no_marker`, which is
+    # already protected by the DEAD_TICKS grace. Same failure family as Case 532.
+    try:
+        with open(job["log"], "a") as fh:
+            fh.write(f"[{name}] MODEL-SWITCH {done['from_service']}:{done['from_model']}"
+                     f" -> {done['to_service']}:{done['to_model']} "
+                     f"{datetime.now():%Y-%m-%d %H:%M:%S}\n")
+    except Exception as e:
+        log(f"{name} could not stamp the MODEL-SWITCH log marker: {e}")
+
+    prev = job.get("relaunched", 0)
+    relaunch(job)
+    job["relaunched"] = prev
+    log(f"{name} MODEL SWITCH applied: {scratch_model_switch.describe(done)}")
+    email(f"🔀 watchdog: '{name}' switched to "
+          f"{done['to_service']}:{done['to_model']} (case {done.get('case') or '?'})",
+          f"Worker '{name}' asked to change model mid-case and has been restarted "
+          f"on the new one.\n\n"
+          f"  switch:  {scratch_model_switch.describe(done)}\n"
+          f"  reason:  {done.get('reason', '')}\n"
+          f"  context: " + ("same session resumed on the new model — nothing lost"
+                            if done.get("context") == "resumed" else
+                            f"rendered into a {done.get('seed_chars', 0)}-char handoff "
+                            f"and replayed into a fresh session (the two services "
+                            f"cannot share a session)") + "\n\n"
+          f"The case continues in the same context; only the model changed.", jobs)
+    return True
+
 def tick():
     jobs = load()
     changed = False
@@ -641,6 +810,19 @@ def tick():
         # (scratch_interrupt_worker.sh) sets state back to 'running'. Treating
         # the unknown state as running would classify the parked worker
         # exited_incomplete and relaunch-loop it, defeating the event-wake.
+        # A pending MODEL SWITCH outranks the parked/finished skip. A deputy can ask
+        # to switch from a state this loop would otherwise step over — parked on a
+        # job (waiting_jobs), or marked done by an earlier closure it is now working
+        # past. Without this the request would sit on disk forever and the deputy
+        # would never come back on the new model. Read ONCE: a second call races the
+        # first, and if the record were unlinked in between, handle_switch would get
+        # {} and apply() would raise a false "model switch FAILED" alarm.
+        _pending = switch_pending(j) if st in ("done", "failed", "waiting_jobs") else None
+        if _pending:
+            log(f"{j['name']} requested a model switch while '{st}' — honouring it")
+            if handle_switch(j, _pending, jobs, now):
+                changed = True
+            continue
         if st in ("done", "failed", "waiting_jobs"):
             continue
         if st == "waiting_reset":
@@ -688,6 +870,16 @@ def tick():
                 continue             # give the marker/relaunch a few polls to appear
             state = "crashed"        # persistent silent death (tmux killed, no mail)
         j.pop("_dead_ticks", None)
+        if state == "switch_requested":
+            # The deputy asked for a different model and exited on purpose. Do NOT
+            # treat that rc=0 death as a crash: handle_switch waits for the exit
+            # itself, rather than letting the ordinary crash logic relaunch it back
+            # onto the model it just asked to leave. Same single-read discipline as
+            # above: classify() has already read the record to reach this state.
+            _sw = switch_pending(j)
+            if _sw and handle_switch(j, _sw, jobs, now):
+                changed = True
+            continue
         if state == "done":
             j["state"] = "done"; j.pop("_rapid_deaths", None); changed = True
             log(f"{j['name']} completed")

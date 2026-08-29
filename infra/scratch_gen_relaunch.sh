@@ -58,10 +58,30 @@ NAME="${1:?worker name}"; SID="${2:?session id}"; REQUESTER="${3:?requester emai
 # regenerating an EXISTING worker's relaunch script without naming its model
 # now flips it to opus — pass 'fable' explicitly for the pinned-to-fable
 # sessions (paper, query, omp — see scratch_agents_registry.json / memories).
-MODEL="${4:-opus}"; EFFORT="${5:-max}"
+MODEL="${4:-opus}"; EFFORT="${5:-}"
 # Task 372/376: the precinct + case number so the relaunch script re-exports the
 # context-header env (WORKER_PRECINCT/TSOMP_CASE/TSOMP_MODEL) across a revival.
 PRECINCT="${6:-}"; TASK_UID="${7:-}"
+# Arg 8 is the SERVICE (claude|chatgpt). Omitted -> INFERRED from the model, so
+# regenerating an existing worker's script without naming a service still lands on
+# the right CLI (every legacy alias is a claude model). A revived chatgpt deputy
+# resumes with `codex exec resume <id>`, not `claude --resume` — without this the
+# relaunch silently switches vendors mid-case.
+SERVICE="${8:-}"
+if [ -z "$SERVICE" ]; then
+  SERVICE="$(python3 "$HERE/scratch_models.py" service "$MODEL" 2>/dev/null | tr -d '[:space:]')"
+fi
+[ -n "$SERVICE" ] || SERVICE="claude"
+MODEL_ID="$(python3 "$HERE/scratch_models.py" id "$MODEL" 2>/dev/null | tr -d '[:space:]')"
+[ -n "$MODEL_ID" ] || MODEL_ID="$MODEL"
+# An unspecified EFFORT is resolved from the model, not hardcoded to 'max': the
+# codex catalog's supported reasoning levels differ per model (gpt-5.5 stops at
+# 'xhigh', so passing 'max' would be rejected) while every claude model still
+# resolves to 'max' exactly as before.
+if [ -z "$EFFORT" ]; then
+  EFFORT="$(python3 "$HERE/scratch_models.py" effort "$MODEL" 2>/dev/null | tr -d '[:space:]')"
+fi
+[ -n "$EFFORT" ] || EFFORT="max"
 LOG="scratch_full_logs/worker_${NAME}.log"
 PROMPT="scratch_full_logs/worker_${NAME}_prompt.md"
 RELAUNCH="scratch_worker_${NAME}_relaunch.sh"
@@ -92,7 +112,64 @@ export TSOMP_AGENT="$NAME"
 export WORKER_PRECINCT="$PRECINCT"
 export TSOMP_CASE="$TASK_UID"
 export TSOMP_MODEL="$MODEL"
-echo "[$NAME] RELAUNCH \$(date) resume=$SID" >> $LOG
+# The SERVICE this script is about to run. Baked like TSOMP_MODEL rather than read
+# from the lanes record: it must describe what THIS script runs, and both are
+# regenerated together whenever a switch moves the worker across services.
+export TSOMP_SERVICE="$SERVICE"
+# The worker's own name, so \`scratch_model_switch.py request\` needs no --worker
+# argument (a deputy that has to name itself gets it wrong eventually).
+export TSOMP_WORKER="$NAME"
+AGENT_SERVICE="$SERVICE"
+CODEX_SESSION_FILE="scratch_full_logs/worker_${NAME}.codex_session"
+# A COLD codex start (after a cross-service switch INTO chatgpt) mints a brand-new
+# session id, so the relaunch needs the same capture the first spawn does —
+# otherwise the next relaunch aborts with "no codex session id". The log is
+# append-only across every run, so it accumulates one "session id:" line per codex
+# session this worker has ever had: read only from THIS exec's offset and take the
+# LAST match, then always overwrite. Refusing to write is not the safe direction —
+# a stale id resumes the WRONG conversation, whereas an absent one just forces
+# another correctly-seeded cold start (COLD is decided by this file being empty).
+capture_codex_session() {
+  [ "\$AGENT_SERVICE" = "chatgpt" ] || return 0
+  local sid
+  sid="\$(tail -c "+\${_CODEX_LOG_OFFSET:-1}" $LOG 2>/dev/null \\
+        | grep -oE 'session id:[[:space:]]*[0-9a-fA-F-]{36}' \\
+        | grep -oE '[0-9a-fA-F-]{36}' | tail -1)"
+  [ -n "\$sid" ] && printf '%s' "\$sid" > "\$CODEX_SESSION_FILE"
+}
+# The rest of the case's settings — the MODE, the REPORT lane and the JUDGE —
+# which this script would otherwise drop, so a revived deputy ran without them. It
+# also REFRESHES the case number and precinct baked above, which are a snapshot of
+# spawn day and go stale the moment a deputy TAKES a follow-up case. Model and
+# service are NOT among them — they are the baked literals above, because they must
+# describe what THIS script is about to run, and a switch rewrites them
+# in lockstep with the model flag.
+# Non-fatal: every literal above still stands if this fails.
+_SETTINGS_ENV="\$(python3 scratch_model_switch.py settings --worker "$NAME" --env 2>/dev/null)"
+[ -n "\$_SETTINGS_ENV" ] && eval "\$_SETTINGS_ENV"
+unset _SETTINGS_ENV
+
+# COLD START after a CROSS-SERVICE model switch. Switching claude <-> chatgpt
+# cannot resume: the two CLIs keep transcripts in separate stores and neither reads
+# the other's. The switch writes a SEED (the rendered handoff) and this script
+# starts a FRESH session with it instead of resuming one that does not exist.
+# Cold-vs-resume is decided by GROUND TRUTH — does the target session actually
+# exist on disk — not by a marker we might fail to clear, so a cold start that dies
+# before the session materialises retries as a cold start rather than looping on
+# \`--resume <nonexistent>\`.
+SEED_FILE="scratch_full_logs/worker_${NAME}.seed_prompt.md"
+CLAUDE_TRANSCRIPT="\$HOME/.claude/projects/$(printf '%s' "$HERE" | tr '/' '-')/$SID.jsonl"
+COLD=""
+if [ "\$AGENT_SERVICE" = "chatgpt" ]; then
+  [ -s "\$CODEX_SESSION_FILE" ] || COLD=1
+else
+  [ -f "\$CLAUDE_TRANSCRIPT" ] || COLD=1
+fi
+if [ -z "\$COLD" ] && [ -f "\$SEED_FILE" ]; then
+  # the session exists, so the seed was already consumed — retire it
+  mv -f "\$SEED_FILE" "\$SEED_FILE.used" 2>/dev/null || true
+fi
+echo "[$NAME] RELAUNCH \$(date) resume=$SID service=\$AGENT_SERVICE model=$MODEL cold=\${COLD:-0}" >> $LOG
 
 # Task 170 F5(b): forensic bundle on signal-shaped claude exits (129=SIGHUP,
 # 137=SIGKILL, 139=SIGSEGV, 143=SIGTERM). Captures what the Task 168 memo
@@ -262,16 +339,59 @@ if { [ "\${WORKER_STRACE:-}" = "1" ] || [ -f "scratch_full_logs/inbox/strace_${N
 fi
 
 if [ -n "\${INBOX_DRYRUN:-}" ]; then
-  echo "[DRYRUN-EXEC $NAME] would run: \${STRACE_PREFIX[*]} claude --resume $SID -p --dangerously-skip-permissions --model $MODEL --effort $EFFORT --max-turns 800 --verbose  <<< RESUME_PROMPT via stdin (\${#RESUME_PROMPT} chars)"
+  # Report the branch this run would ACTUALLY take: a dry run that always claimed
+  # "claude --resume" would hide exactly the chatgpt/cold paths worth checking.
+  if [ "\$AGENT_SERVICE" = "chatgpt" ]; then
+    echo "[DRYRUN-EXEC $NAME] would run: \${STRACE_PREFIX[*]} \$TSOMP_CODEX_BIN exec \${COLD:+(cold)}\${COLD:-resume \$(cat "\$CODEX_SESSION_FILE" 2>/dev/null)} --model $MODEL_ID -c model_reasoning_effort=$EFFORT  <<< RESUME_PROMPT via stdin (\${#RESUME_PROMPT} chars)"
+  else
+    echo "[DRYRUN-EXEC $NAME] would run: \${STRACE_PREFIX[*]} claude \${COLD:+--session-id}\${COLD:---resume} $SID -p --dangerously-skip-permissions --model $MODEL_ID --effort $EFFORT --max-turns 800 --verbose  <<< RESUME_PROMPT via stdin (\${#RESUME_PROMPT} chars)"
+  fi
   exit 0
 fi
 
 # Task 176: prompt via STDIN, not argv — argv-embedded snapshot text made the
 # worker's own \`pkill -f\` match its own claude (self-kill). Pipeline rc =
-# claude's rc (last command), so RC/death_bundle semantics are unchanged.
-printf '%s' "\$RESUME_PROMPT" | "\${STRACE_PREFIX[@]}" claude --resume "$SID" -p \\
-  --dangerously-skip-permissions --model $MODEL --effort $EFFORT --max-turns 800 --verbose >> $LOG 2>&1
-RC=\$?
+# the agent CLI's rc (last command), so RC/death_bundle semantics are unchanged.
+# On chatgpt we resume the CODEX session id captured at first launch (codex mints
+# its own id; it is stable across resumes). \`codex exec resume\` rejects
+# -C/--skip-git-repo-check — it reuses the original session's cwd — so those flags
+# must not be repeated there.
+if [ "\$AGENT_SERVICE" = "chatgpt" ]; then
+  CODEX_SID="\$(cat "\$CODEX_SESSION_FILE" 2>/dev/null)"
+  if [ -z "\$CODEX_SID" ] && [ -z "\$COLD" ]; then
+    echo "[$NAME] RELAUNCH ABORT: no codex session id at \$CODEX_SESSION_FILE" >> $LOG
+    exit 1
+  fi
+  if [ -n "\$COLD" ]; then
+    # codex mints its own id; a fresh exec needs the cwd flags that \`exec resume\`
+    # rejects, and the new id is captured from the log exactly as at first spawn.
+    # Remember where the log ends BEFORE the exec, so capture reads only what this
+    # run appends and cannot pick up an id from a previous session. +1 is the first
+    # byte (tail -c +N is 1-based), i.e. size+1 = "append point".
+    _CODEX_LOG_OFFSET=\$(( \$(wc -c < $LOG 2>/dev/null || echo 0) + 1 ))
+    printf '%s' "\$RESUME_PROMPT" | "\${STRACE_PREFIX[@]}" "\$TSOMP_CODEX_BIN" exec \\
+      --model $MODEL_ID -c model_reasoning_effort="$EFFORT" \\
+      --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \\
+      -C "$HERE" - >> $LOG 2>&1
+    RC=\$?
+    capture_codex_session
+  else
+    printf '%s' "\$RESUME_PROMPT" | "\${STRACE_PREFIX[@]}" "\$TSOMP_CODEX_BIN" exec resume "\$CODEX_SID" \\
+      --model $MODEL_ID -c model_reasoning_effort="$EFFORT" \\
+      --dangerously-bypass-approvals-and-sandbox - >> $LOG 2>&1
+    RC=\$?
+  fi
+elif [ -n "\$COLD" ]; then
+  # claude lets us CHOOSE the id, so the switch minted one and registered it;
+  # --session-id creates it, --resume would fail on a session that never existed.
+  printf '%s' "\$RESUME_PROMPT" | "\${STRACE_PREFIX[@]}" claude --session-id "$SID" -p \\
+    --dangerously-skip-permissions --model $MODEL_ID --effort $EFFORT --max-turns 800 --verbose >> $LOG 2>&1
+  RC=\$?
+else
+  printf '%s' "\$RESUME_PROMPT" | "\${STRACE_PREFIX[@]}" claude --resume "$SID" -p \\
+    --dangerously-skip-permissions --model $MODEL_ID --effort $EFFORT --max-turns 800 --verbose >> $LOG 2>&1
+  RC=\$?
+fi
 clear_inflight
 echo "[$NAME] RELAUNCH EXITED rc=\$RC \$(date)" >> $LOG
 death_bundle "\$RC"
@@ -279,13 +399,28 @@ death_bundle "\$RC"
 # its turn to 'wait' (armed-waiter) — nudge-resume it, bounded. rc!=0 is left
 # to the watchdog (never loop on crashes).
 SENTINEL="scratch_full_logs/worker_${NAME}.done"
+# A deputy that asked for a MODEL SWITCH exits rc=0 on purpose and without the
+# sentinel. That is not an armed waiter, so the nudge loop must not fire: the
+# system manager applies the switch and relaunches it.
+SWITCH_REQ="scratch_full_logs/worker_${NAME}.switch"
+if [ -f "\$SWITCH_REQ" ]; then
+  echo "[${NAME}] MODEL-SWITCH REQUESTED — exiting for the system manager to apply it \$(date)" >> $LOG
+fi
 NUDGES=0
-while [ "\$RC" -eq 0 ] && [ ! -f "\$SENTINEL" ] && [ "\$NUDGES" -lt 3 ]; do
+while [ "\$RC" -eq 0 ] && [ ! -f "\$SENTINEL" ] && [ ! -f "\$SWITCH_REQ" ] && [ "\$NUDGES" -lt 3 ]; do
   NUDGES=\$((NUDGES+1))
   echo "[$NAME] SENTINEL-TRAP nudge \$NUDGES/3 \$(date)" >> $LOG
-  printf '%s' "You exited rc=0 without your done-sentinel. If the task IS fully complete (FINAL email sent, all deliverables exist), run: touch \$SENTINEL — then stop. Otherwise resume the work SYNCHRONOUSLY in the foreground until everything is done, then touch the sentinel. To wait on a job: <=50 min estimated -> foreground poll loop with sleep chunks <=240 s; >50 min -> bash scratch_submit_job.sh $NAME <est_seconds> [--gpu] -- <command...> then bash scratch_job_sleep.sh $NAME and end your turn (jobmgr wakes you). Never end your turn to 'wait' any other way." | "\${STRACE_PREFIX[@]}" claude --resume "$SID" -p \\
-    --dangerously-skip-permissions --model $MODEL --effort $EFFORT --max-turns 800 --verbose >> $LOG 2>&1
-  RC=\$?
+  NUDGE_MSG="You exited rc=0 without your done-sentinel. If the task IS fully complete (FINAL email sent, all deliverables exist), run: touch \$SENTINEL — then stop. Otherwise resume the work SYNCHRONOUSLY in the foreground until everything is done, then touch the sentinel. To wait on a job: <=50 min estimated -> foreground poll loop with sleep chunks <=240 s; >50 min -> bash scratch_submit_job.sh $NAME <est_seconds> [--gpu] -- <command...> then bash scratch_job_sleep.sh $NAME and end your turn (jobmgr wakes you). Never end your turn to 'wait' any other way."
+  if [ "\$AGENT_SERVICE" = "chatgpt" ]; then
+    printf '%s' "\$NUDGE_MSG" | "\${STRACE_PREFIX[@]}" "\$TSOMP_CODEX_BIN" exec resume "\$CODEX_SID" \\
+      --model $MODEL_ID -c model_reasoning_effort="$EFFORT" \\
+      --dangerously-bypass-approvals-and-sandbox - >> $LOG 2>&1
+    RC=\$?
+  else
+    printf '%s' "\$NUDGE_MSG" | "\${STRACE_PREFIX[@]}" claude --resume "$SID" -p \\
+      --dangerously-skip-permissions --model $MODEL_ID --effort $EFFORT --max-turns 800 --verbose >> $LOG 2>&1
+    RC=\$?
+  fi
   echo "[$NAME] SENTINEL-TRAP EXITED rc=\$RC \$(date)" >> $LOG
   death_bundle "\$RC"
 done

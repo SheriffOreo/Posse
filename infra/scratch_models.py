@@ -132,6 +132,61 @@ _MODE_ALIASES = {
     "both": "claude+chatgpt",
 }
 
+# ---------------------------------------------------------------------------
+# WORK TYPES — the LANES a single case splits into.
+#
+# The `claude+chatgpt` mode answers "who works and who writes" with TWO AGENTS: a
+# claude deputy plus a separate chatgpt writer that reads artifacts and asks the
+# deputy questions. That gives one case two contexts, which is not the design. A
+# case has ONE context; what changes over its life is the MODEL generating it.
+#
+# So a case is split into work types — lanes — and each lane picks its own
+# service+model. The deputy launches on the WORK lane and asks the system manager
+# to switch it to the REPORT lane's model when it starts a human-facing document
+# (scratch_model_switch.py). One context, several models, each in its own
+# jurisdiction. The two-agent hybrid remains available but is no longer the way a
+# case expresses "one model works, another writes".
+#
+# The boundary is a DELIVERABLE DOCUMENT vs everything else:
+#   work   — thinking, planning, web search, code, experiments, tests, the case
+#            file, ledger/log entries, messages to other agents, AND all email
+#            correspondence with the operator.
+#   report — a deliverable DOCUMENT a human sits down and reads: a PDF report and
+#            the LaTeX behind it, a README, a design doc, a slide deck.
+#
+# EMAIL IS NOT REPORT WRITING. The obvious phrasing — "anything a human reads" —
+# is wrong, because it sweeps in every ACK, milestone and FINAL email the deputy
+# sends, and a case would then switch models a dozen times to write five-line
+# notes. Correspondence stays in whatever model is running. Only a deliverable
+# document crosses into the report lane; the switch CLI enforces this by refusing
+# an email-shaped switch reason.
+#
+# Two lanes today. The structure is a dict rather than a pair because a third lane
+# (e.g. "review") is a plausible extension and every consumer iterates
+# WORK_TYPE_IDS rather than naming the two.
+# ---------------------------------------------------------------------------
+WORK_TYPES = {
+    "work": {
+        "label": "Work",
+        "blurb": ("thinking, planning, web search, code, experiments, tests, the "
+                  "case file, records entries, messages to other agents, and ALL "
+                  "email correspondence with the operator"),
+    },
+    "report": {
+        "label": "Human report writing",
+        "blurb": ("a deliverable DOCUMENT written for a human to read — a PDF "
+                  "report and the LaTeX behind it, a README, a design doc, a "
+                  "slide deck; NOT code, NOT the case file, and NOT email "
+                  "(an ACK/milestone/FINAL email is never a reason to switch)"),
+    },
+}
+
+# Lane ids in the order the UI offers them. "work" is FIRST and is the lane a
+# deputy launches on — the report lane defaults to it, so a user who ignores the
+# split gets exactly the single-model behaviour that existed before.
+WORK_TYPE_IDS = ("work", "report")
+DEFAULT_WORK_TYPE = "work"
+
 # The model each service falls back to when a case picks the service but not the
 # model (e.g. "service: chatgpt" with no "model:" tag).
 SERVICE_DEFAULT_MODEL = {
@@ -464,9 +519,70 @@ def effort(model):
     return s.get("effort", "max")
 
 
+def normalize_work_type(work_type):
+    """Normalize a lane id. Anything unrecognized falls to 'work' — the lane a
+    deputy runs on — so a bad tag degrades to single-model behaviour rather than
+    routing a case to a lane nobody configured."""
+    w = (work_type or "").strip().lower()
+    return w if w in WORK_TYPES else DEFAULT_WORK_TYPE
+
+
+def work_type_spec(work_type):
+    return WORK_TYPES[normalize_work_type(work_type)]
+
+
+def work_type_label(work_type):
+    return work_type_spec(work_type)["label"]
+
+
+def lanes(work_model=None, work_service=None,
+          report_model=None, report_service=None):
+    """Resolve a case's per-work-type model selection into concrete lanes.
+
+    This is THE entry point for the work split, used by the create-case bridge,
+    the launcher, and the switch CLI, so all three agree on what a case's lanes are.
+
+    The REPORT lane INHERITS the work lane whenever it is not explicitly chosen —
+    that is the default the form advertises ("same as work"), and it is what makes
+    the split free: a case that ignores it behaves exactly as it did before.
+
+    Returns {"work": lane, "report": lane, "split": bool} where each lane is
+    {"work_type", "service", "model", "id", "effort", "label"} and `split` is True
+    only when the two lanes differ in service OR model — i.e. only when this case
+    will ever ask for a model switch.
+    """
+    wa, wid, wsvc = resolve(work_model, work_service)
+    # An explicit report service with no model must fall to THAT service's default,
+    # not to the work lane's model (which may belong to the other vendor). Only a
+    # report lane with neither field set inherits.
+    if report_model or report_service:
+        ra, rid, rsvc = resolve(report_model, report_service)
+    else:
+        ra, rid, rsvc = wa, wid, wsvc
+    out = {}
+    for wt, (a, i, s) in (("work", (wa, wid, wsvc)), ("report", (ra, rid, rsvc))):
+        out[wt] = {"work_type": wt, "service": s, "model": a, "id": i,
+                   "effort": effort(a), "label": WORK_TYPES[wt]["label"]}
+    out["split"] = (wa, wsvc) != (ra, rsvc)
+    return out
+
+
+def lane_mode(ln):
+    """The legacy MODES id that best describes a lane set, for the `mode` field the
+    older pipeline (email tags, records, the dashboard) still reads.
+
+    A SPLIT case is NOT reported as 'claude+chatgpt': that mode id means the
+    two-agent hybrid writer, which is precisely the design the work split replaces.
+    A split case's mode is its DEPUTY's service — one agent — and the split itself
+    travels in the lanes, not in the mode.
+    """
+    return normalize_mode(ln["work"]["service"])
+
+
 def _usage():
     print("usage: scratch_models.py {id|label|labelid|alias|service|effort|"
-          "weekly-fallback|known|resolve|list|services} [model]", file=sys.stderr)
+          "weekly-fallback|known|resolve|lanes|worktypes|list|services} [model]",
+          file=sys.stderr)
     return 2
 
 
@@ -502,6 +618,27 @@ def main(argv):
             m = MODES[mid]
             print(f"{mid:15s} {m['label']:18s} deputy={m['deputy']:8s} "
                   f"writer={m['writer'] or '-':8s} {m['blurb']}")
+        return 0
+    if cmd == "worktypes":
+        for wid in WORK_TYPE_IDS:
+            w = WORK_TYPES[wid]
+            print(f"{wid:8s} {w['label']:22s} {w['blurb']}")
+        return 0
+    if cmd == "lanes":
+        # `lanes <work_model> <work_service> <report_model> <report_service>`
+        # ('-' or '' for any unset field) -> 9 lines a bash launcher reads in one
+        # shot, in a fixed order the launcher indexes by number:
+        #   1 work service   2 work alias   3 work id   4 work effort
+        #   5 report service 6 report alias 7 report id 8 report effort
+        #   9 "split" | "same"
+        def _a(i):
+            v = argv[i] if len(argv) > i else ""
+            return "" if v in ("-", "") else v
+        ln = lanes(_a(1), _a(2), _a(3), _a(4))
+        for wt in WORK_TYPE_IDS:
+            L = ln[wt]
+            print(L["service"]); print(L["model"]); print(L["id"]); print(L["effort"])
+        print("split" if ln["split"] else "same")
         return 0
     if len(argv) < 2:
         return _usage()

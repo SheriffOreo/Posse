@@ -785,8 +785,8 @@ def test_packaged_judge_prompts_ship_with_the_repo():
 def test_seed_installs_the_shipped_judges_and_the_charter():
     with _fresh_root():
         done = cri.seed_critics()
-        ok(sorted(done) == ["anonymous", "vyas"], "seeds exactly the shipped judges")
-        ok(cri.is_critic("anonymous") and cri.is_critic("vyas"), "both are live")
+        ok(sorted(done) == ["anonymous", "code", "vyas"], "seeds exactly the shipped judges")
+        ok(all(cri.is_critic(c) for c in ("anonymous", "code", "vyas")), "all are live")
         ok(cri.charter_text().strip().startswith("# THE JUDGE CHARTER"),
            "the charter is materialized too")
         ok(cri.custom_prompt("vyas") == cri.packaged_judge_path("vyas").read_text(
@@ -830,7 +830,7 @@ def test_seed_force_reinstalls():
         _as_sheriff()
         cri.update("anonymous", prompt="# edited locally\n")
         _as_deputy()
-        ok(sorted(cri.seed_critics(force=True)) == ["anonymous", "vyas"],
+        ok(sorted(cri.seed_critics(force=True)) == ["anonymous", "code", "vyas"],
            "--force re-installs the packaged judges")
         ok(cri.custom_prompt("anonymous") == cri.packaged_judge_path("anonymous")
            .read_text(encoding="utf-8"), "and restores the packaged prompt")

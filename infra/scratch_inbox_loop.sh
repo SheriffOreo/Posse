@@ -37,6 +37,53 @@ echo "[inbox] loop v3 started $(date) md5=$(md5sum "$0" | cut -d' ' -f1)" >> $LO
 
 age_of() { [ -f "$1" ] && echo $(( $(date +%s) - $(stat -c %Y "$1") )) || echo 999999; }
 
+# Resolve a worker's relaunch script. The watchdog roster is NOT durable — it holds
+# only currently-tracked workers, and a truncation or a relaunch-without-spawn drops
+# an entry permanently — while the script itself persists on disk for every deputy
+# ever spawned. Consulting the roster ALONE therefore dropped most ended deputies
+# onto the one-shot handler, which resumes them with none of their case settings.
+# The interrupt entrypoint already had this fallback; the loop lacked it.
+relaunch_script_for() {
+  local a="$1" rel=""
+  rel=$(python3 -c "import json;j=[x for x in json.load(open('scratch_full_logs/watchdog_jobs.json')) if x.get('name')=='$a'];print(j[-1].get('relaunch') or '' if j else '')" 2>/dev/null)
+  if [ -z "$rel" ] || [ ! -f "$rel" ]; then rel="scratch_worker_${a}_relaunch.sh"; fi
+  [ -f "$rel" ] && printf '%s' "$rel"
+}
+
+# Put a revived deputy back on the settings its case was created with.
+#  - restore-lane: a SPLIT case that closed in the REPORT lane would otherwise come
+#    back as the report writer. The work lane is the one a deputy runs on.
+#  - roster re-seed: only a fresh SPAWN appends to the watchdog roster, so a deputy
+#    revived after its entry was lost would run UNSUPERVISED. Re-add it here.
+restore_case_settings() {
+  local a="$1" rel="$2"
+  python3 scratch_model_switch.py restore-lane --worker "$a" --lane work >> $LOG 2>&1 || true
+  python3 - "$a" "$rel" <<'PY' >> $LOG 2>&1 || true
+import json, os, sys, time
+name, rel = sys.argv[1], sys.argv[2]
+p = "scratch_full_logs/watchdog_jobs.json"
+jobs = json.load(open(p))
+entry = next((j for j in jobs if isinstance(j, dict) and j.get("name") == name), None)
+if entry is None:
+    reg = json.load(open("scratch_agents_registry.json")).get("workers", {}).get(name, {})
+    # Key names must match the watchdog's schema, not merely look like it:
+    # classify() reads job["done_sentinel"] and relaunch() reads job["relaunched"].
+    # A "sentinel"/"attempts" entry would make the watchdog blind to the deputy's
+    # own closure -> exited_incomplete -> relaunch loop -> failed, i.e. the re-seed
+    # meant to restore supervision would guarantee an alarm instead.
+    jobs.append({"name": name, "session": reg.get("session", ""), "relaunch": rel,
+                 "log": f"scratch_full_logs/worker_{name}.log",
+                 "done_sentinel": f"scratch_full_logs/worker_{name}.done",
+                 "state": "running", "relaunched": 0, "last_relaunch_ts": time.time(),
+                 "reseeded_by": "followup"})
+    tmp = p + ".tmp_reseed"
+    with open(tmp, "w") as f:
+        json.dump(jobs, f, indent=2); f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, p)
+    print(f"[inbox] re-seeded watchdog roster entry for {name}")
+PY
+}
+
 while true; do
   OUT=$(python scratch_inbox.py next 2>>$LOG)
   if [[ "$OUT" == UID=* ]]; then
@@ -76,10 +123,12 @@ while true; do
       # (unread-mail + tmux-gone + registered relaunch script) brings the deputy
       # back THIS SAME iteration with the mail injected at the front of its prompt.
       # Only a brand-new / no-session contact still uses the one-shot handler.
-      REL=$(python3 -c "import json;j=[x for x in json.load(open('scratch_full_logs/watchdog_jobs.json')) if x.get('name')=='$AGENT'];print(j[-1].get('relaunch') or '' if j else '')" 2>/dev/null)
+      REL=$(relaunch_script_for "$AGENT")
       if [ "$TYPE" = "resume" ] && [ -n "$SESSION" ] && [ "$SESSION" != "None" ] && [ -n "$REL" ] && [ -f "$REL" ]; then
         SENDER_L="$(sed -n 's/^FROM:[[:space:]]*//p' "$BODYFILE" 2>/dev/null | head -1)"
         echo "[inbox] $(date) follow-up uid=$MUID for finished deputy $AGENT -> mailbox + PERSISTENT relaunch (uid=378 policy) ($SUBJECT)" >> $LOG
+        # Restore the case's OWN settings before the relaunch runs.
+        restore_case_settings "$AGENT" "$REL"
         # A finished deputy left a stale done-sentinel; clear it so the relaunched,
         # watchdog-tracked deputy is properly tracked as RUNNING while it works the
         # new case (it re-touches its sentinel when it closes the follow-up). Without
@@ -120,10 +169,13 @@ PY
     # Persistent worker with a registered relaunch script: relaunch it — the
     # relaunch drains the mailbox in-process (race-free), sends the mechanical
     # ack, and injects the mail at the front of the resume prompt.
-    REL=$(python3 -c "import json;j=[x for x in json.load(open('scratch_full_logs/watchdog_jobs.json')) if x.get('name')=='$A'];print(j[-1].get('relaunch') or '' if j else '')" 2>/dev/null)
+    REL=$(relaunch_script_for "$A")
     if [ -n "$REL" ] && [ -f "$REL" ]; then
       touch "$IDIR/last_relaunch_$A"
       echo "[inbox] $(date) unread live-mail for $A -> relaunching persistent worker via $REL" >> $LOG
+      # Same settings restore as the routed follow-up path above — this branch
+      # revives an ended deputy too, just via its unread mailbox.
+      restore_case_settings "$A" "$REL"
       # Task 170 F3: stamp BOTH guard surfaces — this inbox stamp (above) AND
       # the watchdog's last_relaunch_ts — so the two auto-relaunchers can
       # never double-fire on the same death (they kept unshared guards).

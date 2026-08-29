@@ -11,6 +11,72 @@ To update an existing install to a new version, follow
 Versioning is [semantic](https://semver.org): `MAJOR.MINOR.PATCH` — MAJOR for a
 breaking change, MINOR for a backward-compatible feature, PATCH for a fix.
 
+## [1.5.0] — 2026-08-28
+
+### Added — the work split: one case, one context, several models (Case 583)
+
+**1.4.0 shipped a create-case form offering a work split that this release's backend
+silently dropped.** The form collected `report_model`/`report_service`; the bridge and
+the launcher referenced them zero times. That is the same defect 1.4.0 itself fixed for
+the Judges tab, reintroduced in the same commit. It is fixed properly here.
+
+A case now belongs to ONE deputy with ONE context, and what changes over the case's life
+is the **model generating it**. The unit of choice is a **lane**:
+
+- **work** — thinking, planning, search, code, tests, records, and *all* correspondence
+- **report** — a deliverable document a human reads (PDF/LaTeX, README, design doc, deck)
+
+The report lane defaults to "same as work", so a case that ignores the split behaves
+exactly as before. Set them differently and the deputy switches its **own** model when it
+starts the document: it writes a request and exits, and the system manager confirms it is
+really gone, carries the context across, and relaunches it on the other lane.
+
+- **`infra/scratch_model_switch.py`** (new, + 149-test suite): the switch protocol, the
+  lanes record, the cross-service hand-off seed, and the deputy-facing protocol text.
+- Same-service switches are **lossless** (same session, one flag); cross-service ones are
+  **reconstructed**, because the two CLIs keep transcripts in stores neither can read.
+- **E-mail is not report writing**: the switch CLI refuses an email-shaped reason, so a
+  case cannot switch models a dozen times to write five-line notes.
+- `scratch_models.py` gained the lane vocabulary (`WORK_TYPES`, `lanes()`, `lane_mode()`)
+  and a `lanes` CLI; the system manager gained switch classification and application; the
+  bridge and launcher now carry the report lane and persist the lanes record.
+
+### Fixed — a ChatGPT deputy could not survive a relaunch (Case 583)
+
+The launcher was service-aware and started `codex` for a ChatGPT case, but it called the
+relaunch generator **without the service**, and the generator had no notion of one. So a
+ChatGPT deputy that was interrupted, crashed, or hit a limit came back as **`claude
+--resume`** — a silent vendor switch mid-case. The generator now takes the service
+(inferring it from the model when omitted), resumes codex with `codex exec resume`,
+captures codex's self-minted session id from *this* run's log region, and handles the
+cold-start path a cross-service switch requires.
+
+Also fixed: a follow-up to a finished deputy resolved its relaunch script from the
+non-durable manager roster alone, dropping most ended deputies onto the one-shot handler
+that restores none of their case settings; the loop now falls back to the script on disk
+and restores the case's own lane.
+
+### Added — the Code judge
+
+A third packaged judge, `code`, for reviewing source rather than prose: correctness first
+(paths traced, callers followed, something actually run), then naming, readability, a
+comment bar of concise-or-none, and human, non-slop style.
+
+### Changed — README
+
+The "Two vendors" feature bullet and the whole **Using ChatGPT** section described the
+two-agent hybrid as *the* way to say "Claude works, ChatGPT writes". They now describe the
+work split. The hybrid still ships and is documented as what it is: the older mechanism,
+worth reaching for only when you specifically want an independent second reader.
+
+### Known gaps
+
+Per-vendor limit *detection* and auth-expiry recovery remain out of the release. The
+create-case **receipt** (`submitted_form.txt` rendering) is not ported, and its five
+upstream tests were removed rather than left failing. The records manager still gates
+ledger/log ops on the older role-string check; only the judge registry uses process
+authorization.
+
 ## [1.4.0] — 2026-08-28
 
 ### Added — Judges: independent review, in the release (Case 583)
