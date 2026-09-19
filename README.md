@@ -171,7 +171,7 @@ Credentials and dashboard authentication data stay outside tracked source. Do no
 
 ## License
 
-This repository has no `LICENSE` file, so it grants no general open-source permission to copy, modify, or redistribute the code. Ask the owner for terms before adopting it beyond the permissions supplied by GitHub.
+Posse is released under the [Apache License 2.0](LICENSE). You may use, modify and redistribute it, including commercially, provided you keep the license and copyright notices and state what you changed. The license also grants you the contributors' patent rights, and withdraws that grant from anyone who starts patent litigation over the software. It comes with no warranty.
 
 ## Repository map
 

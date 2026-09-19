@@ -11,6 +11,14 @@ To update an existing install to a new version, follow
 Versioning is [semantic](https://semver.org): `MAJOR.MINOR.PATCH` — MAJOR for a
 breaking change, MINOR for a backward-compatible feature, PATCH for a fix.
 
+## [1.6.1] — 2026-09-19
+
+### Added
+
+- **A license.** Posse is now released under the Apache License 2.0; the full text is
+  in [`LICENSE`](LICENSE). Until now the repository carried no license, which meant it
+  granted no permission to use, modify or redistribute the code. It does now.
+
 ## [1.6.0] — 2026-09-19
 
 ### Added — the Field Guide: standing output standards every deputy launches with
