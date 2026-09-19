@@ -96,6 +96,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 import scratch_records as rec  # noqa: E402
 import scratch_sheriff_request as sreq  # noqa: E402  (Case 384a: the request queue)
+import scratch_field_guide as field_guide  # noqa: E402
 
 # Loading the sheriff module AUTHORIZES this process for the sheriff-only registry
 # writes (today: the judge registry). Only the sheriff daemon (and its tests) import
@@ -115,6 +116,7 @@ CHARS_PER_TOKEN = rec._CHARS_PER_TOKEN  # == 4
 # The judge-registry ops. A judge has no home precinct, so these are described,
 # performed and journalled differently from the precinct ops -- see _journal_decision.
 CRITIC_OPS = ("critic_add", "critic_update", "critic_remove")
+FIELD_GUIDE_OPS = (field_guide.REWRITE_OP,)
 
 
 def _records_root():
@@ -886,6 +888,12 @@ def _journal_decision(jprecinct, req, reason, tag, extra=""):
         sreq.lifecycle_journal_append(req.get("target"), req.get("deputy"), op,
                                       tag, reason, extra=extra)
         return
+    # The Field Guide is global for the same reason a judge is: the request
+    # carries no home precinct, so its audit line goes to the lifecycle journal.
+    if op in FIELD_GUIDE_OPS:
+        sreq.lifecycle_journal_append("field_guide", req.get("deputy"), op,
+                                      tag, reason, extra=extra)
+        return
     sreq.journal_append(jprecinct, req.get("deputy"), op, req.get("target"),
                         reason, tag, extra=extra)
 
@@ -920,6 +928,84 @@ def _authorized(req):
         return False
 
 
+def _field_guide_runner(cfg):
+    """Return the one-shot model runner used for a Field Guide rewrite.
+
+    ``sheriff_rewrite`` wants a CompletedProcess-like result, so this mirrors the
+    decide call site rather than returning bare text."""
+    model = cfg.get("model") or _sheriff_model()
+
+    def run(prompt):
+        return subprocess.run(
+            ["claude", "-p", "--dangerously-skip-permissions", "--model", model,
+             "--max-turns", "1"],
+            input=prompt, cwd=str(ROOT), text=True, capture_output=True, timeout=300)
+    return run
+
+
+def _complete_field_guide_request(path, req, cfg, jprecinct):
+    """Process one Field Guide rewrite request.
+
+    The rewrite turn IS the sheriff's deliberation, so this never takes replacement
+    text from a deputy or the dashboard. A transient model failure leaves the
+    request pending and every lesson uncounted, for a later tick to retry."""
+    try:
+        result = field_guide.sheriff_rewrite(
+            req.get("target", ""), runner=_field_guide_runner(cfg),
+            reason=str(req.get("reason") or ""),
+            trigger=str(req.get("trigger") or "deputy-request"),
+            request_id=str(req.get("id") or ""),
+        )
+    except (field_guide.RewriteDeferred, field_guide.RewriteBusy) as exc:
+        _log(f"Field Guide request {req.get('id', path.stem)} deferred: {exc}")
+        return
+    except Exception as exc:
+        _deny(path, req, f"Field Guide rewrite could not run safely: {exc}",
+              "deny-field-guide", jprecinct)
+        return
+    reason = ("Sheriff reviewed and updated the requested Field Guide category."
+              if result.get("changed") else
+              "Sheriff reviewed the requested Field Guide category and retained its current text.")
+    req.update({"decision": "approve", "decision_reason": reason,
+                "decided_ts": time.time(), "result": result})
+    with contextlib.suppress(Exception):
+        _journal_decision(jprecinct, req, reason, "approve",
+                          extra=json.dumps(result, ensure_ascii=False))
+    with contextlib.suppress(Exception):
+        sreq.move_to(path, "done", req)
+    notify_deputy(req.get("deputy"),
+                  f"sheriff completed your {field_guide.REWRITE_OP} request",
+                  f"{reason}\nresult: {json.dumps(result, ensure_ascii=False)}")
+    _log(f"Field Guide request {req.get('id', path.stem)} complete: {result}")
+
+
+def field_guide_pass(cfg):
+    """Review any category that has reached its pending-lesson threshold.
+
+    Part of the sheriff's normal tick rather than a spawned worker: this is the
+    same authority that owns standing policy. Zero-API when nothing crosses the
+    threshold. Seeding happens here so a deputy reading the guide can never be the
+    thing that materializes revision one."""
+    changed = 0
+    try:
+        if field_guide.seed_defaults_if_absent():
+            _log("Field Guide: sheriff seeded revision-one standing policy")
+    except Exception as exc:
+        _log(f"Field Guide: could not seed standing policy safely: {exc}")
+        return changed
+    for category in field_guide.automatic_categories():
+        try:
+            result = field_guide.sheriff_rewrite(
+                category, runner=_field_guide_runner(cfg), trigger="automatic-threshold")
+            changed += int(bool(result.get("changed")))
+            _log(f"Field Guide automatic review {category}: {result}")
+        except (field_guide.RewriteDeferred, field_guide.RewriteBusy) as exc:
+            _log(f"Field Guide automatic review {category} deferred: {exc}")
+        except Exception as exc:
+            _log(f"Field Guide automatic review {category} failed: {exc}")
+    return changed
+
+
 def process_request(path, cfg):
     """Decide + act on ONE pending request. Verify identity (mechanical) -> decide
     (the one claude call; None => leave pending) -> perform+journal (approve) or
@@ -952,6 +1038,12 @@ def process_request(path, cfg):
               "deny-identity", jprecinct)
         return
     req["identity_ok"] = True
+
+    # The rewrite turn itself is the deliberation, so this op does not take the
+    # ordinary decide path (there is no arbitrary replacement text to approve).
+    if op in FIELD_GUIDE_OPS:
+        _complete_field_guide_request(path, req, cfg, jprecinct)
+        return
 
     # 2) decide -- the ONE claude call for the request queue; None => DEFER
     decision = sheriff_decide(req, cfg)
@@ -1230,6 +1322,7 @@ def one_pass(cfg):
     confirm_pass(cfg)       # Case 384d / Phase D: emailed delete-confirmations (zero-API)
     purge_pass(cfg)         # Case 384d / Phase D: hard-purge >retention trash (zero-API)
     wake_pass(cfg)          # Task 384: sub-deputy completion wakes (zero-API)
+    changed += field_guide_pass(cfg)   # only when a category hits its lesson threshold
     return changed
 
 

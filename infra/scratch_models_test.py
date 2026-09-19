@@ -18,9 +18,9 @@ def check(cond, msg):
 def test_resolve_and_label():
     print("resolve_id / label / label_with_id")
     check(M.resolve_id("opus") == "claude-opus-5", "opus -> claude-opus-5")
-    check(M.resolve_id("fable") == "claude-fable-5", "fable -> claude-fable-5")
+    check(M.resolve_id("fable") == "claude-fable-5-1", "fable -> claude-fable-5-1")
     check(M.label("opus") == "Opus 5", "opus -> 'Opus 5'")
-    check(M.label("fable") == "Fable 5", "fable -> 'Fable 5'")
+    check(M.label("fable") == "Fable 5.1", "fable -> 'Fable 5.1'")
     check(M.label_with_id("opus") == "Opus 5 (claude-opus-5)", "label_with_id opus")
 
 
@@ -29,7 +29,23 @@ def test_idempotent_and_reverse():
     check(M.alias_of("claude-opus-5") == "opus", "id -> alias opus")
     check(M.alias_of("OPUS") == "opus", "uppercase alias -> opus")
     check(M.resolve_id("claude-opus-5") == "claude-opus-5", "id passed through unchanged")
-    check(M.label("claude-fable-5") == "Fable 5", "label from an id")
+    check(M.label("claude-fable-5-1") == "Fable 5.1", "label from an id")
+
+
+def test_legacy_ids():
+    """Case 759: bumping fable 5 -> 5.1 left claude-fable-5 in every relaunch script
+    and worker log written before the bump. Those values are still read back, and a
+    superseded id that no longer normalizes to its alias silently drops that deputy
+    out of the watchdog's model-aware paths (labelling, per-model weekly caps)."""
+    print("superseded ids still normalize to their alias, and resolve forward")
+    check(M.alias_of("claude-fable-5") == "fable", "old id -> fable")
+    check(M.known("claude-fable-5"), "old id is still known")
+    check(M.resolve_id("claude-fable-5") == "claude-fable-5-1",
+          "old id resolves FORWARD to the current model")
+    check(M.service_of("claude-fable-5") == "claude", "old id keeps its service")
+    check(M.is_weekly_limited("claude-fable-5"), "old id is still weekly-limited")
+    check(not (set(M._LEGACY_IDS) & {s["id"] for s in M.MODELS.values()}),
+          "no superseded id is also a live id (the two indexes stay disjoint)")
 
 
 def test_unknown_passthrough():
@@ -119,7 +135,7 @@ def test_modes_cli():
 
 
 def main():
-    for fn in (test_resolve_and_label, test_idempotent_and_reverse,
+    for fn in (test_resolve_and_label, test_idempotent_and_reverse, test_legacy_ids,
                test_unknown_passthrough, test_weekly_fallback, test_cli,
                test_modes, test_mode_normalization, test_aliases_for_mode,
                test_modes_cli):

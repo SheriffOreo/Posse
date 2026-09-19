@@ -17,14 +17,14 @@ import models  # noqa: E402
 
 
 def test_aliases_is_still_exactly_the_four_claude_models():
-    # COMPAT GUARD: ALIASES is what the precinct-default and sheriff-model
-    # selectors iterate. Case 557 must NOT have widened it.
+    # COMPAT GUARD: ALIASES remains the Claude-only legacy subset. New
+    # service-neutral selectors use ALL_ALIASES or aliases_for(service).
     assert models.ALIASES == ("fable", "opus", "sonnet", "haiku"), models.ALIASES
     assert all(models.service_of(a) == "claude" for a in models.ALIASES)
 
 
 def test_all_aliases_membership():
-    assert models.CHATGPT_ALIASES == ("sol", "terra", "luna", "gpt55")
+    assert models.CHATGPT_ALIASES == ("astra", "sol", "terra", "luna", "gpt55")
     assert models.ALL_ALIASES == models.ALIASES + models.CHATGPT_ALIASES
     # every alias is registered, and the registry has no alias outside the list
     assert set(models.ALL_ALIASES) == set(models.MODELS), (
@@ -37,7 +37,7 @@ def test_all_aliases_membership():
 def test_service_of():
     for a in ("fable", "opus", "sonnet", "haiku"):
         assert models.service_of(a) == "claude", a
-    for a in ("sol", "terra", "luna", "gpt55"):
+    for a in ("astra", "sol", "terra", "luna", "gpt55"):
         assert models.service_of(a) == "chatgpt", a
     # accepts an exact id, not just the alias
     assert models.service_of("gpt-5.6-terra") == "chatgpt"
@@ -84,13 +84,14 @@ def test_services_table_is_consistent():
 def test_existing_lookups_still_work():
     # Case 509 behaviour must survive the 3-tuple widening
     assert models.label("opus") == "Opus 5"
-    assert models.label("claude-fable-5") == "Fable 5"
+    assert models.label("claude-fable-5-1") == "Fable 5.1"
     assert models.label("unknown-x") == "unknown-x"
     assert models.label("") == ""
     assert models.model_id("haiku") == "claude-haiku-4-5-20251001"
     assert models.model_id("unknown-x") == "unknown-x"
     assert models.label_with_id("opus") == "Opus 5 (claude-opus-5)"
     assert models.label_with_id("sol") == "GPT-5.6 Sol (gpt-5.6-sol)"
+    assert models.label_with_id("astra") == "GPT-6 Astra (gpt-6-astra)"
     assert models.label_with_id("unknown-x") == "unknown-x"
     assert models.alias_of("CLAUDE-OPUS-5") == "opus"
     assert models.alias_of("Terra") == "terra"
@@ -101,12 +102,23 @@ def test_existing_lookups_still_work():
         assert models.alias_of(models.model_id(a)) == a, a
 
 
+def test_legacy_ids_still_normalize():
+    """Case 759 (fable 5 -> 5.1): rows and roster entries written before a bump keep
+    the superseded id, and the Status board renders whatever alias_of() returns —
+    without the legacy map that is the bare id string instead of the model's label."""
+    assert models.alias_of("claude-fable-5") == "fable"
+    assert models.label("claude-fable-5") == "Fable 5.1"
+    assert models.model_id("claude-fable-5") == "claude-fable-5-1"
+    assert models.service_of("claude-fable-5") == "claude"
+
+
 def test_label_with_service():
     # claude is the default -> untagged (no churn in the existing UI)
     assert models.label_with_service("opus") == "Opus 5"
-    assert models.label_with_service("fable") == "Fable 5"
+    assert models.label_with_service("fable") == "Fable 5.1"
     # non-default services are named
     assert models.label_with_service("terra") == "GPT-5.6 Terra (ChatGPT)"
+    assert models.label_with_service("astra") == "GPT-6 Astra (ChatGPT)"
     assert models.label_with_service("gpt55") == "GPT-5.5 (ChatGPT)"
     assert models.label_with_service("gpt-5.6-luna") == "GPT-5.6 Luna (ChatGPT)"
     # unknown model -> unchanged, untagged
@@ -184,16 +196,17 @@ def test_mode_roles():
 def test_aliases_for_mode():
     # a mode may only offer models it can actually run
     assert models.aliases_for_mode("claude") == ("fable", "opus", "sonnet", "haiku")
-    assert models.aliases_for_mode("chatgpt") == ("sol", "terra", "luna", "gpt55")
+    assert models.aliases_for_mode("chatgpt") == ("astra", "sol", "terra", "luna", "gpt55")
     # the hybrid spans both: claude models = the deputy, chatgpt models = the WRITER
     assert models.aliases_for_mode("claude+chatgpt") == models.ALL_ALIASES
-    assert len(models.aliases_for_mode("claude+chatgpt")) == 8
+    assert len(models.aliases_for_mode("claude+chatgpt")) == 9
     # deputy's models always come first, and no alias is offered twice
     for m in models.MODE_IDS:
         got = models.aliases_for_mode(m)
         assert len(set(got)) == len(got), (m, got)
         assert set(got) <= set(models.ALL_ALIASES), (m, got)
-        assert got[:4] == models.aliases_for(models.deputy_service(m)), m
+        deputy_aliases = models.aliases_for(models.deputy_service(m))
+        assert got[:len(deputy_aliases)] == deputy_aliases, m
     assert models.aliases_for_mode("hybrid") == models.aliases_for_mode("claude+chatgpt")
     assert models.aliases_for_mode("bogus") == models.aliases_for_mode(models.DEFAULT_MODE)
 
@@ -242,6 +255,24 @@ def test_mode_mirror_matches_scratch_models_registry():
     # and the mode vocabulary normalizes identically on both sides
     for v in ("hybrid", "both", "claude+gpt", "openai", "anthropic", "bogus", ""):
         assert models.normalize_mode(v) == up.normalize_mode(v), v
+
+
+def test_model_mirror_matches_scratch_models_registry():
+    """A dashboard-local model registry must not hide a live launchable model.
+
+    The dashboard cannot import the live registry in production, but this test can
+    compare the two when they share a host.  It guards the exact Astra UI drift
+    reported in Case 665 follow-up uid 1107.
+    """
+    up = _scratch_models()
+    if up is None:
+        print("      (skipped: no scratch_models.py found)")
+        return
+    assert models.ALL_ALIASES == up.ALL_ALIASES
+    for alias in up.ALL_ALIASES:
+        assert models.model_id(alias) == up.resolve_id(alias), alias
+        assert models.service_of(alias) == up.service_of(alias), alias
+        assert models.label(alias) == up.label(alias), alias
 
 
 def _run():

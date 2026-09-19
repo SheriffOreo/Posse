@@ -11,7 +11,7 @@
 #                    FROM the infra/ dir and keep state under infra/scratch_full_logs
 #                    (they resolve it relative to their own file). Point the DASHBOARD
 #                    at that same place so it reads what the daemons write. (Relocating
-#                    state to an arbitrary dir is the deferred cutover — MIGRATION.md.)
+#                    point this at any directory to keep state elsewhere.)
 export INFRA_CODE_ROOT="${INFRA_CODE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}"
 export INFRA_STATE_ROOT="${INFRA_STATE_ROOT:-$INFRA_CODE_ROOT/infra}"
 

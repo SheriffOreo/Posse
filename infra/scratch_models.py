@@ -217,9 +217,9 @@ MODELS = {
     },
     "fable": {
         "service": "claude",
-        "id": "claude-fable-5",
-        "label": "Fable 5",
-        "generation": "5",
+        "id": "claude-fable-5-1",
+        "label": "Fable 5.1",
+        "generation": "5.1",
         "premium": True,
         "weekly_limited": True,
     },
@@ -309,9 +309,23 @@ WEEKLY_FALLBACK = {
     "gpt55": "terra",
 }
 
+# Ids an alias USED to resolve to. They still sit in on-disk state written before
+# the bump — older relaunch scripts' `--model <id>` line, worker logs the watchdog
+# re-reads, a limit notice quoting the id — and a value read back must still
+# normalize to its alias, or alias_of() passes the raw id through and that deputy
+# stops being recognized, labelled and weekly-capped as its own model (Case 759,
+# fable 5 -> 5.1). A superseded id resolves FORWARD: anything asking for it by
+# alias launches on the current model.
+_LEGACY_IDS = {
+    "claude-fable-5": "fable",
+}
+
 # Reverse index: exact id -> alias, so a value read from a relaunch script or a
 # `--model claude-opus-5` invocation normalizes back to the canonical alias.
-_ID_TO_ALIAS = {spec["id"]: alias for alias, spec in MODELS.items()}
+# History goes in first and the live ids overwrite it; the two sets must stay
+# disjoint anyway, which scratch_models_test.test_legacy_ids pins.
+_ID_TO_ALIAS = dict(_LEGACY_IDS)
+_ID_TO_ALIAS.update({spec["id"]: alias for alias, spec in MODELS.items()})
 
 
 def alias_of(model):

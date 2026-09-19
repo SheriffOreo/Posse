@@ -93,6 +93,13 @@ def ask_yesno(prompt, default=True):
 # ---------------------------------------------------------------------------
 # pure config writers (unit-testable: no prompting, no launching)
 # ---------------------------------------------------------------------------
+def _looks_like_email(value):
+    """A deliberately loose check: one @, something either side, a dot in the domain.
+    The goal is to catch blank and obviously-wrong entries, not to police addresses."""
+    value = (value or "").strip()
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value))
+
+
 def write_operator(name, email, allowed):
     """Write the operator identity FILE (infra/operator.json) — the single source
     of truth for who this posse reports to. `allowed` is the fail-closed list of
@@ -114,6 +121,14 @@ def write_smtp_env(user, app_pass, to, smtp_host="", imap_host=""):
     SMTP_ENV.write_text("\n".join(lines) + "\n")
     os.chmod(SMTP_ENV, 0o600)
     return SMTP_ENV
+
+
+def send_test_email(env=None):
+    """Send one test message through the posse mailbox, so a wrong app password is
+    caught here rather than by silence after the first real task."""
+    return _run([sys.executable, "scratch_notify_email.py", "Posse test",
+                 "If you are reading this, your posse's mailbox works."],
+                cwd=str(INFRA), env=env or _base_env())
 
 
 def write_anthropic_key(key):
@@ -169,7 +184,7 @@ def find_codex():
 
 
 def write_env_local(conda_env, claude_auth, dash_host, dash_port, dash_public,
-                    codex_auth="", codex_bin=""):
+                    codex_auth="", codex_bin="", advertise=""):
     """Write infra_env.local.sh (git-ignored): the non-identity, non-secret runtime
     env sourced before starting the daemons. Identity lives in operator.json; secrets
     live in ~/.smtp_env and the Claude auth files."""
@@ -190,6 +205,10 @@ def write_env_local(conda_env, claude_auth, dash_host, dash_port, dash_public,
         lines.append(f'export TSOMP_CODEX_BIN="{codex_bin}"')
     if dash_public:
         lines.append('export INFRA_DASH_PUBLIC="1"   # bind 0.0.0.0 + TLS')
+    if advertise:
+        # The hostname a browser can actually reach. Without it, tools that print a
+        # URL fall back to localhost, which is wrong for a deliberately public bind.
+        lines.append(f'export INFRA_DASH_ADVERTISE="{advertise}"')
     ENV_LOCAL.write_text("\n".join(lines) + "\n")
     os.chmod(ENV_LOCAL, 0o644)
     return ENV_LOCAL
@@ -421,8 +440,19 @@ def main(argv=None):
     info("Allow-list = the addresses allowed to command the fleet (fail-closed).")
     allowed_raw = ask("Allowed sender emails (comma-separated)",
                       ",".join(cur.get("allowed", []) or ([email] if email else [])))
+    allowed = [a for a in (x.strip() for x in allowed_raw.split(",")) if a]
     write_operator(name, email, allowed_raw.split(","))
     ok(f"wrote {_rel(OPERATOR_FILE)} (name + email + allow-list)")
+    # This field is the dashboard username, the address the posse writes to, AND the
+    # security gate. Accepting it blank used to end in "All set" on an instance that
+    # silently ignores every message, which is the worst way to learn it matters.
+    if not _looks_like_email(email):
+        warn("that email does not look like an address — the posse mails you there, it is "
+             "your dashboard username, and it gates who may command the fleet")
+    if not any(_looks_like_email(a) for a in allowed):
+        warn("the allow-list has no usable address: mail from EVERY sender will be "
+             "ignored, with no error. Re-run setup.py, or fix 'allowed' in "
+             f"{_rel(OPERATOR_FILE)}, before you email your first task.")
 
     # -- 3. posse mailbox ----------------------------------------------------
     step(3, TOTAL, "The posse's mailbox")
@@ -441,6 +471,18 @@ def main(argv=None):
         if smtp_user and smtp_pass:
             write_smtp_env(smtp_user, smtp_pass, smtp_to or email, smtp_host, imap_host)
             ok(f"wrote {SMTP_ENV} (chmod 600)")
+            # The whole control plane is email, and a wrong app password is the most
+            # common setup failure. Offer the check now, while the operator still has
+            # the app-password page open, instead of leaving it to troubleshooting.
+            if ask_yesno("Send a test email now to check these credentials?", default=True):
+                r = send_test_email()
+                if r.returncode == 0:
+                    ok(f"test email sent — check {smtp_to or email}")
+                else:
+                    warn("test email FAILED: "
+                         + ((r.stderr or r.stdout or "").strip().splitlines() or [""])[-1][:200])
+                    warn("for Gmail this is usually the app password (16 chars, not your "
+                         f"login password). Fix {SMTP_ENV} and re-run setup.py.")
         else:
             warn("skipped ~/.smtp_env (need at least SMTP_USER + app password) — set it later.")
 
@@ -537,7 +579,7 @@ def main(argv=None):
     dash_port = ask("Port", "8787")
     conda_env = ask("Conda env for the daemons (blank = system python3)", os.environ.get("INFRA_CONDA_ENV", ""))
     write_env_local(conda_env, claude_auth, dash_host, dash_port, public,
-                    codex_auth=codex_auth, codex_bin=codex_bin_env)
+                    codex_auth=codex_auth, codex_bin=codex_bin_env, advertise=advertise)
     ok(f"wrote {_rel(ENV_LOCAL)} (state root, auth mode, web bind)")
 
     # -- 8. bootstrap the front desk + dashboard account ---------------------
@@ -555,6 +597,11 @@ def main(argv=None):
         ok(f"judges: {r.stdout.strip() or 'already registered'} (Judge tab + per-case selector)")
     else:
         warn("judge seed reported: " + (r.stderr.strip()[:160] or r.stdout.strip()[:160]))
+    # The Field Guide needs no seeding step: reads render the shipped defaults, so the
+    # tab and every launch prompt have text from the first boot, and the SHERIFF writes
+    # revision one on its first pass. Seeding is sheriff-authorized precisely so a page
+    # view cannot be the thing that materializes standing policy.
+    ok("Field Guide ready (code + report) — every deputy launches with it")
     if ask_yesno("Set your dashboard password now (username = your email)?", default=True):
         pw = ask_secret("Dashboard password (min 8, hidden)")
         pw2 = ask_secret("Confirm password")

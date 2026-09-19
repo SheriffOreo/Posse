@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -96,6 +97,12 @@ def _cached(key, ttl, fn):
     return val
 
 
+def invalidate(key):
+    """Drop one cached reader. A write path calls this so the page it reloads
+    immediately afterwards shows the change instead of the pre-write snapshot."""
+    _cache.pop(key, None)
+
+
 # --------------------------------------------------------------------------- #
 # daemons + registry
 # --------------------------------------------------------------------------- #
@@ -139,7 +146,9 @@ def _tmux_alive(name):
 
 
 def _parse_case_log(text):
-    """Case-log data lines -> [{task, deputy, path, summary}] (skips '#' headers).
+    """One current row per exact task -> [{task, deputy, path, summary}].
+
+    Header lines are skipped; legacy repeated physical rows collapse last-wins.
 
     Task 377 #1: NEW rows have four fields <task>\\t<deputy>\\t<path>\\t<summary>;
     OLD rows (pre-377) have three <task>\\t<path>\\t<summary> and render with an
@@ -159,7 +168,14 @@ def _parse_case_log(text):
         elif len(parts) == 2:
             rows.append({"task": parts[0], "deputy": "",
                          "path": parts[1], "summary": ""})
-    return rows
+    # The records manager records a one-row-per-task current index. Older logs can
+    # still contain accidental repeated physical rows, so make every dashboard
+    # consumer safe immediately: the last row is the latest same-case close.
+    # Exact strings preserve parent/subcase identity (for example 672 != 672a).
+    latest = {}
+    for row in rows:
+        latest[row["task"]] = row
+    return list(latest.values())
 
 
 def task_precinct_map():
@@ -198,7 +214,7 @@ def sheriff_status():
     """Live status of the sheriff daemon: alive?, A/B (TOKENS, Task 376), whether
     API (LLM) compaction is on, the GLOBAL sheriff model (Task 384b / Phase C), and
     the last ledger actions. A/B + llm are parsed from the sheriff's own log
-    ('sheriff up: ... A=.. B=.. tokens ... llm=True model=fable'); the model is read
+    ('sheriff up: ... A=.. B=.. tokens ... llm=True model=sol'); the model is read
     LIVE from the persisted global config (sheriff_config.json) so a UI change shows
     immediately without waiting for a daemon restart line."""
     alive = _tmux_alive("sheriff")
@@ -216,10 +232,10 @@ def sheriff_status():
         if m:
             llm = (m.group(1) == "True")
             break
-    # Global sheriff model: live from the persisted config, fable if unset/garbled.
-    model = "fable"
+    # Global sheriff model: live from the persisted config, Sol if unset/garbled.
+    model = "sol"
     cfg = _read_json(config.SHERIFF_CONFIG, {}) or {}
-    if isinstance(cfg, dict) and cfg.get("model") in ("fable", "opus", "sonnet", "haiku"):
+    if isinstance(cfg, dict) and cfg.get("model") in models.ALL_ALIASES:
         model = cfg["model"]
     actions = [l for l in lines if "COMPACTED" in l or "APPLIED" in l][-5:]
     return {"alive": alive, "A": A, "B": B, "llm": llm, "model": model, "unit": "tokens",
@@ -332,6 +348,155 @@ def critic_requests(limit=20):
         out.sort(key=lambda r: r["ts"] or 0, reverse=True)
         return out
     return _cached("critic_requests", 10, build)[:limit]
+
+
+# --------------------------------------------------------------------------- #
+# Case 685: Deputies' Field Guide.  The dashboard stays a reader here: the
+# field-guide CLI owns default policy, lesson/cursor semantics, and every write.
+# Calling its ``show --json`` reader avoids a second hand-maintained copy of the
+# five standing guides in this sibling repository.
+# --------------------------------------------------------------------------- #
+def field_guide():
+    """Current sheriff-owned standing guidance and deputy-pending lessons.
+
+    This is a read-only subprocess with a small cache, rather than an import from
+    the live state root.  The dashboard may point at a different live Posse tree;
+    executing that tree's CLI keeps default guide text and its JSON schema single
+    sourced there.  A missing/old state root is displayed defensively as empty.
+    """
+    def build():
+        cli = config.STATE_ROOT / "scratch_field_guide.py"
+        if not cli.is_file():
+            return {"categories": [], "history": [], "error": "Field Guide is unavailable."}
+        env = {k: v for k, v in os.environ.items() if k != "TSOMP_RECORDS_ROOT"}
+        try:
+            proc = subprocess.run([sys.executable, str(cli), "show", "--json"],
+                                  cwd=str(config.STATE_ROOT), env=env, timeout=8,
+                                  capture_output=True, text=True)
+            data = json.loads(proc.stdout or "{}")
+            if proc.returncode or not isinstance(data, dict):
+                raise ValueError(proc.stderr or "invalid Field Guide response")
+            cats = data.get("categories")
+            if not isinstance(cats, list):
+                raise ValueError("Field Guide response has no categories")
+            # Keep only the small, expected display shape.  The CLI still owns
+            # validation; this prevents malformed runtime JSON from breaking the
+            # page or accidentally rendering an arbitrary object.
+            clean = []
+            for row in cats:
+                if not isinstance(row, dict) or not row.get("id"):
+                    continue
+                pending = row.get("pending_lessons")
+                clean.append({
+                    "id": str(row.get("id")), "label": str(row.get("label") or row.get("id")),
+                    "guideline": str(row.get("guideline") or ""),
+                    "revision": row.get("revision") or 1,
+                    "updated_at": row.get("updated_at"),
+                    "updated_by": str(row.get("updated_by") or "sheriff"),
+                    "pending_count": int(row.get("pending_count") or 0),
+                    "threshold": int(row.get("threshold") or 10),
+                    "pending_lessons": pending if isinstance(pending, list) else [],
+                    "active_rewrite": row.get("active_rewrite") if isinstance(row.get("active_rewrite"), dict) else None,
+                    "last_error": str(row.get("last_error") or ""),
+                    "last_rewrite": row.get("last_rewrite") if isinstance(row.get("last_rewrite"), dict) else None,
+                })
+            return {"title": str(data.get("title") or "Deputies' Field Guide"),
+                    "categories": clean,
+                    "history": data.get("history") if isinstance(data.get("history"), list) else []}
+        except Exception:
+            return {"categories": [], "history": [], "error": "Field Guide is unavailable."}
+    return _cached("field_guide", 5, build)
+
+
+def field_guide_requests(limit=30):
+    """Recent manual Field Guide rewrite requests, newest first, read-only."""
+    def build():
+        rows = []
+        for status in ("pending", "done", "denied"):
+            directory = config.SHERIFF_REQUESTS / status
+            if not directory.is_dir():
+                continue
+            for path in directory.glob("*.json"):
+                record = _read_json(path, {}) or {}
+                if record.get("op") != "field_guide_rewrite":
+                    continue
+                rows.append({
+                    "id": record.get("id", path.stem), "state": status,
+                    "category": record.get("target", ""), "deputy": record.get("deputy", ""),
+                    "requester": record.get("requester", ""), "reason": record.get("reason", ""),
+                    "decision_reason": record.get("decision_reason") or record.get("denied_reason", ""),
+                    "trigger": record.get("trigger", ""), "ts": record.get("ts") or 0,
+                })
+        rows.sort(key=lambda row: row["ts"] or 0, reverse=True)
+        return rows
+    return _cached("field_guide_requests", 5, build)[:limit]
+
+
+# --------------------------------------------------------------------------- #
+# Case 761: DOCKET — standing scheduled work                                  #
+# --------------------------------------------------------------------------- #
+def _entry_slot(raw):
+    """One JTF slot of a entry, reduced to what the page renders."""
+    if not isinstance(raw, dict):
+        return None
+    out = {"kind": str(raw.get("kind") or ""), "name": str(raw.get("name") or "")}
+    for k in ("service", "model", "report_service", "report_model"):
+        if raw.get(k):
+            out[k] = str(raw[k])
+    return out if out["kind"] and out["name"] else None
+
+
+def docket():
+    """The standing schedule, newest-due first.
+
+    Read through the owning CLI rather than the raw files, so the repeat phrasing
+    and the next-run arithmetic have exactly one implementation (the dashboard may
+    also point at a different live Posse tree).  Only the small display shape is
+    kept, so malformed runtime JSON cannot render an arbitrary object."""
+    def build():
+        cli = config.STATE_ROOT / "scratch_docket.py"
+        if not cli.is_file():
+            return {"docket": [], "error": "The docket is unavailable."}
+        env = {k: v for k, v in os.environ.items() if k != "TSOMP_RECORDS_ROOT"}
+        try:
+            proc = subprocess.run([sys.executable, str(cli), "list", "--json"],
+                                  cwd=str(config.STATE_ROOT), env=env, timeout=10,
+                                  capture_output=True, text=True)
+            data = json.loads(proc.stdout or "{}")
+            if proc.returncode or not isinstance(data, dict) or not data.get("ok"):
+                raise ValueError(proc.stderr or "invalid entry response")
+            rows = []
+            for r in data.get("docket") or []:
+                if not isinstance(r, dict) or not r.get("id"):
+                    continue
+                row = {
+                    "id": str(r["id"]), "name": str(r.get("name") or r["id"]),
+                    "kind": str(r.get("kind") or "case"),
+                    "prompt": str(r.get("prompt") or ""),
+                    "freq": str(r.get("freq") or ""), "at": str(r.get("at") or ""),
+                    "dow": r.get("dow"), "dom": r.get("dom"), "start": r.get("start"),
+                    "schedule_label": str(r.get("schedule_label") or ""),
+                    "next_run": r.get("next_run"), "paused": bool(r.get("paused")),
+                    "created": r.get("created"), "updated": r.get("updated"),
+                    "judge": str(r.get("judge") or ""),
+                    "judge_service": str(r.get("judge_service") or ""),
+                    "judge_model": str(r.get("judge_model") or ""),
+                    "runs": [x for x in (r.get("runs") or []) if isinstance(x, dict)][:10],
+                }
+                if row["kind"] == "jtf":
+                    row["lead"] = _entry_slot(r.get("lead"))
+                    row["collaborators"] = [c for c in
+                                            (_entry_slot(x) for x in (r.get("collaborators") or []))
+                                            if c]
+                else:
+                    row["precinct"] = str(r.get("precinct") or "")
+                    for k in ("service", "model", "report_service", "report_model"):
+                        row[k] = str(r.get(k) or "")
+                rows.append(row)
+            return {"docket": rows}
+        except Exception:
+            return {"docket": [], "error": "The docket is unavailable."}
+    return _cached("docket", 5, build)
 
 
 def critic_reviews(limit=25):
@@ -517,6 +682,14 @@ def precinct_detail(name):
     rows = _parse_case_log(log)
     rows.sort(key=lambda r: int(r["task"]) if str(r["task"]).isdigit() else -1,
               reverse=True)
+    # Case 616: which closed cases can take a follow-up. A follow-up revives the
+    # case's OWN deputy, so it needs one — the pre-Task-377 rows carry no deputy
+    # column at all, and a deputy whose relaunch script is gone cannot be brought
+    # back. Those rows get no button rather than a button that fails: the honest
+    # alternative for them is a new case in this precinct, which the form below
+    # the table already offers.
+    for r in rows:
+        r["can_followup"] = can_message(r.get("deputy") or "")
     return {
         "name": name,
         "mode": e.get("ledger_mode", "mutable"),
@@ -536,11 +709,68 @@ def precinct_detail(name):
 _STATE_LABEL = {
     "running": "running",
     "waiting_jobs": "parked (awaiting job)",
+    "waiting_jtf": "parked (JTF standby)",
     "waiting_reset": "parked (usage-limit reset)",
+    "waiting_auth": "parked (login expired)",
     "waiting": "waiting",
     "done": "done",
     "failed": "failed",
 }
+
+# Case 591: which button a Status row gets. Mirrors SWITCHABLE_STATES /
+# RELAUNCHABLE_STATES in scratch_watchdog_control.py, which this package cannot
+# import (the dashboard reaches the tsomp tree only by shelling out); the module
+# validates the state again before it writes anything, so a stale mirror shows a
+# button that refuses rather than a button that misfires.
+_SWITCHABLE_STATES = ("running", "waiting_jobs", "waiting_jtf", "waiting_reset",
+                      "waiting_auth", "failed")
+_RELAUNCHABLE_STATES = ("failed", "waiting_reset", "waiting_auth", "waiting_jtf")
+
+
+# Case 616: the deputy name goes into a FILENAME below, so it is validated before
+# it is joined to a path. Same shape as server._VALID_WORKER and
+# scratch_model_switch._VALID_NAME; duplicated rather than imported because this
+# package may not import either side.
+_VALID_WORKER = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def backend_available(script):
+    """Whether the state root actually ships the program a control shells out to.
+
+    Case 782: this dashboard is used by installs that carry different subsets of the
+    orchestration scripts. A control whose backend is absent must not be offered --
+    a button that writes an order nobody executes looks like it worked and silently
+    does nothing, which is worse than no button. Cheap enough to call per row.
+    """
+    try:
+        return (config.STATE_ROOT / str(script)).is_file()
+    except Exception:
+        return False
+
+
+def _has_watchdog_control():
+    """Whether the watchdog can execute an operator order (switch/relaunch/kill)."""
+    return backend_available("scratch_watchdog_control.py")
+
+
+def can_message(name):
+    """Case 616: whether a message can be delivered to this deputy.
+
+    The one requirement is a relaunch script on disk, because that is what reads
+    the mailbox — live or ended, interrupted or revived, every delivery ends in
+    that script running. Resolved the Case-576 way (deterministic path, not the
+    watchdog roster, which is not durable), and NOT gated on state: a message is
+    exactly what a failed or usage-limit-parked deputy may need, and an email
+    would reach it too.
+
+    scratch_deputy_message.py checks this again before it writes anything, so a
+    stale answer here shows a button that refuses rather than one that misfires.
+    """
+    if not name or not _VALID_WORKER.match(str(name)):
+        return False
+    if not backend_available("scratch_deputy_message.py"):
+        return False
+    return (config.STATE_ROOT / f"scratch_worker_{name}_relaunch.sh").is_file()
 
 
 def _worker_prompt_task(name):
@@ -595,9 +825,9 @@ def case_meta(task_id, fallback_precinct=None):
 
     Case 447: `precinct` comes from the authoritative task->precinct map (falling
     back to a precinct scraped from the spec, e.g. an old case not in the map);
-    `summary` is the case's ONE-SENTENCE case-log line — the LAST (most recent) row
-    for it in that precinct's log, so a re-logged case (e.g. a v2 delivery) shows
-    its latest summary. Summary is '' for a case that isn't closed/logged yet, and
+    `summary` is the case's ONE-SENTENCE current case-log row, so a re-logged case
+    (e.g. a v2 delivery) shows its latest summary. Summary is '' for a case that
+    isn't closed/logged yet, and
     the UI then falls back to the request text."""
     e = task_precinct_map().get(str(task_id))
     prec = (e.get("precinct") if isinstance(e, dict) else None) or fallback_precinct
@@ -794,7 +1024,102 @@ def _worker_model_fields(entry):
     }
 
 
-def workers(active_only=False):
+# --------------------------------------------------------------------------- #
+# Case 760: JTF groups on the Status board
+# --------------------------------------------------------------------------- #
+def _jtf_member(p, role):
+    if not isinstance(p, dict):
+        return None
+    deputy = p.get("deputy") or p.get("name")
+    if not deputy:
+        return None
+    return {"deputy": deputy,
+            "tag": p.get("tag") or ("LEAD" if role == "lead" else "C?"),
+            "role": role,
+            "precinct": p.get("name") if p.get("kind") == "precinct" else "",
+            "case": str(p.get("case") or "")}
+
+
+def jtf_groups():
+    """Every materialized JTF, newest first, read from the bridge's own done-records.
+
+    Mirrors scratch_jtf.groups() — which this package cannot import, since the
+    dashboard reaches the tsomp tree only through files and CLIs. The record is the
+    durable roster: it holds each participant's final deputy name, case and slot tag
+    (LEAD / C1 / C2), so membership never has to be guessed from a deputy's name.
+    """
+    out = []
+    for rec in _read_jsons(config.JTF / "done"):
+        lead = _jtf_member(rec.get("lead"), "lead")
+        if not (rec.get("jtf_id") and lead):
+            continue
+        collabs = [m for m in (_jtf_member(c, "collab")
+                               for c in (rec.get("collaborators") or [])) if m]
+        out.append({"jtf_id": str(rec["jtf_id"]),
+                    "ts": rec.get("processed_ts") or rec.get("ts") or 0,
+                    "description": (rec.get("description") or "").strip(),
+                    "critic": rec.get("critic") or "",
+                    "members": [lead] + collabs})
+    out.sort(key=lambda g: -(g["ts"] or 0))
+    return out
+
+
+def jtf_onboarding():
+    """The in-flight onboarding chains (Case 760), keyed by JTF id, so a box can say
+    which member the note is with. Finished/cancelled chains are not shown: the box
+    reports work in progress, and the new collaborator's own row is the result."""
+    out = {}
+    for rec in _read_jsons(config.JTF / "onboard"):
+        if rec.get("state") not in ("collecting", "launching"):
+            continue
+        chain, stage = rec.get("chain") or [], rec.get("stage", 0)
+        i = max(0, min(stage, len(chain) - 1))
+        out[str(rec.get("jtf_id"))] = {
+            "id": rec.get("id"), "state": rec.get("state"),
+            "new_tag": rec.get("new_tag"), "new_deputy": rec.get("new_deputy"),
+            "precinct": (rec.get("slot") or {}).get("name", ""),
+            "stage": stage, "of": len(chain),
+            "holder": chain[i] if chain else "",
+            "holder_tag": (rec.get("tags") or [""])[i] if chain else "",
+            "nudges": rec.get("nudges", 0),
+            "waiting_sec": int(time.time()
+                               - float(rec.get("delivered_ts") or rec.get("ts") or 0)),
+        }
+    return out
+
+
+def jtf_board():
+    """The Status board's JTF view: one entry per JTF that still has a deputy ON the
+    board, naming its members in slot order.
+
+    A group is listed only when at least one of its members is a row the board is
+    already showing, so a JTF whose deputies have all been closed or killed does not
+    linger as an empty box, and the box can never name a deputy the table below
+    cannot offer controls for.
+    """
+    live = {w["name"] for w in workers(active_only=True, include_failed=True)}
+    onboarding = jtf_onboarding()
+    out = []
+    for g in jtf_groups():
+        present = [m for m in g["members"] if m["deputy"] in live]
+        if not present:
+            continue
+        out.append({"jtf_id": g["jtf_id"], "description": g["description"],
+                    "critic": g["critic"],
+                    "members": present,
+                    # Case 782: adding a collaborator runs the onboarding chain; with
+                    # no chain program installed the button would open a dialog that
+                    # can never launch anyone, so the box simply does not offer it.
+                    "can_add_collaborator": backend_available("scratch_jtf_onboard.py"),
+                    # a member that is NOT on the board (closed, killed, never
+                    # spawned) is named but carries no row, so the box stays an
+                    # honest roster rather than silently shrinking.
+                    "absent": [m for m in g["members"] if m["deputy"] not in live],
+                    "onboarding": onboarding.get(g["jtf_id"])})
+    return out
+
+
+def workers(active_only=False, include_failed=False):
     wd = _read_json(config.WATCHDOG_JOBS, []) or []
     reg = registry()
     rows = []
@@ -803,7 +1128,13 @@ def workers(active_only=False):
             continue
         name = e.get("name")
         st = e.get("state")
-        if active_only and st in ("done", "failed"):
+        # Case 591: the Status board asks for `failed` deputies too — one the
+        # watchdog gave up on is precisely the one somebody has to look at, and
+        # dropping it here made the fleet look healthy while a case sat dead. It
+        # is opt-IN because active_only's other caller, system_manager(), counts
+        # "deputies actively being supervised", where a dead one is not one.
+        # `done` always goes: a closed case is history, and History shows history.
+        if active_only and (st == "done" or (st == "failed" and not include_failed)):
             continue
         rinfo = reg.get(name, {})
         prompt_tid, ttitle = _worker_task_info(name)
@@ -873,6 +1204,19 @@ def workers(active_only=False):
                 "reset_epoch": e.get("reset_epoch"),
                 "last_progress_ts": e.get("last_progress_ts"),
                 "mailbox_pending": _mailbox_pending(name),
+                # Case 591: which operator button this row offers. Computed here
+                # so the table and the modal agree on one answer.
+                # Case 782: all three are orders CARRIED OUT BY THE WATCHDOG through
+                # scratch_watchdog_control.py. Without it the order file is written and
+                # never read, so the row offers nothing rather than lying.
+                "can_switch": st in _SWITCHABLE_STATES and _has_watchdog_control(),
+                "can_relaunch": st in _RELAUNCHABLE_STATES and _has_watchdog_control(),
+                # Case 664: every tracked deputy shown on Status can be removed
+                # by an explicit, confirmed watchdog termination.
+                "can_terminate": _has_watchdog_control(),
+                # Case 616: the reply button. Independent of the two above — it
+                # is not an order to the watchdog, it is a message to the deputy.
+                "can_message": can_message(name),
                 # Case 561: the model this case is running RIGHT NOW. It is not a
                 # constant any more -- a deputy switches its own model mid-case
                 # (scratch_model_switch.py), so the roster's `model`/`service` are
@@ -1019,10 +1363,285 @@ _KIND_LABEL = {"weekly": "weekly", "session": "5-hour session",
                "5-hour": "5-hour session", "daily": "daily",
                "credits": "workspace-credit", "usage": "usage"}
 
+# Case 681: account records are intentionally small, non-secret operational
+# metadata.  The writer may use either a list under ``accounts`` or an id-keyed
+# map, and state may be grouped one level by service.  Accept both forms here so
+# an older state directory stays readable during the migration; return only the
+# display/availability fields below, never a raw record.
+_ACCOUNT_META_KEYS = {"version", "updated", "updated_at", "generated_at", "ts",
+                      "cursor", "default", "schema"}
+_ACCOUNT_FIELDS = {"id", "account", "account_id", "service", "label", "email",
+                   "name", "limit", "limit_state", "limit_active", "auth",
+                   "auth_state", "auth_active", "auth_required", "state", "active"}
+_ACCOUNT_SERVICE_ALIASES = {"openai": "chatgpt", "codex": "chatgpt", "gpt": "chatgpt"}
+_AUTH_BLOCKED_STATES = {"expired", "auth_expired", "waiting_auth", "needs_auth",
+                        "renewal_required", "unauthenticated", "invalid"}
+_LIMITED_STATES = {"limited", "waiting_reset", "rate_limited", "blocked"}
+
+
+def _account_text(value):
+    """A compact scalar suitable for a status label; never stringify a raw dict.
+
+    In particular, a malformed account record must not make the status API echo a
+    credential object just because it happened to sit in the same JSON file.
+    """
+    if isinstance(value, (str, int, float)):
+        return str(value).strip()
+    return ""
+
+
+def _account_service(value):
+    service = _account_text(value).lower()
+    return _ACCOUNT_SERVICE_ALIASES.get(service, service)
+
+
+def _service_from_account_id(account_id):
+    account_id = _account_text(account_id).lower()
+    for service in ("claude", "chatgpt", "openai", "codex", "gpt"):
+        if account_id == service or account_id.startswith(service + ":") \
+                or account_id.startswith(service + "/") \
+                or account_id.startswith(service + "-"):
+            return _account_service(service)
+    return ""
+
+
+def _looks_like_account_record(value):
+    return isinstance(value, dict) and bool(_ACCOUNT_FIELDS & set(value))
+
+
+def _account_rows(value, service=""):
+    """Return ``[(fallback_id, row, inherited_service)]`` from a tolerant shape.
+
+    Supported durable shapes are ``{"accounts": [{...}]}``,
+    ``{"accounts": {"claude:one": {...}}}``, and a service-grouped equivalent.
+    This is a reader compatibility shim, not a second account-state authority.
+    """
+    if isinstance(value, dict) and "accounts" in value:
+        value = value.get("accounts")
+    out = []
+
+    def visit(item, fallback="", inherited=""):
+        if isinstance(item, list):
+            for row in item:
+                visit(row, "", inherited)
+            return
+        if not isinstance(item, dict):
+            return
+        if _looks_like_account_record(item):
+            out.append((fallback, dict(item), inherited))
+            return
+        for key, row in item.items():
+            if key in _ACCOUNT_META_KEYS:
+                continue
+            child_service = _account_service(key)
+            if child_service in ("claude", "chatgpt"):
+                visit(row, "", child_service)
+            elif isinstance(row, (dict, list)):
+                visit(row, key, inherited)
+
+    visit(value, "", service)
+    return out
+
+
+def _account_id(row, fallback=""):
+    for key in ("account_id", "account", "id", "name"):
+        value = _account_text(row.get(key))
+        if value:
+            return value
+    return _account_text(fallback)
+
+
+def _account_registry():
+    """Account id -> safe display metadata from ``accounts.json``."""
+    out = {}
+    for fallback, row, inherited_service in _account_rows(
+            _read_json(config.ACCOUNT_REGISTRY, {})):
+        account_id = _account_id(row, fallback)
+        if not account_id:
+            continue
+        out[account_id] = {
+            "service": _account_service(row.get("service")) or inherited_service
+                       or _service_from_account_id(account_id),
+            "label": _account_text(row.get("label")),
+            "email": _account_text(row.get("email")),
+        }
+    # Before a second account is configured the producer need not materialize a
+    # registry row for the legacy homes.  State for either default must still say
+    # something human-readable rather than exposing a path or falling back to an
+    # opaque id.
+    out.setdefault("claude-default", {"service": "claude",
+                                        "label": "Default Claude account", "email": ""})
+    out.setdefault("chatgpt-default", {"service": "chatgpt",
+                                         "label": "Default ChatGPT account", "email": ""})
+    return out
+
+
+def _account_state_rows():
+    """Read account-local state, also accepting split ``limits`` / ``auth`` maps.
+
+    The normal writer shape is an ``accounts`` mapping whose entries contain nested
+    ``limit`` and ``auth`` maps.  The split-map support is deliberately read-only
+    compatibility for an incremental rollout and is merged by account id here.
+    """
+    raw = _read_json(config.ACCOUNT_STATE, {})
+    if not isinstance(raw, dict):
+        return []
+    rows = {}
+
+    def add(fallback, row, inherited_service, part=None):
+        account_id = _account_id(row, fallback)
+        if not account_id:
+            return
+        base = rows.setdefault(account_id, {})
+        if part:
+            base[part] = dict(row)
+        else:
+            base.update(row)
+        if inherited_service and not base.get("service"):
+            base["service"] = inherited_service
+        base.setdefault("account_id", account_id)
+
+    primary = raw.get("accounts", raw)
+    if primary is raw and any(k in raw for k in ("limits", "auth", "auths")):
+        primary = {k: v for k, v in raw.items()
+                   if k not in ("limits", "auth", "auths")}
+    for fallback, row, inherited_service in _account_rows(primary):
+        add(fallback, row, inherited_service)
+    for key, part in (("limits", "limit"), ("auth", "auth"), ("auths", "auth")):
+        for fallback, row, inherited_service in _account_rows(raw.get(key, {})):
+            add(fallback, row, inherited_service, part)
+    return list(rows.items())
+
+
+def _account_info(account_id, row, registry):
+    saved = registry.get(account_id, {})
+    service = (_account_service(row.get("service"))
+               or saved.get("service") or _service_from_account_id(account_id)
+               or "claude")
+    label = _account_text(row.get("label")) or saved.get("label", "")
+    email = _account_text(row.get("email")) or saved.get("email", "")
+    # An explicit label wins; show its email too when it distinguishes otherwise
+    # similar accounts (for example, two personal Claude subscriptions).
+    if label and email and label.lower() != email.lower():
+        label = f"{label} ({email})"
+    label = label or email or account_id or "?"
+    return {"service": service, "account_id": account_id, "account_label": label}
+
+
+def _limit_part(row):
+    value = row.get("limit")
+    if value is None:
+        value = row.get("limit_state")
+    if isinstance(value, dict):
+        part = dict(value)
+    elif isinstance(value, str):
+        part = {"state": value}
+    else:
+        part = {}
+    for key in ("active", "kind", "reset_epoch", "reset_str", "reset_known",
+                "source_worker", "state", "reason", "message", "limited"):
+        prefixed = "limit_" + key
+        if key not in part and prefixed in row:
+            part[key] = row[prefixed]
+    if not part:
+        return None
+    active = part.get("active")
+    if active is None:
+        active = part.get("limited")
+    if active is None:
+        active = _account_text(part.get("state")).lower() in _LIMITED_STATES
+    part["active"] = bool(active)
+    return part
+
+
+def _auth_part(row):
+    value = row.get("auth")
+    if isinstance(value, dict):
+        part = dict(value)
+    elif isinstance(value, str):
+        part = {"state": value}
+    else:
+        part = {}
+    for key in ("active", "state", "reason", "message", "source_worker", "required"):
+        prefixed = "auth_" + key
+        if key not in part and prefixed in row:
+            part[key] = row[prefixed]
+    if not part:
+        return None
+    active = part.get("active")
+    if active is None:
+        active = part.get("required")
+    if active is None:
+        active = _account_text(part.get("state")).lower() in _AUTH_BLOCKED_STATES
+    part["active"] = bool(active)
+    return part
+
+
+def _account_limit_states(now):
+    registry = _account_registry()
+    out = []
+    for account_id, row in _account_state_rows():
+        part = _limit_part(row)
+        if not part or not part.get("active"):
+            continue
+        try:
+            reset_epoch = float(part.get("reset_epoch"))
+        except (TypeError, ValueError):
+            reset_epoch = None
+        # No vendor-provided reset is still a live wall; reporting it as absent is
+        # more truthful than silently hiding the account from the banner.
+        if reset_epoch is not None and now >= reset_epoch:
+            continue
+        rec = _account_info(account_id, row, registry)
+        rec.update({
+            "active": True,
+            "scope": "account",
+            "kind": _account_text(part.get("kind")) or "usage",
+            "reset_epoch": reset_epoch,
+            # The producer schema calls this ``message``; retain a future
+            # reset_str spelling too.  It is vendor-facing wording and therefore
+            # makes the banner clearer than an epoch alone.
+            "reset_str": (_account_text(part.get("reset_str"))
+                          or _account_text(part.get("message"))),
+            "reset_known": bool(part.get("reset_known", reset_epoch is not None)),
+            "source_worker": _account_text(part.get("source_worker")),
+        })
+        out.append(rec)
+    return out
+
+
+def auth_states():
+    """Account-specific auth blocks, curated for the Status API (never secrets)."""
+    registry = _account_registry()
+    out = []
+    for account_id, row in _account_state_rows():
+        part = _auth_part(row)
+        if not part or not part.get("active"):
+            continue
+        rec = _account_info(account_id, row, registry)
+        rec.update({
+            "active": True,
+            "scope": "account",
+            "reason": _account_text(part.get("reason"))
+                      or _account_text(part.get("message"))
+                      or "authentication needs renewal",
+            "state": _account_text(part.get("state")) or "needs_auth",
+            "source_worker": _account_text(part.get("source_worker")),
+        })
+        rec["service_label"] = _SERVICE_LABEL.get(rec["service"], rec["service"])
+        rec["scope_label"] = f"{rec['service_label']} account {rec['account_label']}"
+        out.append(rec)
+    out.sort(key=lambda rec: (rec.get("service") or "", rec.get("account_label") or ""))
+    return out
+
 
 def limit_states(now=None):
-    """EVERY live usage limit: each vendor's ACCOUNT-wide marker plus any
-    per-MODEL cap, each already labelled for display.
+    """EVERY live usage limit, labelled for display.
+
+    Account-local state is primary for Case 681: each configured Claude or
+    ChatGPT account may reset at a different time.  The old per-service markers
+    remain as a compatibility fallback during rollout, and the independent
+    per-model markers remain unchanged.
 
     Case 582. Two independent reasons the page showed nothing while ChatGPT was
     walled: limit_state() reads only claude's marker (Case 557 made them
@@ -1035,6 +1654,14 @@ def limit_states(now=None):
     epoch is our own retry guess, which the banner must not present as fact."""
     now = time.time() if now is None else now
     out = []
+    registry = _account_registry()
+    account_limits = _account_limit_states(now)
+    # During migration the watchdog keeps its old service-wide marker for a
+    # one-account installation. Suppress that row only when account-local state
+    # names *that same account*. A sibling account's wall must not hide the
+    # legacy default-account wall: their reset times are independent.
+    named_account_ids = {_account_text(rec.get("account_id"))
+                         for rec in account_limits}
     for svc, path in config.LIMIT_STATE_SERVICES.items():
         d = _read_json(path)
         if not isinstance(d, dict) or not d.get("active"):
@@ -1042,10 +1669,21 @@ def limit_states(now=None):
         if now >= (d.get("reset_epoch") or 0):
             continue                       # reset has passed — not a live wall
         rec = dict(d)
-        rec["service"] = rec.get("service") or svc
+        rec["service"] = _account_service(rec.get("service") or svc) or svc
         rec["scope"] = "account"
+        # A pre-681 service-wide marker meant the only (legacy default) account.
+        # Keep that compatibility record, but never render it as an ambiguous
+        # "Claude account": the banner must name the affected profile just as a
+        # new account-local marker does.
+        account_id = _account_text(rec.get("account_id")) or f"{rec['service']}-default"
+        if account_id in named_account_ids:
+            continue
+        rec["account_id"] = account_id
+        if not _account_text(rec.get("account_label")):
+            rec["account_label"] = _account_info(account_id, {}, registry)["account_label"]
         rec.setdefault("reset_known", True)   # markers written before Case 582
         out.append(rec)
+    out.extend(account_limits)
     models = _read_json(config.MODEL_LIMIT_STATE, {})
     if isinstance(models, dict):
         for rec in models.values():
@@ -1060,11 +1698,15 @@ def limit_states(now=None):
         svc = rec.get("service") or "claude"
         rec["service_label"] = _SERVICE_LABEL.get(svc, svc)
         rec["kind_label"] = _KIND_LABEL.get(rec.get("kind"), rec.get("kind") or "usage")
-        rec["scope_label"] = (f"{rec['service_label']} account"
-                              if rec["scope"] == "account"
-                              else f"{rec['service_label']} model "
-                                   f"{rec.get('model') or '?'}")
-    out.sort(key=lambda r: r.get("reset_epoch") or 0)
+        if rec["scope"] == "account":
+            account_label = _account_text(rec.get("account_label"))
+            rec["scope_label"] = (f"{rec['service_label']} account {account_label}"
+                                  if account_label else f"{rec['service_label']} account")
+        else:
+            rec["scope_label"] = f"{rec['service_label']} model {rec.get('model') or '?'}"
+    # Known earliest resets lead; a live wall with no vendor reset follows them.
+    out.sort(key=lambda r: r.get("reset_epoch") if r.get("reset_epoch") is not None
+             else float("inf"))
     return out
 
 

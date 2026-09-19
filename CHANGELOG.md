@@ -6,10 +6,69 @@ version note** — the version number, the date, and what changed, with any
 [`VERSION`](VERSION), and each release is tagged in git (`v<version>`).
 
 To update an existing install to a new version, follow
-**[Updating Posse](README.md#updating-posse)**.
+**[Update an existing install](README.md#update-an-existing-install)**.
 
 Versioning is [semantic](https://semver.org): `MAJOR.MINOR.PATCH` — MAJOR for a
 breaking change, MINOR for a backward-compatible feature, PATCH for a fix.
+
+## [1.6.0] — 2026-09-19
+
+### Added — the Field Guide: standing output standards every deputy launches with
+
+A **Field Guide** tab holds the standards your deputies are held to. This release ships
+two categories, **code** and **report**, with short starter text; each is injected into
+every deputy's launch prompt, so a deputy knows the bar before it writes anything.
+
+The text is **sheriff-owned** and the dashboard never edits it. Each section can ask the
+sheriff for a review, and a new box asks the **receptionist** for a change — a new
+section, or different wording in one that exists. Both open work; neither writes policy.
+Deputies may file optional **lessons** from the CLI; they are shown on the tab, never
+injected into a launch prompt, and a category is reviewed automatically at ten pending.
+
+Sections open **folded**, so the tab is a list you can scan rather than a wall of text.
+
+Growing it is a code change on purpose: extend `CATEGORIES` and `DEFAULT_GUIDELINES` in
+`infra/scratch_field_guide.py` together.
+
+### Added — the Docket: work that runs on a schedule
+
+A **Docket** tab saves a spec plus a time: a single **case** in one precinct, or a whole
+**JTF** (lead plus numbered collaborators, each with its own model and work split). When
+an entry comes due, the runner drops a brand-new submission into the same queues the
+Create-case and New-JTF forms write, so **fresh** deputies are spawned — nothing from a
+previous run is reused. Repeats are once / hourly / daily / weekly / monthly, and a
+prompt may carry date placeholders filled in at launch.
+
+**Action required:** the docket needs its runner. `posse_start.sh` now starts a `docket`
+daemon alongside the others — re-run it after updating. Without that daemon entries still
+save and edit, but nothing ever fires.
+
+### Changed
+
+- Controls are offered only when the program that carries them out is installed. A
+  button that writes an order nobody executes looks like it worked and silently does
+  nothing, so the switch/relaunch/kill, reply, and add-collaborator controls now appear
+  only when their backend is present.
+- `posse_stop.sh` stops the new `docket` session with the rest.
+
+### Removed
+
+- The **Lineage** tab. The forest view was not useful. Reconstruction itself stays: it
+  still builds History's day trees, a case's ancestors strip, and the agent search on the
+  JTF and Docket forms.
+- `MIGRATION.md` and `proposed_patches/` — notes on moving this code out of its original
+  home, and a patch proposal for the removed Lineage tab that was applied in July 2026.
+- One project's dataset names and download roots, which had leaked into the deputy-spec
+  prompt and the download allow-list where no other operator could use them.
+
+### Fixed
+
+- The dashboard README claimed follow-up parent links were "not persisted" and the fix
+  was "not applied". Both were wrong: `scratch_inbox_handle.sh` has stamped `parent_task:`
+  since Task 323, so those edges are exact.
+- A test reached into one developer's absolute path and, failing everywhere else, skipped
+  two assertions in silence. It now reads this repo's own `infra/` and says when it skips.
+- Removed a real person's email address from a tracked test fixture.
 
 ## [1.5.0] — 2026-08-28
 

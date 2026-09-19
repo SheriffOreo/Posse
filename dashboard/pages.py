@@ -103,6 +103,13 @@ tr:hover td { background:var(--row-hover); }
 button, .btn { background:var(--btn-bg); color:var(--btn-fg); border:1px solid var(--accent-border); padding:5px 11px;
         border-radius:6px; cursor:pointer; font-size:13px; }
 button:hover { background:var(--btn-hover); }
+/* Case 616 (Feng uid=830): the Status board's per-deputy actions are GLYPHS, not
+   labelled buttons. Three text buttons made the Actions column the widest thing
+   on a row that is mostly the case description; the meaning moves to the title
+   tooltip, which is where the longer explanation already lived. Square, so the
+   three line up whichever subset a row gets. */
+.iconbtn { padding:2px 0; width:26px; text-align:center; font-size:13px;
+        line-height:18px; margin-right:4px; }
 .cal { display:grid; grid-template-columns:repeat(7,1fr); gap:5px; max-width:520px; margin:0 auto; }
 .cal .h { text-align:center; color:var(--muted); font-size:11px; font-weight:700; }
 .cal .day { min-height:46px; border:1px solid var(--cal-border); border-radius:6px; padding:4px; cursor:pointer;
@@ -150,16 +157,11 @@ button:hover { background:var(--btn-hover); }
 .small { font-size:12px; } .nowrap{white-space:nowrap;}
 code.cmd{ display:block; white-space:pre-wrap; word-break:break-all; background:var(--surface2); padding:6px 8px;
           border-radius:5px; border:1px solid var(--code-border); color:var(--code-fg); }
-/* ---- lineage forest ---- */
+/* ---- lineage trees (History day view; shared tree builder in _COMMON_JS) ---- */
 .legend { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin:4px 0 14px; font-size:12px; color:var(--h2); }
 .legend .k { display:inline-flex; align-items:center; gap:7px; }
 .cbar { width:4px; height:15px; border-radius:1px; flex:none; display:inline-block; }
 .cbar.bh{background:#3fb950;} .cbar.bm{background:var(--amber);} .cbar.bl{background:#8a94a6;} .cbar.broot{background:var(--link);}
-details.tree, details.singles { margin-bottom:6px; }
-details.tree > summary, details.singles > summary { cursor:pointer; list-style:none; padding:5px 2px; outline:none; }
-details.tree > summary::-webkit-details-marker, details.singles > summary::-webkit-details-marker { display:none; }
-details.tree > summary::before, details.singles > summary::before { content:'▾'; color:var(--muted); margin-right:6px; }
-details.tree:not([open]) > summary::before, details.singles:not([open]) > summary::before { content:'▸'; }
 ul.tree-ul { list-style:none; margin:0; padding-left:15px; border-left:1px solid var(--tree-line); }
 ul.tree-ul.root { border-left:none; padding-left:0; }
 /* Case 421: a lineage node is a full-height accent bar + a wrapping title block +
@@ -174,10 +176,6 @@ ul.tree-ul.root { border-left:none; padding-left:0; }
 a.tlink { color:var(--tlink); } a.tlink:hover { color:var(--link); }
 .bchip { font-size:11px; padding:1px 6px; border-radius:9px; background:var(--chip-bg); color:var(--th); white-space:nowrap; }
 .wchip { font-size:11px; color:var(--muted2); white-space:nowrap; font-family:ui-monospace,monospace; }
-.singlewrap { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
-a.schip { font-size:12px; padding:1px 7px; border-radius:5px; background:var(--chip2-bg); color:var(--h2); font-family:ui-monospace,monospace; }
-a.schip:hover { background:var(--btn-bg); color:var(--btn-fg); text-decoration:none; }
-.empty-state { text-align:center; color:var(--empty); padding:34px 16px; font-style:italic; }
 /* ---- day-lineage mini-trees (History) ---- */
 .daytrees { margin-top:4px; }
 .daytrees .mtree { padding:8px 0; }
@@ -264,16 +262,50 @@ body.pcmodal-open { overflow:hidden; }              /* lock background scroll wh
 .brandmark { display:flex; flex-direction:column; align-items:center; gap:6px; margin-bottom:14px; }
 .brandmark span { font-weight:700; letter-spacing:.3px; font-size:16px; color:var(--fg); }
 /* ---- JTF (Joint Task Force) assignment form + agent/precinct-search modal (Task 353; Case 384e) ---- */
-.jtf-form { max-width:680px; display:flex; flex-direction:column; gap:16px; }
-.jtf-form .fld { display:flex; flex-direction:column; gap:6px; }
-.jtf-form .fld.chk { flex-direction:row; align-items:center; gap:9px; cursor:pointer; }
-.jtf-form .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--th); font-weight:600; }
-.jtf-form textarea, .jtf-form input[type=text], .modal-card input[type=text] {
+.jtf-form, .dform { max-width:680px; display:flex; flex-direction:column; gap:16px; }
+.jtf-form .fld, .dform .fld { display:flex; flex-direction:column; gap:6px; }
+.jtf-form .fld.chk, .dform .fld.chk { flex-direction:row; align-items:center; gap:9px; cursor:pointer; }
+.jtf-form .lbl, .dform .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--th); font-weight:600; }
+/* Case 599 (uid=770): `select` was missing here, so the Judge dropdown was the
+   ONLY control on the form falling back to the browser default — white on a dark
+   card. Every box on this form is styled by this one rule. */
+.jtf-form textarea, .jtf-form input[type=text], .jtf-form select,
+.dform textarea, .dform input[type=text], .dform input[type=date],
+.dform input[type=time], .dform input[type=number], .dform select,
+.modal-card input[type=text] {
   width:100%; padding:9px; border-radius:6px; border:1px solid var(--accent-border);
   background:var(--surface2); color:var(--fg); font:inherit; }
-.jtf-form textarea { resize:vertical; min-height:96px; }
-.jtf-form .pickrow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.jtf-form .chips { display:flex; flex-wrap:wrap; gap:6px; }
+/* the per-slot lane boxes are compact and sit inside a slot card, so they opt out
+   of the full-width rule above while keeping its colours. */
+.jtf-form .jtf-sel, .dform .jtf-sel { width:auto; padding:3px 6px; border-radius:5px; font-size:12px;
+  background:var(--card); }
+.jtf-form textarea, .dform textarea { resize:vertical; min-height:96px; }
+.jtf-form .pickrow, .dform .pickrow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+/* Case 599: slots stack vertically now — each carries its own work-split panel,
+   which does not fit an inline chip. */
+.jtf-form .chips, .dform .chips { display:flex; flex-direction:column; gap:8px; }
+.jtf-slot { border:1px solid var(--accent-border); border-radius:8px;
+  background:var(--surface2); padding:8px 10px; }
+.jtf-slot.lead { border-color:var(--hover-border); background:var(--has-bg); }
+.jtf-slot-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  font-family:ui-monospace,monospace; font-size:13px; color:var(--fg); }
+.jtf-slot-head .x { cursor:pointer; color:var(--muted); font-weight:700; margin-left:auto; }
+.jtf-slot-head .x:hover { color:var(--link); }
+.jtf-slot-head .at { color:var(--muted); font-size:11px; }
+/* the C1/C2/LEAD slot number the description addresses */
+.jtf-slot-head .tag { font-size:11px; font-weight:700; letter-spacing:.5px;
+  padding:1px 7px; border-radius:7px; background:var(--chip-bg); color:var(--h2);
+  border:1px solid var(--accent-border); }
+.jtf-slot.lead .jtf-slot-head .tag { background:var(--surface2); color:var(--fg); }
+.jtf-cfg { display:flex; flex-direction:column; gap:5px; margin:7px 0 1px; }
+.jtf-lane { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.jtf-lane .lane-l { font-size:10px; text-transform:uppercase; letter-spacing:.5px;
+  color:var(--th); font-weight:600; min-width:52px; }
+.jtf-sel { padding:3px 6px; border-radius:5px; border:1px solid var(--accent-border);
+  background:var(--card); color:var(--fg); font:inherit; font-size:12px; }
+/* the judge's own service+model, revealed only once a judge is chosen */
+.jtf-judge { display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; }
+.jtf-judge label { flex:1; min-width:190px; display:flex; flex-direction:column; gap:4px; }
 .jtf-chip, .jtf-lead { display:inline-flex; align-items:center; gap:7px; font-family:ui-monospace,monospace;
   border-radius:12px; padding:2px 9px; }
 .jtf-chip { font-size:12px; background:var(--chip-bg); color:var(--h2); }
@@ -281,9 +313,10 @@ body.pcmodal-open { overflow:hidden; }              /* lock background scroll wh
 .jtf-chip .x, .jtf-lead .x { cursor:pointer; color:var(--muted); font-weight:700; }
 .jtf-chip .x:hover, .jtf-lead .x:hover { color:var(--link); }
 /* the "precinct" vs "specific deputy" kind badge on a filled slot */
-.jtf-chip .k, .jtf-lead .k { font-size:9px; text-transform:uppercase; letter-spacing:.4px;
-  padding:1px 5px; border-radius:7px; background:var(--chip-bg); color:var(--th); font-weight:700; }
-.jtf-lead .k { background:var(--surface2); }
+.jtf-chip .k, .jtf-lead .k, .jtf-slot-head .k { font-size:9px; text-transform:uppercase;
+  letter-spacing:.4px; padding:1px 5px; border-radius:7px; background:var(--chip-bg);
+  color:var(--th); font-weight:700; }
+.jtf-lead .k, .jtf-slot.lead .jtf-slot-head .k { background:var(--surface2); }
 /* the precinct-options band at the top of the picker modal */
 .pickband { margin-bottom:6px; }
 .picklbl { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--th);
@@ -292,7 +325,31 @@ body.pcmodal-open { overflow:hidden; }              /* lock background scroll wh
   border:1px solid var(--accent-border); background:var(--surface2); color:var(--fg);
   border-radius:10px; padding:2px 9px; margin:0 5px 5px 0; }
 .pchip:hover { border-color:var(--hover-border); background:var(--row-hover); }
-.jtf-form .actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+/* ---- Docket (Case 761): standing scheduled work ---- */
+.docket { border:1px solid var(--accent-border); border-radius:8px; background:var(--card);
+  padding:10px 12px; margin-bottom:10px; }
+.docket.off { opacity:.72; }
+.docket-head { display:flex; align-items:baseline; gap:9px; flex-wrap:wrap; }
+.docket-head b { font-size:14px; }
+.pkind { font-size:9px; text-transform:uppercase; letter-spacing:.6px; font-weight:700;
+  padding:1px 6px; border-radius:8px; background:var(--chip-bg); color:var(--th); }
+.pwhen { margin-left:auto; font-size:12px; color:var(--muted); font-family:ui-monospace,monospace; }
+.docket-meta { margin-top:6px; display:flex; flex-direction:column; gap:3px;
+  font-size:12px; color:var(--fg); }
+.docket-meta .k { color:var(--muted); display:inline-block; min-width:74px; }
+.docket-meta .tag { font-size:10px; font-weight:700; letter-spacing:.5px; padding:0 5px;
+  border-radius:7px; background:var(--chip-bg); color:var(--th); margin-right:5px; }
+.docket details { margin-top:7px; }
+.docket details summary { cursor:pointer; font-size:12px; color:var(--link); }
+.docket pre { white-space:pre-wrap; margin:6px 0 0; padding:8px; border-radius:6px;
+  background:var(--surface2); font-size:12px; max-height:260px; overflow:auto; }
+.docket-acts { margin-top:9px; display:flex; gap:8px; flex-wrap:wrap; }
+.docket-acts button { font-size:12px; padding:3px 10px; }
+.docket-acts button.runnow { font-weight:700; }
+.docket-acts button.danger { color:#f85149; border-color:#f85149; }
+.docket-acts button.danger:hover { background:#f85149; color:#fff; }
+.pruns { margin-top:6px; font-size:11px; color:var(--muted); font-family:ui-monospace,monospace; }
+.jtf-form .actions, .dform .actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 /* modal overlay + card (agent search). Scrim reads on both themes. */
 .modal { position:fixed; inset:0; background:rgba(6,10,18,.62); display:flex;
   align-items:flex-start; justify-content:center; z-index:20; padding:56px 16px; }
@@ -358,9 +415,11 @@ def _mark(px):
 
 
 def _nav(active=""):
-    """Header nav. `active` in {status,history,precincts,judges,lineage,jtf} marks the
-    current link with .cur so you can see which page you're on (Task 346;
-    Cowork->JTF Case 384e; Judges Case 551)."""
+    """Header nav. `active` in {status,history,precincts,judges,field-guide,jtf,
+    docket} marks the current link with .cur so you can see which page you're on
+    (Task 346; Cowork->JTF Case 384e; Judges Case 551; Docket Case 761; the Lineage
+    tab was removed in Case 761 — the reconstruction itself still backs History's
+    day trees and every case's conversation panel)."""
     def cur(name):
         return " class='cur'" if name == active else ""
     acct = auth.account().get("email")
@@ -373,8 +432,9 @@ def _nav(active=""):
         f"<a href='/history'{cur('history')}>History</a>"
         f"<a href='/precincts'{cur('precincts')}>Precincts</a>"
         f"<a href='/judges'{cur('judges')}>Judge</a>"
-        f"<a href='/lineage'{cur('lineage')}>Lineage</a>"
-        f"<a href='/jtf'{cur('jtf')}>JTF</a></nav>"
+        f"<a href='/field-guide'{cur('field-guide')}>Field Guide</a>"
+        f"<a href='/jtf'{cur('jtf')}>JTF</a>"
+        f"<a href='/docket'{cur('docket')}>Docket</a></nav>"
         "<span id='daemons' class='small muted'></span>"
         "<span class='spacer'></span>"
         f"{who}"
@@ -504,14 +564,50 @@ def register_page(token=None, error="", closed=False, email=None, name=None):
 def status_page():
     body = (
         "<div id='limit'></div>"
-        "<h2>Active Deputies <span id='wc' class='muted small'></span></h2>"
         # Task 384c / Phase A1: frame this roster as the Sheriff's deputy-supervision
         # loop (the watchdog). The unified "Sheriff = system manager" panel (deputies +
         # precincts) lives on the Precincts page; this is the per-deputy detail of it.
-        "<p class='muted small' style='margin:-4px 0 8px'>The Sheriff "
+        # Case 760 (Feng uid=1381): this legend leads the WHOLE board, above both
+        # sections, because the glyphs it explains appear on JTF rows and plain rows
+        # alike. It used to sit under the Active Deputies heading, which is now the
+        # heading of the second section only.
+        "<p class='muted small' style='margin:2px 0 10px'>The Sheriff "
         "(<a href='/precincts'>system manager</a>) supervises these deputies via the "
-        "watchdog &mdash; crash / usage-limit recovery + relaunch. Zero-API.</p>"
+        "watchdog &mdash; crash / usage-limit recovery + relaunch. Zero-API. "
+        # Case 591: the two buttons on every row. Say plainly who carries them out,
+        # because that is the whole reason they are safe to press on a live case.
+        # Case 616 (Feng uid=830): the row buttons are glyphs now, so this line is
+        # the legend for them — each one named once, here, and repeated on hover.
+        "Per-deputy actions: <b>&#8646;</b> switch model, <b>&#9654;</b> relaunch, "
+        "<b>&#9209;</b> kill (confirmation required) "
+        "&mdash; both carried out by the watchdog itself, so neither costs a model "
+        "call. <b>&#9993;</b> reply writes to the deputy instead: it interrupts it "
+        "the same way an email does (reviving it first if it has finished), and it "
+        "answers you by email.</p>"
+        # Case 760 (Feng uid=1381, order per uid=1383): two PEER sections — Active
+        # Deputies, then Active JTF. Each heading sits directly above the table it
+        # describes; heading the whole PAGE with "Active Deputies" left it describing
+        # nothing while the real deputies sat under a smaller "Other deputies".
+        "<h2>Active Deputies <span id='wc' class='muted small'></span></h2>"
         "<div id='workers' class='tablewrap'>loading&hellip;</div>"  # Task 377: leads with deputy/case#/precinct; scrolls at narrow width
+        "<div id='jtfs'></div>"
+        # Case 591: the switch / relaunch dialog. Content is built by the JS once
+        # the deputy's live settings come back from /api/deputy/settings.
+        "<div id='dmodal' class='modal' style='display:none'>"
+        "<div class='modal-card'>"
+        "<div class='modal-head'><b id='dtitle'>Deputy</b>"
+        "<button class='small' id='dclose'>&#10005; close</button></div>"
+        "<div id='dbody' class='muted small'>loading&hellip;</div>"
+        "</div></div>"
+        + _MSG_MODAL_HTML +      # Case 616: the reply dialog
+        # Case 760: "+ add collaborator" — precinct, optional models, and the
+        # message that goes to the LEAD with the onboarding instruction.
+        "<div id='addmodal' class='modal' style='display:none'>"
+          "<div class='modal-card'>"
+          "<div class='modal-head'><b id='addtitle'>Add a collaborator</b>"
+          "<button class='small' onclick='addClose()'>&#10005; close</button></div>"
+          "<div id='addbody' class='muted small'>loading&hellip;</div>"
+          "</div></div>" +
         "<div id='detail'></div>"  # Task 327: task detail when a worker's case# is clicked
         # Task 377 #3 / Feng uid=380: on-demand per-GPU DEVICE stats behind a Refresh
         # button, placed ABOVE the GPU tasks section. The ONLY trigger for
@@ -528,7 +624,13 @@ def status_page():
         "<h2>Job Manager &mdash; Active Jobs</h2><div id='jobs' class='tablewrap'>loading&hellip;</div>"
         "<p class='muted small' id='updated'></p>"
     )
-    return _shell("Infra Status", body, _STATUS_JS, active="status")
+    # Case 591: the model list the switch / relaunch dialog offers, rendered from
+    # the registry so a new model appears here the day it is registered.
+    js = ("var DEP_MODELS=" + json.dumps(
+        [{"v": f"{svc}:{m}", "label": f"{models.label(m)} · {models.service_label(svc)}"}
+         for svc in models.SERVICE_IDS for m in models.aliases_for(svc)])
+        + ";\n" + _STATUS_JS)
+    return _shell("Infra Status", body, js, active="status")
 
 
 def history_page():
@@ -725,39 +827,345 @@ async function showCaseFile(cnum, path){
 }
 """
 
-_STATUS_JS = _COMMON_JS + r"""
+# --------------------------------------------------------------------------- #
+# Case 616: the operator's message dialog, shared by the Status board's "reply"
+# button and the precinct case log's "follow-up" button.
+#
+# ONE block for both because it is one act: a message to a deputy, delivered
+# exactly the way an email is. The only difference between the two entry points
+# is which case it names and whether the deputy is still running, and both of
+# those come back from /api/deputy/message rather than being guessed by the page.
+# Order matters in this module -- this must be defined before _STATUS_JS and
+# _PRECINCT_DETAIL_JS, which concatenate it (Case 599 bit exactly this).
+# --------------------------------------------------------------------------- #
+_MSG_JS = r"""
+function msgClose(){ var m=document.getElementById('msgmodal');
+  if(m) m.style.display='none'; }
+async function openMessage(name, caseId, source){
+  var M=document.getElementById('msgmodal'), B=document.getElementById('msgbody');
+  if(!M) return;
+  document.getElementById('msgtitle').textContent=
+    (source==='precinct'?'Follow up on case '+caseId+' — ':'Reply to ')+name;
+  B.innerHTML='loading&hellip;'; M.style.display='flex';
+  var r;
+  try{
+    var res=await fetch('/api/deputy/message?name='+encodeURIComponent(name)+
+                        '&case='+encodeURIComponent(caseId||''));
+    if(res.status===401){ location='/login'; return; }
+    /* read the body whatever the status: a 400 still carries the reason, and
+       throwing on it would leave the dialog on "loading…" for ever. */
+    try{ r=await res.json(); }
+    catch(e){ r={ok:false,error:'the endpoint answered '+res.status+
+                 ' with something that is not JSON'}; }
+  }catch(e){ r={ok:false,error:'could not reach the dashboard ('+e+')'}; }
+  var d=r&&r.settings;
+  if(!d){ B.textContent=(r&&r.error)||'could not read this deputy'; return; }
+  B.innerHTML='';
+  B.appendChild(el('div','small muted','deputy '+d.worker+
+    (d.case?(' · now on case #'+d.case):'')+(d.precinct?(' · '+d.precinct):'')+
+    ' · '+(d.live?'running':'finished')));
+  if(!d.deliverable){
+    B.appendChild(el('div','banner', d.error||'This deputy cannot be reached.'));
+    return;
+  }
+  /* What pressing Send will actually do. Said before the box, not after, because
+     interrupting a working deputy and waking a finished one are different acts. */
+  B.appendChild(el('div','small muted', d.live
+    ? 'This deputy is working. Sending interrupts it now — it reads your message '
+      + 'as its next action, and its CPU jobs, GPU jobs and sub-agents keep running.'
+    : 'This deputy has finished. Sending revives it on the settings its case was '
+      + 'created with, and it reads your message as its first action.'));
+  if(d.moved_on)
+    B.appendChild(el('div','banner','Heads up: this deputy has moved on to case #'+
+      d.case+'. Your message reaches it there, and it decides whether to answer '+
+      'under case '+d.about_case+' or open a new one.'));
+  if(d.mailbox_pending)
+    B.appendChild(el('div','banner','It already has unread mail; yours is delivered '+
+      'alongside it.'));
+  var ta=document.createElement('textarea');
+  ta.rows=7; ta.placeholder='A question, or a task. The deputy replies by email.';
+  ta.style.cssText='width:100%;padding:9px;border-radius:6px;margin:10px 0;'+
+    'border:1px solid var(--accent-border);background:var(--surface2);'+
+    'color:var(--fg);font:inherit;resize:vertical';
+  B.appendChild(ta);
+  B.appendChild(el('div','small muted',
+    'The deputy decides for itself whether this is a question or a task, whether '+
+    'to answer under this case number or open a new one, and whether to take it '+
+    'or delegate it — the same protocol it follows for a follow-up email. It '+
+    'replies to you by email either way.'));
+  var go=el('button',null,'Send');
+  go.style.marginTop='10px';
+  go.onclick=function(){
+    var t=(ta.value||'').trim();
+    var st=document.getElementById('msgstatus');
+    if(!t){ if(st) st.textContent='Type a message first.'; return; }
+    go.disabled=true; ta.disabled=true;
+    sendMessage(name, t, caseId, source, go, ta);
+  };
+  B.appendChild(go);
+  var st=el('div','small'); st.id='msgstatus'; st.style.marginTop='8px';
+  B.appendChild(st);
+  ta.focus();
+}
+async function sendMessage(name, text, caseId, source, go, ta){
+  var st=document.getElementById('msgstatus');
+  if(st) st.textContent='delivering… (the deputy is being interrupted; this takes '+
+    'a few seconds)';
+  var r;
+  try{
+    var res=await fetch('/api/deputy/message',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:name, message:text, case:caseId||'',
+                           source:source||''})});
+    if(res.status===401){ location='/login'; return; }
+    try{ r=await res.json(); }
+    catch(e){ r={ok:false,error:'the dashboard answered '+res.status+
+                 ' with something that is not JSON'}; }
+  }catch(e){ r={ok:false,error:'could not reach the dashboard ('+e+')'}; }
+  if(st) st.textContent=(r&&(r.message||r.error))||'no answer from the dashboard';
+  if(r&&r.ok){
+    if(st) st.className='small';
+    setTimeout(msgClose, 2500);
+    if(window.tick) tick();
+  }else{
+    /* Let them fix it and try again rather than reopening the dialog. */
+    if(go) go.disabled=false;
+    if(ta) ta.disabled=false;
+  }
+}
+"""
+
+# The dialog markup, injected into every page that offers the buttons.
+_MSG_MODAL_HTML = (
+    "<div id='msgmodal' class='modal' style='display:none'>"
+    "<div class='modal-card'>"
+    "<div class='modal-head'><b id='msgtitle'>Message a deputy</b>"
+    "<button class='small' onclick='msgClose()'>&#10005; close</button></div>"
+    "<div id='msgbody' class='muted small'>loading&hellip;</div>"
+    "</div></div>"
+)
+
+_STATUS_JS = _COMMON_JS + _MSG_JS + r"""
 async function tick(){
   var s; try{ s=await getJSON('/api/status'); }catch(e){ return; }
   if(!s) return;
   daemonsBar(s.daemons);
-  // limit banner — Case 582. One banner per LIVE limit, each naming WHAT SERVICE
-  // and WHICH limit (Feng's ask). Reads s.limits (both vendors' account walls +
-  // per-model caps); s.limit was claude's account marker only, so a ChatGPT wall
-  // rendered nothing at all. A reset we GUESSED is labelled as a guess rather than
-  // printed as the vendor's word — printing one as fact is what put "Reset: ~Fri
-  // 18:32" in Feng's inbox for a wall that lifted at 17:47.
+  // limit/auth banners — Case 681. One banner per LIVE account wall or expired
+  // account, so an operator can see which subscription to use next. `account_label`
+  // is a safe label/email supplied by state, never an auth-home or credential path.
+  // Case 582 already required every usage banner to name its service and limit.
   var L=document.getElementById('limit'); L.innerHTML='';
   var lims=s.limits||(s.limit?[s.limit]:[]);
   lims.forEach(function(x){
     var b=el('div','banner');
-    var scope=x.scope_label||((x.service_label||x.service||'?')+' account');
+    var account=x.account_label||x.account||'';
+    var scope=x.scope_label||((x.service_label||x.service||'?')+' account'+
+      (account?' '+account:''));
     var kind=x.kind_label||x.kind||'usage';
     // the vendor's fragment is already a phrase ("resets 4:50pm", "try again at
     // 5:47 PM"), so show it verbatim + the absolute clock; prefixing it printed
     // "resets resets Tue 6pm".
     var when=x.reset_known===false
-      ? 'reset time not stated by the vendor — retrying ~'+fmtTs(x.reset_epoch)
+      ? (x.reset_epoch ? 'reset time not stated by the vendor — retrying ~'+fmtTs(x.reset_epoch)
+                       : 'reset time not stated by the vendor')
       : (x.reset_str ? x.reset_str+' (~'+fmtTs(x.reset_epoch)+')'
                      : 'resets ~'+fmtTs(x.reset_epoch));
     b.textContent='USAGE LIMIT — '+scope+' · '+kind+' limit · '+when+
       ' · source: '+(x.source_worker||'?');
     L.appendChild(b);
   });
+  (s.auths||[]).forEach(function(x){
+    var b=el('div','banner');
+    var account=x.account_label||x.account||'';
+    var scope=x.scope_label||((x.service_label||x.service||'?')+' account'+
+      (account?' '+account:''));
+    b.textContent='AUTH REQUIRED — '+scope+' · '+
+      (x.reason||'authentication needs renewal')+' · source: '+(x.source_worker||'?');
+    L.appendChild(b);
+  });
   // workers — Task 377 #3: lead with deputy / case# / precinct, then state/etc.
-  document.getElementById('wc').textContent='('+s.workers.length+' active)';
-  var wt=el('table'); wt.innerHTML='<tr><th>deputy</th><th>case#</th><th>precinct</th>'+
-    '<th>state</th><th>model</th><th>description</th><th>requester</th><th class=nowrap>mail</th><th>rl</th></tr>';
-  s.workers.forEach(function(w){var tr=el('tr');
+  // Case 591: FAILED deputies are listed too, so the count says how many of the
+  // rows are actually working — "(12 active)" over a table containing four dead
+  // ones was the reading that let a failed case sit unnoticed.
+  LAST_LIMITS = s.limits || [];
+  // Case 760: the board is two PEER sections — Active JTF, then Active Deputies —
+  // but there is exactly ONE row builder: a deputy inside a JTF box must keep every
+  // control it has outside one, and two builders would drift the day a control is
+  // added. `tag` is the slot (LEAD / C1 / ...) and is shown only inside a box.
+  LAST_JTFS = s.jtfs || [];
+  var inJtf = {};
+  LAST_JTFS.forEach(function(g){ (g.members||[]).forEach(function(m){
+    inJtf[m.deputy]=g.jtf_id; }); });
+  renderJtfs(LAST_JTFS, s.workers);
+  var rest=s.workers.filter(function(w){ return !inJtf[w.name]; });
+  // The count belongs to the table under this heading, not to the fleet (uid=1381):
+  // the JTF heading counts JTFs and every box already names its member count, so a
+  // fleet total here would double-count them under a heading they are not in.
+  var nfail=rest.filter(function(w){return w.state==='failed';}).length;
+  document.getElementById('wc').textContent='('+(rest.length-nfail)+' active'+
+    (nfail?(', '+nfail+' failed'):'')+')';
+  var W=document.getElementById('workers'); W.innerHTML='';
+  if(rest.length) W.appendChild(workerTable(rest,null));
+  else W.appendChild(el('div','card muted', LAST_JTFS.length
+    ? 'Every deputy on the board is in a JTF.'
+    : 'No deputies on the board.'));
+  tick2(s);
+}
+var LAST_JTFS=[];
+
+/* ---- Case 760: one box per Joint Task Force -------------------------------
+   A JTF is a group working ONE task, so its members are boxed together and
+   lifted out of the flat roster. The box is a frame, not a different table:
+   every row is built by workerRow(), so switch / relaunch / kill / reply are
+   the same controls, on the same rows, that the deputy would have had below. */
+function renderJtfs(groups, allWorkers){
+  var H=document.getElementById('jtfs'); H.innerHTML='';
+  if(!groups.length) return;
+  var byName={}; allWorkers.forEach(function(w){ byName[w.name]=w; });
+  H.appendChild(el('h2',null,'Active JTF ('+groups.length+')'));
+  groups.forEach(function(g){
+    var box=el('div','card'); box.style.cssText='margin-bottom:14px;padding:12px';
+    var head=el('div'); head.style.cssText=
+      'display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px';
+    var t=el('b',null,'JTF '+g.jtf_id); t.style.fontSize='15px'; head.appendChild(t);
+    head.appendChild(el('span','small muted', g.members.length+' member'+
+      (g.members.length===1?'':'s')+(g.critic?(' · judge '+g.critic):'')));
+    if(g.can_add_collaborator!==false){
+      var add=el('button','small','+ add collaborator');
+      add.style.marginLeft='auto';
+      add.title='Add a collaborator: the lead writes an onboarding note, every '+
+        'collaborator adds to it, and only then is the new deputy launched';
+      add.onclick=(function(id){return function(){ openAddCollab(id); };})(g.jtf_id);
+      head.appendChild(add);
+    }
+    box.appendChild(head);
+    if(g.description)
+      box.appendChild(el('div','small muted', g.description.split('\n')[0].slice(0,200)));
+    /* An onboarding chain in flight is the box's live state: it says which member
+       is holding the note, because that is who the next step is waiting on. */
+    if(g.onboarding){
+      var o=g.onboarding, b=el('div','banner');
+      b.style.marginTop='8px';
+      b.textContent= o.state==='launching'
+        ? ('Onboarding '+o.new_tag+' — the note has been round every member; '+
+           'the new deputy is being launched.')
+        : ('Onboarding '+o.new_tag+' ('+o.precinct+') — step '+(o.stage+1)+' of '+
+           (o.of+1)+', the note is with '+o.holder_tag+' '+o.holder+' ('+
+           Math.round(o.waiting_sec/60)+' min'+(o.nudges?(', '+o.nudges+' nudge'+
+           (o.nudges===1?'':'s')):'')+'). '+o.new_tag+' is launched when it reaches the end.');
+      box.appendChild(b);
+    }
+    var tags={}, rows=[];
+    g.members.forEach(function(m){ var w=byName[m.deputy];
+      if(w){ tags[m.deputy]=m.tag; rows.push(w); } });
+    var tw=el('div','tablewrap'); tw.style.marginTop='8px';
+    tw.appendChild(workerTable(rows, tags)); box.appendChild(tw);
+    if(g.absent&&g.absent.length)
+      box.appendChild(el('div','small muted','also in this JTF, no longer on the '+
+        'board: '+g.absent.map(function(m){return m.tag+' '+m.deputy;}).join(', ')));
+    H.appendChild(box);
+  });
+}
+
+/* ---- Case 760: the add-collaborator dialog --------------------------------
+   Pressing Send does NOT spawn anything. It hands the LEAD the first step of an
+   onboarding chain, and the dialog says so, because "add collaborator" that
+   returns without a new deputy on the board is otherwise read as a failure. */
+function addClose(){ var m=document.getElementById('addmodal');
+  if(m) m.style.display='none'; }
+async function openAddCollab(jtfId){
+  var M=document.getElementById('addmodal'), B=document.getElementById('addbody');
+  if(!M) return;
+  document.getElementById('addtitle').textContent='Add a collaborator to JTF '+jtfId;
+  B.innerHTML='loading&hellip;'; M.style.display='flex';
+  var g=null; LAST_JTFS.forEach(function(x){ if(x.jtf_id===jtfId) g=x; });
+  var pr; try{ pr=await getJSON('/api/precincts'); }catch(e){ pr=null; }
+  if(!pr){ B.textContent='could not read the precinct list'; return; }
+  B.innerHTML='';
+  if(g&&g.onboarding){
+    B.appendChild(el('div','banner','This JTF already has an onboarding chain in '+
+      'flight (with '+g.onboarding.holder+'). Let it finish first — two notes '+
+      'circulating at once would each describe a JTF the other is changing.'));
+    return;
+  }
+  B.appendChild(el('div','small muted','The new deputy is spawned fresh in the '+
+    'precinct you pick, and joins as the next collaborator slot.'));
+  if(!(pr.precincts||[]).length){
+    B.appendChild(el('div','banner','No precincts are registered, so there is '+
+      'nowhere to spawn a collaborator. Register one first.'));
+    return;
+  }
+  var ps=document.createElement('select'); ps.id='addprec';
+  ps.style.cssText=SELCSS;
+  (pr.precincts||[]).forEach(function(p){
+    var o=document.createElement('option'); o.value=p.name;
+    o.textContent=p.name+(p.description?(' — '+p.description.slice(0,60)):'');
+    ps.appendChild(o); });
+  B.appendChild(el('div','small','precinct')); B.appendChild(ps);
+  var ms=document.createElement('select'); ms.id='addmodel';
+  ms.style.cssText=SELCSS;
+  var d0=document.createElement('option'); d0.value='';
+  d0.textContent='precinct default'; ms.appendChild(d0);
+  DEP_MODELS.forEach(function(m){ var o=document.createElement('option');
+    o.value=m.v; o.textContent=m.label; ms.appendChild(o); });
+  B.appendChild(el('div','small','model (optional)')); B.appendChild(ms);
+  var ta=document.createElement('textarea'); ta.id='addmsg'; ta.rows=6;
+  ta.placeholder='Why this collaborator is joining and what it is for. This goes '+
+    'to the lead, which writes the onboarding note from it.';
+  ta.style.cssText='width:100%;padding:9px;border-radius:6px;margin:10px 0;'+
+    'border:1px solid var(--accent-border);background:var(--surface2);'+
+    'color:var(--fg);font:inherit;resize:vertical';
+  B.appendChild(el('div','small','message to the lead')); B.appendChild(ta);
+  B.appendChild(el('div','small muted','Send interrupts the LEAD with your message '+
+    'and asks it to write an onboarding note — the task as it stands now, current '+
+    'progress, every collaborator\'s duty and the new one\'s duty. The note is then '+
+    'passed through every collaborator, each adding a paragraph on its own work. '+
+    'ONLY after the last one is the new deputy launched, with the JTF prompt and '+
+    'the finished note; its first act is to message the lead that it is ready.'));
+  var go=el('button',null,'Send to the lead'); go.style.marginTop='10px';
+  go.onclick=function(){ sendAddCollab(jtfId, go, ps, ms, ta); };
+  B.appendChild(go);
+  var st=el('div','small'); st.id='addstatus'; st.style.marginTop='8px';
+  B.appendChild(st);
+  ta.focus();
+}
+async function sendAddCollab(jtfId, go, ps, ms, ta){
+  var st=document.getElementById('addstatus');
+  var t=(ta.value||'').trim();
+  if(!t){ st.className='small flag'; st.textContent='Write the lead a message first.'; return; }
+  go.disabled=true; ta.disabled=true;
+  st.className='small muted'; st.textContent='Interrupting the lead\u2026';
+  var pair=(ms.value||'').split(':');
+  var body={jtf:jtfId, precinct:ps.value, message:t};
+  if(pair.length===2){ body.service=pair[0]; body.model=pair[1]; }
+  var r;
+  try{
+    var res=await fetch('/api/jtf/collaborator',{method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    if(res.status===401){ location='/login'; return; }
+    try{ r=await res.json(); }
+    catch(e){ r={ok:false,error:'the endpoint answered '+res.status+
+                 ' with something that is not JSON'}; }
+  }catch(e){ r={ok:false,error:'could not reach the dashboard ('+e+')'}; }
+  if(r&&r.ok){ st.className='small'; st.textContent=r.message||'sent';
+    setTimeout(function(){ addClose(); tick(); }, 2500); }
+  else { st.className='small flag'; st.textContent='Error: '+((r&&(r.error||r.message))||'failed');
+    go.disabled=false; ta.disabled=false; }
+}
+var SELCSS='width:100%;padding:8px;border-radius:6px;margin:4px 0 10px;'+
+  'border:1px solid var(--accent-border);background:var(--surface2);'+
+  'color:var(--fg);font:inherit';
+function workerTable(rows, tags){
+  var wt=el('table');
+  wt.innerHTML='<tr>'+(tags?'<th>slot</th>':'')+'<th>deputy</th><th>case#</th><th>precinct</th>'+
+    '<th>state</th><th>model</th><th>description</th><th>requester</th><th class=nowrap>mail</th>'+
+    '<th>rl</th><th>actions</th></tr>';
+  rows.forEach(function(w){ wt.appendChild(workerRow(w, tags?tags[w.name]:null)); });
+  return wt;
+}
+function workerRow(w, tag){
+    var tr=el('tr');
+    if(tag!==null&&tag!==undefined) tr.appendChild(td(tag,'mono small'));
     tr.appendChild(td(w.name,'mono'));                       // deputy = worker name
     // case# — Task 391 #2: a NUMERIC case opens its detail popup; an alphanumeric
     // sub-case (e.g. 384e, no numeric conversation) opens the SAME popup showing its
@@ -794,8 +1202,33 @@ async function tick(){
     tr.appendChild(td(w.requester||'','small muted'));
     tr.appendChild(td(w.mailbox_pending?'●':'','flag'));
     tr.appendChild(td(String(w.relaunched||0),'small muted'));
-    wt.appendChild(tr);});
-  var W=document.getElementById('workers'); W.innerHTML=''; W.appendChild(wt);
+    // Case 591: the operator's two buttons. Which one a row gets is decided
+    // server-side from the deputy's state (state.py mirrors the watchdog's sets),
+    // so the table never offers an order the control module would refuse.
+    var ac=el('td'); ac.className='nowrap';
+    if(w.can_switch) ac.appendChild(depBtn(w,'switch','⇆',
+      'Switch model — move this deputy to another model, same case, same context'));
+    if(w.can_relaunch) ac.appendChild(depBtn(w,'relaunch','▶',
+      'Relaunch — restart this deputy, same model unless you pick another'));
+    if(w.can_terminate){
+      var kb=el('button','small iconbtn','⏹');
+      kb.title='Kill — stop this deputy and remove it from Status';
+      kb.onclick=(function(n){return function(){terminateDeputy(n);};})(w.name);
+      ac.appendChild(kb);
+    }
+    // Case 616: write to the deputy. Not a watchdog order like the two above —
+    // this is the email-interrupt path, reached from a button.
+    if(w.can_message){
+      var mb=el('button','small iconbtn','✉');
+      mb.title='Reply — send this deputy a message, exactly like emailing it';
+      mb.onclick=(function(n,c){return function(){openMessage(n,c,'status');};})(
+        w.name, w.case||'');
+      ac.appendChild(mb);
+    }
+    tr.appendChild(ac);
+    return tr;
+}
+async function tick2(s){
   // gpu
   var G=document.getElementById('gpu'); G.innerHTML='';
   var gc=el('div','card');
@@ -825,6 +1258,147 @@ async function tick(){
   document.getElementById('updated').textContent='updated '+new Date().toLocaleTimeString();
 }
 function td(t,c){var e=el('td',c); e.textContent=(t===null||t===undefined)?'':t; return e;}
+
+// Case 664: termination is intentionally a browser confirmation, not a
+// second accidental icon click.  The watchdog owns the actual targeted stop
+// and roster removal; detached jobs are left alone.
+async function terminateDeputy(name){
+  if(!window.confirm('Kill deputy '+name+'?\n\nThis stops the deputy and removes it from the Status page. Detached CPU/GPU jobs it already submitted keep running.')) return;
+  await submitDeputy(name,'terminate',null,null);
+}
+
+/* ---- Case 591: switch a deputy's model / relaunch a stopped one -------------
+   Every dialog reads the deputy's LIVE settings when it opens rather than the
+   status poll's copy, because a switch already in flight has to be visible. The
+   control CLI wakes the watchdog after committing an order.                    */
+var LAST_LIMITS=[];
+function depBtn(w, op, label, title){
+  // Case 616: icon-only. The title carries what the label used to say, and the
+  // dialog it opens repeats it in full, so nothing is lost by shrinking these.
+  var b=el('button','small iconbtn',label); b.title=title;
+  b.onclick=function(){ openDeputy(w.name, op, w.state_label); };
+  return b;
+}
+function modelSelect(cur, head){
+  var s=document.createElement('select');
+  s.style.cssText='width:100%;padding:6px;border-radius:6px';
+  if(head){ var o=document.createElement('option'); o.value=''; o.textContent=head;
+    s.appendChild(o); }
+  DEP_MODELS.forEach(function(m){ var o=document.createElement('option');
+    o.value=m.v; o.textContent=m.label; if(m.v===cur) o.selected=true; s.appendChild(o); });
+  return s;
+}
+function closeDeputy(){ document.getElementById('dmodal').style.display='none'; }
+async function openDeputy(name, op, stateLabel){
+  var M=document.getElementById('dmodal'), B=document.getElementById('dbody');
+  document.getElementById('dtitle').textContent=
+    (op==='switch'?'Switch model — ':'Relaunch — ')+name;
+  B.innerHTML='loading&hellip;'; M.style.display='flex';
+  var r;
+  try{
+    var res=await fetch('/api/deputy/settings?name='+encodeURIComponent(name));
+    if(res.status===401){ location='/login'; return; }
+    try{ r=await res.json(); }
+    catch(e){ r={ok:false, error:'the settings endpoint answered '+res.status+
+                 ' with something that is not JSON'}; }
+  }catch(e){ r={ok:false, error:'could not reach the dashboard ('+e+')'}; }
+  var d=r&&r.settings;
+  if(!d){ B.textContent=(r&&r.error)||'could not read this deputy’s settings'; return; }
+  B.innerHTML='';
+  B.appendChild(el('div','small muted','case #'+(d.case||'?')+' · '+(d.precinct||'?')+
+    ' · '+(stateLabel||d.state)+' · now on '+d.now_service+':'+d.now_model+
+    (d.relaunched?(' · '+d.relaunched+' relaunch attempt'+(d.relaunched===1?'':'s')):'')));
+
+  if(d.operator_model_policy && d.operator_model_policy.model){
+    B.appendChild(el('div','banner','User-selected model direction: '+
+      d.operator_model_policy.service+':'+d.operator_model_policy.model+
+      '. The deputy stays there until a later operator order changes it.'));
+  }
+
+  var queued=(op==='switch')?d.queued_switch:d.queued_relaunch;
+  if(queued){
+    var q=el('div','banner','An order is already queued for this deputy'+
+      (queued.to_model?(': '+queued.to_service+':'+queued.to_model):'')+
+      (op==='switch'
+        ? '. Submitting this model choice replaces that queued movement now.'
+        : '. Submitting a relaunch replaces its older queued movement now.'));
+    B.appendChild(q);
+    if(op!=='switch'){
+      var cb=el('button','small','cancel that order');
+      cb.onclick=function(){ submitDeputy(name,'cancel',null,null); };
+      B.appendChild(cb);
+    }
+  }
+
+  var work=modelSelect(d.now_service+':'+d.now_model);
+  var wl=el('label','small'); wl.style.cssText='display:block;margin:10px 0 4px';
+  wl.textContent=(op==='switch')?'Move it to':'Model to relaunch on';
+  B.appendChild(wl); B.appendChild(work);
+
+  var report=null;
+  if(op==='relaunch'){
+    // The report lane is the other half of "the same settings". Offered because
+    // a relaunch genuinely re-reads it (the script evals `settings --env` at run
+    // time); the JUDGE is not offered, because it lives in the launch prompt the
+    // relaunch replays verbatim and changing it here would do nothing.
+    report=modelSelect(d.split?(d.report_service+':'+d.report_model):'',
+                       'same as the model above');
+    var rl=el('label','small'); rl.style.cssText='display:block;margin:10px 0 4px';
+    rl.textContent='Report-writing model';
+    B.appendChild(rl); B.appendChild(report);
+  }
+
+  var note=el('div','small muted'); note.style.cssText='margin:10px 0';
+  note.textContent=(op==='switch')
+    ? (d.deferred
+       ? 'This deputy is parked on a job. The switch is queued now and applied '
+         + 'when that job finishes — it will not be woken early.'
+       : 'The watchdog is awakened immediately, stops the agent, and resumes the '
+         + 'same session on the selected model. Any queued switch/relaunch is '
+         + 'replaced; the deputy receives a durable instruction to stay on this '
+         + 'user-selected model. Detached CPU/GPU jobs keep running.')
+    : 'The watchdog restarts it with full context and resets the relaunch counter, '
+      + 'so the 5-attempt cap starts over.';
+  B.appendChild(note);
+  if(op==='relaunch' && LAST_LIMITS.length){
+    var svc=(work.value||'').split(':')[0];
+    LAST_LIMITS.forEach(function(l){ if(l.service===svc)
+      B.appendChild(el('div','banner','The '+svc+' account is still under a '+
+        (l.kind||'usage')+' limit. Relaunching now hits the same wall unless you '+
+        'move it to the other service.')); });
+  }
+
+  var go=el('button',null,(op==='switch')
+    ? (d.deferred?'Queue the switch':'Switch & relaunch') : 'Relaunch');
+  go.onclick=function(){
+    go.disabled=true;
+    submitDeputy(name, op, work.value, report?(report.value||work.value):null);
+  };
+  B.appendChild(go);
+  var st=el('div','small'); st.id='dstatus'; st.style.marginTop='8px'; B.appendChild(st);
+}
+async function submitDeputy(name, op, to, reportTo){
+  var st=document.getElementById('dstatus');
+  if(st) st.textContent='sending…';
+  var r;
+  try{
+    var res=await fetch('/api/deputy/control',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:name, op:op, to:to, report_to:reportTo})});
+    if(res.status===401){ location='/login'; return; }
+    r=await res.json();
+  }catch(e){ r={ok:false, error:String(e)}; }
+  if(st){ st.className='small '+(r.ok?'muted':'flag');
+    st.textContent=(r.ok?('✔ '+r.message)
+                        :('✘ '+(r.error||'refused'))); }
+  if(r.ok){ setTimeout(function(){ closeDeputy(); tick(); }, 1400); }
+}
+(function(){ var b=document.getElementById('dclose'); if(b) b.onclick=closeDeputy;
+  var m=document.getElementById('dmodal');
+  if(m) m.addEventListener('click', function(ev){ if(ev.target===m) closeDeputy(); });
+  document.addEventListener('keydown', function(ev){
+    if(ev.key==='Escape' && m && m.style.display!=='none') closeDeputy(); }); })();
+
 // Task 377 #3: on-demand GPU device stats. Fired ONLY by the Refresh button click
 // (never on the 8s poll). Shows a spinner while nvidia-smi runs and a timestamp
 // after; degrades gracefully when there is no GPU / nvidia-smi is missing.
@@ -979,64 +1553,6 @@ loadCounts();
 
 
 # --------------------------------------------------------------------------- #
-# lineage forest page
-# --------------------------------------------------------------------------- #
-def lineage_page():
-    body = (
-        "<h2>Case Lineage</h2>"
-        "<div id='summary' class='muted small'>loading&hellip;</div>"
-        "<div class='legend'>"
-        "<span class='k'><span class='cbar bh'></span>explicit link — high confidence</span>"
-        "<span class='k'><span class='cbar bm'></span>follow-up phrasing — medium</span>"
-        "<span class='k'><span class='cbar bl'></span>same subject — low (heuristic)</span>"
-        "<span class='k'><span class='cbar broot'></span>root task (no parent)</span>"
-        "</div>"
-        "<div class='two'>"
-        "<div><div id='forest'>loading&hellip;</div><div id='singletons'></div></div>"
-        "<div id='detail'><div class='card'><div class='empty-state'>Select a task to "
-        "see its email thread and reconstructed lineage.</div></div></div>"
-        "</div>"
-    )
-    return _shell("Case Lineage", body, _LINEAGE_JS, active="lineage")
-
-
-_LINEAGE_JS = _COMMON_JS + r"""
-getJSON('/api/status').then(function(s){ if(s) daemonsBar(s.daemons); });
-// tree rendering (treeNodeLi, DOT, BLABEL) is shared from _COMMON_JS.
-async function loadForest(){
-  var f; try{ f=await getJSON('/api/forest'); }catch(e){ return; } if(!f) return;
-  document.getElementById('summary').textContent =
-    f.n_trees+' trees link '+f.n_in_trees+' of '+f.n_tasks+' cases · '+
-    f.n_singletons+' standalone (no follow-ups)';
-  var host=document.getElementById('forest'); host.innerHTML='';
-  f.trees.forEach(function(t){
-    var d=el('details','tree card'); d.open=true;
-    var s=document.createElement('summary');
-    s.appendChild(el('b',null,'root #'+t.task_id));
-    s.appendChild(el('span','muted small','  '+(t.title||'')+'  ·  '+t.size+' tasks, depth '+t.depth));
-    d.appendChild(s);
-    var ul=el('ul','tree-ul root'); ul.appendChild(treeNodeLi(t)); d.appendChild(ul);
-    host.appendChild(d);
-  });
-  var sd=el('details','singles card');
-  var ss=document.createElement('summary');
-  ss.appendChild(el('b',null, f.singletons.length+' standalone cases'));
-  ss.appendChild(el('span','muted small','  no reconstructed follow-ups — click to expand'));
-  sd.appendChild(ss);
-  var wrap=el('div','singlewrap');
-  f.singletons.forEach(function(n){
-    var a=el('a','schip','#'+n.task_id); a.title=n.title||''; a.href='javascript:void(0)';
-    a.onclick=(function(id){return function(){showTask(id);};})(n.task_id);
-    wrap.appendChild(a);
-  });
-  sd.appendChild(wrap);
-  var S=document.getElementById('singletons'); S.innerHTML=''; S.appendChild(sd);
-}
-loadForest();
-"""
-
-
-# --------------------------------------------------------------------------- #
 # JTF (Joint Task Force) assignment page (Task 353; Cowork->JTF Case 384e)
 # --------------------------------------------------------------------------- #
 def jtf_page():
@@ -1045,7 +1561,17 @@ def jtf_page():
     role) — chosen in a popup that lists precincts and searches agents by name/task.
     Optionally add a critic, describe the task, submit. The form is a thin shell; all
     dynamic values go in via textContent (XSS-safe). Submitting POSTs JSON to
-    /api/jtf, which drops a record the inbox-side scratch_jtf.py bridge materializes."""
+    /api/jtf, which drops a record the inbox-side scratch_jtf.py bridge materializes.
+
+    Case 599 adds three things. (1) Every PRECINCT slot carries its own WORK SPLIT —
+    work service+model and report service+model, the same four fields the create-case
+    form collects — because a precinct slot IS a fresh case in that precinct. A
+    specific-deputy slot gets no such control: it is a live agent that keeps its own
+    model, and a control that did nothing would be a promise the backend drops.
+    (2) Collaborators are NUMBERED C1, C2, ... as they are added, so the description
+    can assign duties by number; the same tags reach every deputy's spec. (3) The same
+    precinct may be added several times — each is a distinct fresh deputy (the bridge
+    always allowed this; only the UI refused it)."""
     body = (
         "<h2>New JTF</h2>"
         "<div class='muted small' style='margin-bottom:14px;max-width:680px'>"
@@ -1053,15 +1579,21 @@ def jtf_page():
         "One <b>leads</b> (owns the deliverables, plans, delegates, reviews and iterates); "
         "<b>collaborators</b> contribute; an optional <b>critic</b> audits the outputs "
         "independently. Each slot below is either a <b>precinct</b> (spawns a fresh deputy "
-        "there, precinct default model) or a <b>specific deputy</b> (which <b>must</b> take "
-        "the role — if it is mid-task it stops, hands that case to a new deputy, notifies the "
-        "sheriff, then takes this). All communication is by email; every deputy is "
-        "watchdog-monitored, exactly like regular work.</div>"
+        "there, with its own model and work split) or a <b>specific deputy</b> (which "
+        "<b>must</b> take the role, keeping its own model — if it is mid-task it stops, "
+        "hands that case to a new deputy, notifies the sheriff, then takes this). The same "
+        "precinct may be used more than once: each is a separate fresh deputy. All "
+        "communication is by email; every deputy is watchdog-monitored, exactly like "
+        "regular work.</div>"
         "<div class='card jtf-form'>"
         "<div class='fld'><span class='lbl'>Lead (precinct or specific deputy)</span>"
         "<div class='pickrow'><span id='leadslot' class='muted small'>none selected</span>"
-        "<button type='button' id='lead-search-btn' class='small'>Choose&hellip;</button></div></div>"
+        "<button type='button' id='lead-search-btn' class='small'>Choose&hellip;</button></div>"
+        "<div id='leadcfg'></div></div>"
         "<div class='fld'><span class='lbl'>Collaborators (precinct or specific deputy)</span>"
+        "<div class='small muted' style='margin:-2px 0 4px'>Each is numbered "
+        "<b>C1</b>, <b>C2</b>, &hellip; in the order you add them. Assign duties by "
+        "number in the description below &mdash; every deputy is told which one it is.</div>"
         "<div id='collabchips' class='chips'></div>"
         "<div><button type='button' id='collab-add-btn' class='small'>Add collaborator&hellip;</button></div></div>"
         # Case 551: the JTF critic is now a NAMED judge from the registry rather
@@ -1073,7 +1605,21 @@ def jtf_page():
                     for c in state.critics())
         + "</select>"
         "<span class='small muted'>The lead iterates with this judge until it signs off "
-        "the deliverables.</span></div>"
+        "the deliverables.</span>"
+        # Case 599 (uid=770): the judge's OWN service+model, the same pair the
+        # create-case form offers. Hidden until a judge is chosen — until then
+        # there is nothing to configure. Empty = the judge's registered default,
+        # which is how every JTF judge has run so far.
+        "<div id='judge-models' class='jtf-judge' style='display:none'>"
+        "<label class='small'>Judge &mdash; service"
+        "<select id='judge_service'><option value=''>default</option>"
+        + "".join(f"<option value='{html.escape(s)}'>"
+                  f"{html.escape(models.service_label(s))}</option>"
+                  for s in models.SERVICE_IDS)
+        + "</select></label>"
+        "<label class='small'>Judge model"
+        "<select id='judge_model'><option value=''>default</option></select></label>"
+        "</div></div>"
         "<div class='fld'><span class='lbl'>Task description</span>"
         "<textarea id='desc' rows='6' placeholder='What should this JTF accomplish? "
         "Be specific about the deliverables.'></textarea></div>"
@@ -1081,16 +1627,239 @@ def jtf_page():
         "<span id='jtfstatus' class='small muted'></span></div>"
         "</div>"
         # precinct/agent picker modal (hidden until opened)
-        "<div id='pickmodal' class='modal' style='display:none'>"
-        "<div class='modal-card'>"
-        "<div class='modal-head'><b id='picktitle'>Choose a slot</b>"
-        "<button type='button' id='pickclose' class='small'>&#10005;</button></div>"
-        "<input id='pickq' type='text' autocomplete='off' "
-        "placeholder='Filter precincts, or search an agent by name / a task it did&hellip;'>"
-        "<div id='pickresults' class='pickresults'></div>"
-        "</div></div>"
+        + _PICK_MODAL_HTML
     )
     return _shell("New JTF", body, _JTF_JS, active="jtf")
+
+
+# --------------------------------------------------------------------------- #
+# Case 685: DEPUTIES' FIELD GUIDE.                                             #
+# --------------------------------------------------------------------------- #
+def field_guide_page():
+    """Read-only rendering of standing output standards and pending lessons.
+
+    The only write control is deliberately an authenticated *request* button.
+    It asks the sheriff to review one category (including its pending lessons); it
+    never exposes an editor or claims that the policy changed before the sheriff acts.
+    """
+    e = html.escape
+    guide = state.field_guide()
+    requests = state.field_guide_requests()
+    categories = guide.get("categories") or []
+
+    intro = (
+        "<h2>Deputies&rsquo; Field Guide</h2>"
+        "<div class='muted small' style='margin-bottom:14px;max-width:850px'>"
+        "These are the Posse&rsquo;s <b>standing output standards</b> for code, reports, "
+        "papers, figures, and slides. Every new deputy receives these standing rules at "
+        "launch and can reread them before making a deliverable. The sheriff owns the "
+        "standing text: deputies cannot edit it. They may ask the sheriff to change it, "
+        "or optionally add a genuinely new lesson through the deputy CLI. "
+        "<b>Pending lessons are shown here but are never injected into launch prompts.</b>"
+        "</div>"
+    )
+
+    cards = []
+    for item in categories:
+        cid = str(item.get("id") or "")
+        label = e(str(item.get("label") or cid))
+        pending = int(item.get("pending_count") or 0)
+        threshold = int(item.get("threshold") or 10)
+        active = item.get("active_rewrite")
+        active_note = ""
+        if isinstance(active, dict):
+            active_note = ("<div class='small muted' style='margin-top:7px'>"
+                           "Sheriff rewrite in progress; new lessons remain pending for the next pass."
+                           "</div>")
+        error = str(item.get("last_error") or "")
+        error_note = (f"<div class='small flag' style='margin-top:7px'>Last sheriff rewrite: "
+                      f"{e(error)}</div>") if error else ""
+        notes = item.get("pending_lessons") or []
+        if notes:
+            lesson_rows = []
+            for note in notes:
+                if not isinstance(note, dict):
+                    continue
+                provenance = []
+                if note.get("deputy"):
+                    provenance.append("deputy " + str(note["deputy"]))
+                if note.get("case"):
+                    provenance.append("case " + str(note["case"]))
+                suffix = (" <span class='muted'>(" + " / ".join(e(x) for x in provenance)
+                          + ")</span>") if provenance else ""
+                lesson_rows.append("<li class='small'>" + e(str(note.get("text") or ""))
+                                   + suffix + "</li>")
+            # Case 782: folded for the same reason the standing text is. One long
+            # lesson otherwise rebuilds the wall this page was collapsed to remove;
+            # the count stays visible in the summary and in the card's pill.
+            lessons = ("<details class='fglessons' style='margin-top:12px'>"
+                       "<summary style='cursor:pointer;font-weight:600' class='small'>"
+                       f"Pending lessons ({pending}/{threshold})</summary>"
+                       "<ol style='margin:6px 0 0;padding-left:22px'>"
+                       + "".join(lesson_rows) + "</ol></details>")
+        else:
+            lessons = (f"<div class='small muted' style='margin-top:12px'>No pending lessons "
+                       f"({pending}/{threshold} before automatic sheriff review).</div>")
+        revised = ""
+        if item.get("updated_at"):
+            revised = ("<span class='small muted'> · sheriff revision "
+                       + e(str(item.get("revision") or 1)) + "</span>")
+        button_label = "Ask sheriff to review this guidance"
+        # Case 782: the standing text is thousands of characters per category, so the
+        # page opened as one unreadable wall. It is folded behind its own expander --
+        # native <details>, so it costs no JS and stays keyboard-accessible.
+        guideline = str(item.get("guideline") or "").replace("**", "")
+        folded = (
+            "<details class='fgguide' style='margin-top:10px'>"
+            "<summary style='cursor:pointer;font-weight:600'>"
+            f"Read the standing {label} standard "
+            f"<span class='small muted'>({len(guideline):,} characters)</span></summary>"
+            "<pre class='mono small' style='white-space:pre-wrap;max-width:100%;margin:8px 0 0;"
+            "padding:10px;border-radius:6px;background:var(--surface2)'>"
+            + e(guideline) + "</pre></details>"
+        )
+        cards.append(
+            "<section class='card'>"
+            f"<div style='display:flex;gap:10px;align-items:baseline;flex-wrap:wrap'><h3 style='margin:0'>{label}</h3>"
+            f"<span class='pill'>{pending}/{threshold} pending</span>{revised}</div>"
+            + folded
+            + lessons + active_note + error_note
+            + "<div style='display:flex;align-items:center;gap:10px;margin-top:12px'>"
+            + f"<button type='button' class='small fgrewrite' data-category='{e(cid)}'>{button_label}</button>"
+            + f"<span id='fgstatus-{e(cid)}' class='small muted'></span></div></section>"
+        )
+
+    if not cards:
+        unavailable = e(str(guide.get("error") or "The Field Guide has not loaded."))
+        cards.append("<div class='card banner'>" + unavailable + "</div>")
+
+    # ---- Case 782: ask the receptionist for a Field Guide change ------------
+    # The dashboard still writes no standing policy. This box states a WISH and
+    # opens a receptionist case, the same path the Judges tab's "propose a judge"
+    # form uses -- a deputy reads the request and takes it wherever it has to go
+    # (a sheriff rewrite for existing text; a code change for a brand-new section,
+    # since the category list is a closed tuple in scratch_field_guide.py).
+    fc = ("padding:8px;border-radius:6px;border:1px solid var(--accent-border);"
+          "background:var(--surface2);color:var(--fg);font:inherit")
+    target_opts = "".join(
+        f"<option value='{e(str(row.get('id') or ''))}'>change the "
+        f"{e(str(row.get('label') or row.get('id') or ''))} section</option>"
+        for row in categories if isinstance(row, dict))
+    ask = (
+        "<details class='card'><summary style='cursor:pointer;font-weight:600'>"
+        "&#43; Ask the receptionist to change the Field Guide</summary>"
+        "<div class='small muted' style='margin:8px 0'>Describe the change you want &mdash; a "
+        "<b>new section</b>, or different wording in a section that already exists. Submitting "
+        "opens a case in the <b>receptionist</b> precinct; a deputy works out what the change "
+        "needs and files it with the <b>sheriff</b>, who owns the standing text. Nothing on this "
+        "page changes until the sheriff acts.</div>"
+        "<div style='display:flex;flex-direction:column;gap:12px;max-width:760px'>"
+        "<label class='small' style='max-width:320px'>What are you changing?<br>"
+        f"<select id='fgtarget' style='{fc};width:100%'>"
+        "<option value='new'>add a new section</option>"
+        + target_opts +
+        "</select></label>"
+        "<label class='small'>What should change, and why?<br>"
+        f"<textarea id='fgask' rows='5' placeholder='e.g. add a Data section covering how a "
+        "deputy documents a dataset it builds &mdash; provenance, units, and what it must not "
+        f"claim about coverage.' style='{fc};width:100%;resize:vertical'></textarea></label>"
+        "<div style='display:flex;align-items:center;gap:10px'>"
+        "<button type='button' id='fgasksend' class='small'>Send to the receptionist</button>"
+        "<span id='fgaskstatus' class='small muted'></span></div></div></details>"
+    )
+
+    if requests:
+        rows = []
+        for req in requests:
+            status = str(req.get("state") or "")
+            badge = {"done": "b-done", "denied": "b-failed", "pending": "b-running"}.get(status, "")
+            label = {"done": "completed", "denied": "denied", "pending": "awaiting sheriff"}.get(status, status)
+            requester = req.get("requester") or req.get("deputy") or "—"
+            outcome = req.get("decision_reason") or req.get("reason") or ""
+            rows.append(
+                "<tr>"
+                f"<td class='mono'>{e(str(req.get('category') or ''))}</td>"
+                f"<td><span class='badge {badge}'>{e(label)}</span></td>"
+                f"<td class='small'>{e(str(requester))}</td>"
+                f"<td class='small'>{e(str(outcome)[:220])}</td></tr>"
+            )
+        trail = ("<div class='card'><b>Sheriff rewrite requests</b>"
+                 "<div class='small muted' style='margin:6px 0'>The dashboard can only queue "
+                 "a request. The sheriff reviews lessons and changes standing policy, if appropriate.</div>"
+                 "<div class='tablewrap'><table class='table'><tr><th>category</th><th>status</th>"
+                 "<th>requested by</th><th>reason / outcome</th></tr>"
+                 + "".join(rows) + "</table></div></div>")
+    else:
+        trail = ("<div class='card'><b>Sheriff rewrite requests</b>"
+                 "<div class='small muted' style='margin-top:6px'>No manual Field Guide rewrite "
+                 "requests yet. A category is also reviewed automatically once it reaches ten pending lessons."
+                 "</div></div>")
+
+    return _shell("Field Guide", intro + ask + "".join(cards) + trail,
+                  _FIELD_GUIDE_JS, active="field-guide")
+
+
+_FIELD_GUIDE_JS = _COMMON_JS + r"""
+(function(){
+  Array.prototype.forEach.call(document.querySelectorAll('.fgrewrite'), function(btn){
+    btn.addEventListener('click', async function(){
+      var category=btn.getAttribute('data-category')||'';
+      var status=document.getElementById('fgstatus-'+category);
+      if(!category || !status) return;
+      status.className='small muted'; status.textContent='Queuing sheriff review…'; btn.disabled=true;
+      try{
+        var r=await fetch('/api/field-guide/rewrite',{method:'POST',
+          headers:{'Content-Type':'application/json'}, body:JSON.stringify({category:category})});
+        if(r.status===401){ location='/login'; return; }
+        var d={}; try{ d=await r.json(); }catch(e){}
+        if(r.ok && d.ok){
+          status.className='small';
+          status.textContent=d.coalesced ? 'A review is already queued.'
+                                        : 'Queued for the sheriff; the guide changes only after its review.';
+        }else{
+          status.className='small flag'; status.textContent='Error: '+((d&&d.error)||('HTTP '+r.status));
+        }
+      }catch(e){ status.className='small flag'; status.textContent='Network error.'; }
+      finally{ btn.disabled=false; }
+    });
+  });
+})();
+
+/* Case 782: the request box. It opens a receptionist CASE; it never edits policy. */
+(function(){
+  var btn=document.getElementById('fgasksend');
+  if(!btn) return;
+  var status=document.getElementById('fgaskstatus');
+  btn.addEventListener('click', async function(){
+    var sel=document.getElementById('fgtarget');
+    var box=document.getElementById('fgask');
+    var target=(sel&&sel.value)||'new';
+    var text=((box&&box.value)||'').trim();
+    if(text.length<20){
+      status.className='small flag';
+      status.textContent='Describe the change in a sentence or two \u2014 a deputy has to work from it.';
+      return;
+    }
+    status.className='small muted'; status.textContent='Opening a receptionist case\u2026';
+    btn.disabled=true;
+    try{
+      var r=await fetch('/api/field-guide/message',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({target:target,text:text})});
+      if(r.status===401){ location='/login'; return; }
+      var d={}; try{ d=await r.json(); }catch(e){}
+      if(r.ok && d.ok){
+        status.className='small';
+        status.textContent='Sent. The receptionist has case '+(d.case||'?')+'.';
+        if(box) box.value='';
+      }else{
+        status.className='small flag'; status.textContent='Error: '+((d&&d.error)||('HTTP '+r.status));
+      }
+    }catch(e){ status.className='small flag'; status.textContent='Network error.'; }
+    finally{ btn.disabled=false; }
+  });
+})();
+"""
 
 
 # --------------------------------------------------------------------------- #
@@ -1498,57 +2267,184 @@ _JUDGES_JS = _COMMON_JS + r"""
 """
 
 
-_JTF_JS = _COMMON_JS + r"""
-getJSON('/api/status').then(function(s){ if(s) daemonsBar(s.daemons); });
-var JT={ lead:null, collabs:[], mode:null, timer:null, precincts:[] };
-// preload the precinct options (a slot can be a precinct -> a fresh deputy there)
-getJSON('/api/precincts').then(function(d){
-  JT.precincts = (d && d.precincts ? d.precincts : []).map(function(p){ return p.name; });
-}).catch(function(){});
+# Case 557: the create-case Service picker chooses a MODE, and the Model list has
+# to follow it — a mode may only offer models it can actually run. This map is
+# GENERATED from models.aliases_for_mode / models.MODES, so the browser-side filter
+# below cannot drift from the Python registry (add a mode there, it appears here).
+_CC_MODES_JS = (
+    "var CC_MODES=" + json.dumps({
+        m: {"label": models.mode_label(m),
+            "blurb": models.mode_spec(m)["blurb"],
+            "deputy": models.deputy_service(m),
+            "writer": models.writer_service(m),
+            "aliases": list(models.aliases_for_mode(m))}
+        for m in models.MODE_IDS}) + ";\n"
+    "var CC_DEFAULT_MODE=" + json.dumps(models.DEFAULT_MODE) + ";\n"
+    # Case 557 (uid=671): per-SERVICE alias lists + display labels, so the change
+    # handler can REBUILD each model <select> from scratch. The previous approach
+    # (optgroup.hidden / .disabled) does NOT work in a macOS native select popup —
+    # WebKit ignores `hidden` on <optgroup>, so ChatGPT models stayed visible in
+    # Claude mode, which is exactly the bug Steven reported.
+    "var CC_SVC_ALIASES=" + json.dumps(
+        {s: list(models.aliases_for(s)) for s in models.SERVICE_IDS}) + ";\n"
+    "var CC_MODEL_LABELS=" + json.dumps(
+        {a: models.label(a) for a in models.ALL_ALIASES}) + ";\n"
+    "var CC_SVC_LABELS=" + json.dumps(
+        {s: models.service_label(s) for s in models.SERVICE_IDS}) + ";\n"
+    # Case 561: the WORK TYPES a case splits into. Generated from
+    # models.WORK_TYPES so the form's wording is the same wording the deputy's
+    # prompt and the switch CLI use — the definition of "human report writing"
+    # only exists in one place.
+    + "var CC_WORK_TYPES=" + json.dumps(
+        {w: {"label": models.WORK_TYPES[w]["label"],
+             "blurb": models.WORK_TYPES[w]["blurb"]}
+         for w in models.WORK_TYPE_IDS}) + ";\n"
+    + "var CC_SERVICE_IDS=" + json.dumps(list(models.SERVICE_IDS)) + ";\n"
+)
+
+
+# Case 761: the slot machinery is shared by the JTF form and the Docket
+# composer, because a entry's JTF spec is the same participant list. A SLOT is
+# one participant: a PRECINCT (spawns a fresh deputy there, so it carries its own
+# work split) or a specific DEPUTY (a live agent that keeps its own model).
+_SLOT_JS = r"""
+var SLOT={ precincts:[], pmodel:{}, cb:null, timer:null };
+// Preload the precinct options. Each precinct's DEFAULT MODEL comes with them, so a
+// slot that chooses nothing can name what it will actually inherit.
+function loadSlotPrecincts(){
+  return getJSON('/api/precincts').then(function(d){
+    var ps = (d && d.precincts ? d.precincts : []);
+    SLOT.precincts = ps.map(function(p){ return p.name; });
+    ps.forEach(function(p){ SLOT.pmodel[p.name] = p.model || ''; });
+  }).catch(function(){});
+}
 function sameSlot(a,b){ return !!a && !!b && a.kind===b.kind && a.name===b.name; }
-function slotChip(slot, cls, onClear){
-  var c=el('span',cls);
-  c.appendChild(el('span','k', slot.kind==='precinct'?'precinct':'deputy'));
-  c.appendChild(el('b',null,slot.name));
-  var x=el('span','x','✕'); x.title='remove'; x.onclick=onClear;
-  c.appendChild(x); return c;
-}
-function renderLead(){
-  var host=document.getElementById('leadslot'); host.innerHTML='';
-  if(!JT.lead){ host.className='muted small'; host.textContent='none selected'; return; }
-  host.className='';
-  host.appendChild(slotChip(JT.lead,'jtf-lead',function(){ JT.lead=null; renderLead(); }));
-}
-function renderCollabs(){
-  var host=document.getElementById('collabchips'); host.innerHTML='';
-  if(!JT.collabs.length){ host.appendChild(el('span','muted small','none added')); return; }
-  JT.collabs.forEach(function(slot,i){
-    host.appendChild(slotChip(slot,'jtf-chip',function(){
-      JT.collabs.splice(i,1); renderCollabs(); }));
+function mkSel(pairs, val){
+  var s=document.createElement('select');
+  s.className='jtf-sel';
+  pairs.forEach(function(p){
+    var o=document.createElement('option'); o.value=p[0]; o.textContent=p[1];
+    s.appendChild(o);
   });
+  s.value = val || '';
+  if(s.selectedIndex < 0) s.selectedIndex = 0;   // a stale value -> the head option
+  return s;
 }
-function openPick(mode){
-  JT.mode=mode;
-  document.getElementById('picktitle').textContent =
-    mode==='lead' ? 'Choose the lead' : 'Add a collaborator';
+function svcPairs(head){
+  var out = head ? [head] : [];
+  (CC_SERVICE_IDS||[]).forEach(function(s){ out.push([s, CC_SVC_LABELS[s]||s]); });
+  return out;
+}
+function modelPairs(svc, headText){
+  var out=[['', headText]];
+  ((CC_SVC_ALIASES||{})[svc]||[]).forEach(function(a){
+    out.push([a, CC_MODEL_LABELS[a]||a]); });
+  return out;
+}
+// Rebuild `sel` for `svc`, dropping a model that does not belong to it — the
+// server rejects a mismatched pair, so the form must never be able to post one.
+// An EMPTY `svc` means "inherit" (the precinct default / the work lane), and there
+// is then no model list to offer: naming a model without its service is exactly the
+// mismatched pair the server refuses. Model lists are REBUILT rather than hidden —
+// WebKit ignores `hidden` on <optgroup> (the Case 557 uid=671 bug).
+function refillModels(sel, svc, headText, slot, key){
+  var keep=slot[key]||'';
+  sel.innerHTML='';
+  modelPairs(svc, headText).forEach(function(p){
+    var o=document.createElement('option'); o.value=p[0]; o.textContent=p[1];
+    sel.appendChild(o);
+  });
+  var ok = svc && ((CC_SVC_ALIASES||{})[svc]||[]).indexOf(keep) >= 0;
+  sel.value = ok ? keep : '';
+  slot[key] = sel.value;
+}
+function laneRow(label, hint){
+  var r=el('div','jtf-lane');
+  r.appendChild(el('span','lane-l', label));
+  if(hint) r.title=hint;
+  return r;
+}
+// The config panel under a PRECINCT slot. Returns a note for a deputy slot, which
+// keeps its own configured model — there is no fresh launch to configure, so a
+// control here would be a promise nothing fulfils (the server rejects one).
+function slotConfig(slot){
+  if(slot.kind!=='precinct'){
+    var d=el('div','jtf-cfg');
+    d.appendChild(el('span','small muted',
+      'Runs on its own configured model — a specific deputy is a live agent, not a fresh spawn.'));
+    return d;
+  }
+  var box=el('div','jtf-cfg');
+  // Work lane. The head option is "" = INHERIT THE PRECINCT DEFAULT, and it names
+  // the model that default actually resolves to. This is why an untouched slot
+  // posts no service at all: a JTF spans precincts whose defaults differ, so
+  // pre-selecting a vendor here would silently pin every slot to it.
+  var pdef = SLOT.pmodel[slot.name] || '';
+  // the SERVICE head says only "precinct default"; the MODEL head names what that
+  // resolves to. Putting the model name in both read as a repeated label.
+  var dtxt = 'precinct default' + (pdef ? ' ('+(CC_MODEL_LABELS[pdef]||pdef)+')' : '');
+  var wr=laneRow('Work', CC_WORK_TYPES.work.blurb);
+  var wsvc=mkSel(svcPairs(['', 'precinct default']), slot.service||'');
+  var wmod=mkSel([], '');
+  slot.service = wsvc.value;
+  refillModels(wmod, wsvc.value, wsvc.value ? 'service default' : dtxt, slot, 'model');
+  wsvc.onchange=function(){ slot.service=wsvc.value;
+    refillModels(wmod, wsvc.value, wsvc.value ? 'service default' : dtxt, slot, 'model'); };
+  wmod.onchange=function(){ slot.model=wmod.value; };
+  wr.appendChild(wsvc); wr.appendChild(wmod); box.appendChild(wr);
+  // report lane — '' means "same as work", so an untouched slot is not a split
+  var rr=laneRow('Report', CC_WORK_TYPES.report.blurb);
+  var rsvc=mkSel(svcPairs(['','same as work']), slot.report_service||'');
+  var rmod=mkSel([], '');
+  function syncReport(){
+    slot.report_service=rsvc.value;
+    if(rsvc.value){
+      rmod.style.display='';
+      refillModels(rmod, rsvc.value, 'service default', slot, 'report_model');
+    } else {
+      rmod.style.display='none'; rmod.innerHTML=''; slot.report_model='';
+    }
+  }
+  rsvc.onchange=syncReport;
+  rmod.onchange=function(){ slot.report_model=rmod.value; };
+  rr.appendChild(rsvc); rr.appendChild(rmod); box.appendChild(rr);
+  syncReport();
+  return box;
+}
+// One slot card: the tag (LEAD / C1 / C2 ...), what it is, and its config panel.
+function slotCard(slot, tag, cls, onClear){
+  var card=el('div','jtf-slot '+cls);
+  var head=el('div','jtf-slot-head');
+  head.appendChild(el('span','tag', tag));
+  head.appendChild(el('span','k', slot.kind==='precinct'?'precinct':'deputy'));
+  head.appendChild(el('b',null,slot.name));
+  if(slot.kind==='precinct') head.appendChild(el('span','at','  ·  new deputy'));
+  var x=el('span','x','✕'); x.title='remove'; x.onclick=onClear;
+  head.appendChild(x);
+  card.appendChild(head);
+  card.appendChild(slotConfig(slot));
+  return card;
+}
+// What a slot posts. A DEPUTY slot must carry no lane (the server rejects a model
+// on a live agent), so the fields are stripped by kind here rather than left to
+// whatever the config panel happened to leave on the object.
+function slotPayload(s){
+  if(!s) return s;
+  var o={kind:s.kind, name:s.name};
+  if(s.kind==='precinct')
+    ['service','model','report_service','report_model'].forEach(function(k){
+      if(s[k]) o[k]=s[k]; });
+  return o;
+}
+function openPick(title, cb){
+  SLOT.cb=cb;
+  document.getElementById('picktitle').textContent=title;
   document.getElementById('pickmodal').style.display='flex';
   var q=document.getElementById('pickq'); q.value=''; q.focus();
   runSearch('');
 }
-function closePick(){ document.getElementById('pickmodal').style.display='none'; JT.mode=null; }
-function pick(slot){
-  if(JT.mode==='lead'){
-    JT.lead=slot;
-    JT.collabs=JT.collabs.filter(function(s){ return !sameSlot(s,slot); });
-    renderLead(); renderCollabs();
-  } else {
-    var dupLead = JT.lead && sameSlot(JT.lead,slot);
-    var dupDep = slot.kind==='deputy' && JT.collabs.some(function(s){ return sameSlot(s,slot); });
-    if(!dupLead && !dupDep) JT.collabs.push(slot);
-    renderCollabs();
-  }
-  closePick();
-}
+function closePick(){ document.getElementById('pickmodal').style.display='none'; SLOT.cb=null; }
+function pickSlot(slot){ var cb=SLOT.cb; closePick(); if(cb) cb(slot); }
 async function runSearch(q){
   var box=document.getElementById('pickresults'); box.innerHTML='';
   var ql=(q||'').trim().toLowerCase();
@@ -1556,11 +2452,11 @@ async function runSearch(q){
   var band=el('div','pickband');
   band.appendChild(el('div','picklbl','Assign to a precinct — spawns a new deputy'));
   var any=false;
-  JT.precincts.forEach(function(p){
+  SLOT.precincts.forEach(function(p){
     if(ql && p.toLowerCase().indexOf(ql)<0) return;
     any=true;
     var ch=el('span','pchip','◆ '+p);
-    ch.onclick=(function(name){ return function(){ pick({kind:'precinct',name:name}); }; })(p);
+    ch.onclick=(function(name){ return function(){ pickSlot({kind:'precinct',name:name}); }; })(p);
     band.appendChild(ch);
   });
   if(!any) band.appendChild(el('span','muted small','no precinct matches'));
@@ -1578,8 +2474,94 @@ async function runSearch(q){
     if(r.tasks && r.tasks.length){ var tk=el('div');
       r.tasks.slice(0,6).forEach(function(t){ tk.appendChild(el('span','tk','#'+t.id)); });
       it.appendChild(tk); }
-    it.onclick=(function(n){ return function(){ pick({kind:'deputy',name:n}); }; })(r.agent);
+    it.onclick=(function(n){ return function(){ pickSlot({kind:'deputy',name:n}); }; })(r.agent);
     box.appendChild(it);
+  });
+}
+function wireSlotPicker(){
+  document.getElementById('pickclose').onclick=closePick;
+  document.getElementById('pickmodal').onclick=function(e){ if(e.target===this) closePick(); };
+  document.getElementById('pickq').addEventListener('input', function(){
+    clearTimeout(SLOT.timer); var v=this.value;
+    SLOT.timer=setTimeout(function(){ runSearch(v); }, 180); });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') closePick(); });
+}
+// The judge's own service+model, on any form that offers a judge. The pair only
+// matters once a judge is chosen, so the wrapper stays hidden until then.
+function syncJudgeModels(criticSel, jsvcSel, jmodSel, wrap){
+  var on = !!(criticSel && criticSel.value);
+  // 'flex' explicitly, not '': the wrapper is a <div> whose default display is
+  // block, which would drop the inline layout of the two selects.
+  wrap.style.display = on ? 'flex' : 'none';
+  if(!on){ jsvcSel.value=''; jmodSel.innerHTML=''; jmodSel.value=''; return; }
+  var keep=jmodSel.value;
+  jmodSel.innerHTML='';
+  modelPairs(jsvcSel.value, 'default').forEach(function(p){
+    var o=document.createElement('option'); o.value=p[0]; o.textContent=p[1];
+    jmodSel.appendChild(o);
+  });
+  jmodSel.value = ((CC_SVC_ALIASES||{})[jsvcSel.value]||[]).indexOf(keep)>=0 ? keep : '';
+}
+"""
+
+
+# The precinct/agent picker modal markup every slot form needs (Case 761: shared
+# with the Docket composer, which picks slots the same way).
+_PICK_MODAL_HTML = (
+    "<div id='pickmodal' class='modal' style='display:none'>"
+    "<div class='modal-card'>"
+    "<div class='modal-head'><b id='picktitle'>Choose a slot</b>"
+    "<button type='button' id='pickclose' class='small'>&#10005;</button></div>"
+    "<input id='pickq' type='text' autocomplete='off' "
+    "placeholder='Filter precincts, or search an agent by name / a task it did&hellip;'>"
+    "<div id='pickresults' class='pickresults'></div>"
+    "</div></div>"
+)
+
+
+_JTF_JS = _COMMON_JS + _CC_MODES_JS + _SLOT_JS + r"""
+getJSON('/api/status').then(function(s){ if(s) daemonsBar(s.daemons); });
+var JT={ lead:null, collabs:[] };
+loadSlotPrecincts();
+function renderLead(){
+  var slotHost=document.getElementById('leadslot'),
+      cfgHost=document.getElementById('leadcfg');
+  slotHost.innerHTML=''; cfgHost.innerHTML='';
+  if(!JT.lead){ slotHost.className='muted small'; slotHost.textContent='none selected'; return; }
+  slotHost.className='muted small'; slotHost.textContent='';
+  cfgHost.appendChild(slotCard(JT.lead,'LEAD','lead',function(){ JT.lead=null; renderLead(); }));
+}
+// Case 599: collaborators are NUMBERED C1..Cn in the order they were added, and the
+// number is what the description addresses ("C2 scores it"). Removing one RENUMBERS
+// the rest, so the tags shown are always 1..n with no gaps — the same tags the
+// bridge derives from each slot's position.
+function renderCollabs(){
+  var host=document.getElementById('collabchips'); host.innerHTML='';
+  if(!JT.collabs.length){ host.appendChild(el('span','muted small','none added')); return; }
+  JT.collabs.forEach(function(slot,i){
+    host.appendChild(slotCard(slot,'C'+(i+1),'collab',function(){
+      JT.collabs.splice(i,1); renderCollabs(); }));
+  });
+}
+// Case 599: a PRECINCT may be used any number of times — every precinct slot is a
+// distinct fresh deputy, and the bridge has always allowed repeats (resolve_slots
+// dedupes deputies ONLY). A specific DEPUTY is still unique: one agent cannot hold
+// two roles.
+function chooseLead(){
+  openPick('Choose the lead', function(slot){
+    JT.lead=slot;
+    if(slot.kind==='deputy')
+      JT.collabs=JT.collabs.filter(function(s){ return !sameSlot(s,slot); });
+    renderLead(); renderCollabs();
+  });
+}
+function addCollab(){
+  openPick('Add a collaborator', function(slot){
+    var dup = slot.kind==='deputy' &&
+      ((JT.lead && sameSlot(JT.lead,slot)) ||
+       JT.collabs.some(function(s){ return sameSlot(s,slot); }));
+    if(!dup) JT.collabs.push(slot);
+    renderCollabs();
   });
 }
 async function submitJTF(){
@@ -1589,8 +2571,13 @@ async function submitJTF(){
   if(!JT.collabs.length){ st.className='small flag'; st.textContent='Add at least one collaborator.'; return; }
   if(!desc){ st.className='small flag'; st.textContent='Add a task description.'; return; }
   st.className='small muted'; st.textContent='Submitting…';
-  var payload={ lead:JT.lead, collaborators:JT.collabs,
-    critic:document.getElementById('critic').value||'', description:desc };
+  var jc=document.getElementById('critic').value||'';
+  var payload={ lead:slotPayload(JT.lead), collaborators:JT.collabs.map(slotPayload),
+    critic:jc, description:desc,
+    // only meaningful with a judge; sent empty otherwise so the server never has
+    // to reason about a judge model belonging to no judge.
+    judge_service: jc ? (document.getElementById('judge_service').value||'') : '',
+    judge_model:   jc ? (document.getElementById('judge_model').value||'') : '' };
   try{
     var r=await fetch('/api/jtf',{method:'POST',
       headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
@@ -1601,22 +2588,447 @@ async function submitJTF(){
         (d.note||'the inbox handler will materialize it and email an ACK.');
       JT.lead=null; JT.collabs=[]; document.getElementById('desc').value='';
       document.getElementById('critic').value=''; renderLead(); renderCollabs();
+      syncJudge();                       // clears + re-hides the judge service/model
     } else {
       st.className='small flag'; st.textContent='Error: '+(d.error||('HTTP '+r.status));
     }
   }catch(e){ st.className='small flag'; st.textContent='Network error.'; }
 }
-document.getElementById('lead-search-btn').onclick=function(){ openPick('lead'); };
-document.getElementById('collab-add-btn').onclick=function(){ openPick('collab'); };
-document.getElementById('pickclose').onclick=closePick;
+var criticSel=document.getElementById('critic'),
+    jsvcSel=document.getElementById('judge_service'),
+    jmodSel=document.getElementById('judge_model'),
+    jWrap=document.getElementById('judge-models');
+function syncJudge(){ syncJudgeModels(criticSel, jsvcSel, jmodSel, jWrap); }
+criticSel.addEventListener('change', syncJudge);
+jsvcSel.addEventListener('change', syncJudge);
+syncJudge();
+wireSlotPicker();
+document.getElementById('lead-search-btn').onclick=chooseLead;
+document.getElementById('collab-add-btn').onclick=addCollab;
 document.getElementById('submitjtf').onclick=submitJTF;
-document.getElementById('pickmodal').onclick=function(e){ if(e.target===this) closePick(); };
-document.getElementById('pickq').addEventListener('input', function(){
-  clearTimeout(JT.timer); var v=this.value; JT.timer=setTimeout(function(){ runSearch(v); }, 180); });
-document.addEventListener('keydown', function(e){ if(e.key==='Escape') closePick(); });
 renderLead(); renderCollabs();
 """
 
+
+# --------------------------------------------------------------------------- #
+# Case 761: DOCKET — standing work that rides out on a schedule.              #
+# --------------------------------------------------------------------------- #
+def docket_page():
+    """The standing schedule: every recurring case and JTF, what it will launch,
+    and when. A entry is a SPEC, not a worker — when it comes due the runner drops
+    a fresh submission for the same bridges the Create-case / New-JTF forms use, so
+    every run spawns brand-new deputies. Nothing is resumed from a previous run.
+
+    The page is a thin shell; every dynamic value is set through textContent, and
+    the composer posts JSON to /api/docket, which delegates to the tsomp
+    scratch_docket.py CLI that owns the store and all of its validation."""
+    e = html.escape
+    precinct_opts = "".join(f"<option value='{e(p['name'])}'>{e(p['name'])}</option>"
+                            for p in state.precincts())
+    judge_opts = "<option value=''>none (default &mdash; no judge)</option>" + "".join(
+        f"<option value='{e(c['id'])}'>{e(c.get('display_name') or c['id'])}</option>"
+        for c in state.critics())
+    svc_opts = ("<option value=''>default</option>"
+                + "".join(f"<option value='{e(sv)}'>{e(models.service_label(sv))}</option>"
+                          for sv in models.SERVICE_IDS))
+    day_opts = "".join(f"<option value='{n}'>{d}</option>" for n, d in
+                       enumerate(("Monday", "Tuesday", "Wednesday", "Thursday",
+                                  "Friday", "Saturday", "Sunday")))
+    composer = (
+        "<div id='composer' class='card dform' style='display:none'>"
+        "<div class='fld'><span class='lbl'>Name</span>"
+        "<input id='pname' type='text' placeholder='e.g. Weekly slides'></div>"
+        "<div class='fld'><span class='lbl'>What it launches</span>"
+        "<select id='pkind'><option value='case'>A single case in one precinct</option>"
+        "<option value='jtf'>A JTF &mdash; a lead plus collaborators</option></select></div>"
+        "<div id='case-block'>"
+        "<div class='fld'><span class='lbl'>Precinct</span>"
+        f"<select id='pprecinct'>{precinct_opts}</select></div>"
+        "<div class='fld'><span class='lbl'>Work split</span>"
+        "<div class='small muted' style='margin:-2px 0 4px'>The deputy launches on the "
+        "<b>work</b> model and switches itself to the <b>report</b> model when it starts "
+        "writing a document. Leave the report row on &ldquo;same as work&rdquo; to run the "
+        "whole case on one model.</div>"
+        "<div id='pcasecfg' class='jtf-slot'></div></div></div>"
+        "<div id='jtf-block' style='display:none'>"
+        "<div class='fld'><span class='lbl'>Lead (precinct or specific deputy)</span>"
+        "<div class='pickrow'><button type='button' id='plead-btn' class='small'>"
+        "Choose&hellip;</button></div><div id='pleadcfg'></div></div>"
+        "<div class='fld'><span class='lbl'>Collaborators</span>"
+        "<div class='small muted' style='margin:-2px 0 4px'>Numbered <b>C1</b>, <b>C2</b>, "
+        "&hellip; in the order you add them &mdash; address duties by number in the prompt.</div>"
+        "<div id='pcollabs' class='chips'></div>"
+        "<div><button type='button' id='pcollab-btn' class='small'>Add collaborator&hellip;"
+        "</button></div></div></div>"
+        "<div class='fld'><span class='lbl'>Judge (optional)</span>"
+        f"<select id='pjudge'>{judge_opts}</select>"
+        "<div id='pjudge-models' class='jtf-judge' style='display:none'>"
+        f"<label class='small'>Judge &mdash; service<select id='pjudge_service'>{svc_opts}</select></label>"
+        "<label class='small'>Judge model<select id='pjudge_model'>"
+        "<option value=''>default</option></select></label></div></div>"
+        "<div class='fld'><span class='lbl'>Schedule</span>"
+        "<div style='display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end'>"
+        "<label class='small'>Repeat<br><select id='pfreq' style='width:auto'>"
+        "<option value='once'>once</option><option value='hourly'>every hour</option>"
+        "<option value='daily'>every day</option>"
+        "<option value='weekly' selected>every week</option>"
+        "<option value='monthly'>every month</option></select></label>"
+        "<label class='small' id='pdow-wrap'>On<br>"
+        f"<select id='pdow' style='width:auto'>{day_opts}</select></label>"
+        "<label class='small' id='pdom-wrap' style='display:none'>Day of month<br>"
+        "<input id='pdom' type='number' min='1' max='31' value='1' style='width:76px'></label>"
+        "<label class='small' id='pdate-wrap' style='display:none'>Date<br>"
+        "<input id='pdate' type='date' style='width:auto'></label>"
+        "<label class='small' id='ptime-wrap'>At<br>"
+        "<input id='ptime' type='time' value='09:00' style='width:auto'></label>"
+        "</div>"
+        "<div class='small muted' id='pfreq-hint' style='margin-top:5px'></div></div>"
+        "<div class='fld'><span class='lbl'>Prompt</span>"
+        "<textarea id='pprompt' rows='9' placeholder='Exactly what the fresh deputy (or the "
+        "JTF lead) is told to do. Be specific about deliverables and deadlines.'></textarea>"
+        "<span class='small muted'>Date placeholders are filled in at launch: "
+        "<code>{date}</code> <code>{weekday}</code> <code>{d:%Y%m%d}</code> "
+        "<code>{d+1:%A %b %d}</code> (the fire date, shifted N days).</span></div>"
+        "<div class='actions'><button type='button' id='psave'>Save entry</button>"
+        "<button type='button' id='pcancel' class='small'>Cancel</button>"
+        "<span id='pstatus' class='small muted'></span></div>"
+        "</div>"
+    )
+    body = (
+        "<h2>Docket</h2>"
+        "<div class='muted small' style='margin-bottom:14px;max-width:700px'>"
+        "Work that comes up again and again. An <b>entry</b> is a saved spec &mdash; "
+        "a single case in one precinct, or a whole JTF &mdash; plus a time and a repeat. "
+        "When it comes due, Posse launches a <b>fresh</b> deputy or JTF from that spec, "
+        "through the same machinery the Create-case and New-JTF forms use; no deputy from "
+        "a previous run is ever reused. Pausing takes an entry off the docket without losing it."
+        "</div>"
+        "<div style='margin-bottom:14px'><button type='button' id='pnew'>&#43; New entry</button></div>"
+        + composer
+        + "<h2>On the docket <span class='muted small' id='pactive-n'></span></h2>"
+        "<div id='pactive'></div>"
+        "<h2>Off the docket <span class='muted small' id='poff-n'></span></h2>"
+        "<div id='poff'></div>"
+        + _PICK_MODAL_HTML
+    )
+    return _shell("Docket", body, _DOCKET_JS, active="docket")
+
+
+_DOCKET_JS = _COMMON_JS + _CC_MODES_JS + _SLOT_JS + r"""
+getJSON('/api/status').then(function(s){ if(s) daemonsBar(s.daemons); });
+// caseSlot is a real slot from the first line: syncKind() renders it during the
+// synchronous boot, before loadSlotPrecincts() resolves.
+var PC={ editing:null, lead:null, collabs:[],
+         caseSlot:{kind:'precinct', name:'', service:'', model:'',
+                   report_service:'', report_model:''} };
+var $=function(id){ return document.getElementById(id); };
+
+function fmtWhen(ts){
+  if(!ts) return '—';
+  return new Date(ts*1000).toLocaleString([],
+    {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+function fmtIn(ts){
+  var s=ts-Date.now()/1000;
+  if(s<0) return 'due';
+  if(s<3600) return 'in '+Math.round(s/60)+' min';
+  if(s<86400) return 'in '+Math.round(s/3600)+' h';
+  return 'in '+Math.round(s/86400)+' d';
+}
+function modelText(alias){ return CC_MODEL_LABELS[alias]||alias; }
+// What a precinct slot (or a case entry) will actually run on. An empty pair means
+// inherit, so name what it inherits — "precinct default" alone leaves the reader
+// unable to tell which model the next run will actually use.
+function laneText(o){
+  var pdef = SLOT.pmodel[o.precinct||o.name] || '';
+  var w = o.model ? modelText(o.model)
+        : (o.service ? (CC_SVC_LABELS[o.service]||o.service)+' default'
+                     : 'precinct default' + (pdef ? ' ('+modelText(pdef)+')' : ''));
+  var r = o.report_model ? modelText(o.report_model)
+        : (o.report_service ? (CC_SVC_LABELS[o.report_service]||o.report_service)+' default'
+                            : 'same as work');
+  return 'work ' + w + '  ·  report ' + r;
+}
+function metaRow(key, val){
+  var d=el('div');
+  d.appendChild(el('span','k', key));
+  d.appendChild(el('span',null, val));
+  return d;
+}
+function slotRow(slot, tag){
+  var d=el('div');
+  d.appendChild(el('span','tag', tag));
+  d.appendChild(el('span',null, (slot.kind==='precinct' ? 'precinct ' : 'deputy ')));
+  d.appendChild(el('b',null, slot.name));
+  d.appendChild(el('span','muted', '   ' + (slot.kind==='precinct'
+    ? laneText(slot) : 'keeps its own model')));
+  return d;
+}
+function judgeText(p){
+  if(!p.judge) return 'none';
+  var extra = p.judge_model ? modelText(p.judge_model)
+            : (p.judge_service ? (CC_SVC_LABELS[p.judge_service]||p.judge_service)+' default' : '');
+  return p.judge + (extra ? '  ·  ' + extra : '');
+}
+
+function entryCard(p){
+  var card=el('div','docket' + (p.paused || !p.next_run ? ' off' : ''));
+  var head=el('div','docket-head');
+  head.appendChild(el('b',null,p.name));
+  head.appendChild(el('span','pkind', p.kind==='jtf' ? 'JTF' : 'case'));
+  var when=el('span','pwhen');
+  when.textContent = p.paused ? 'off the docket'
+    : (p.next_run ? fmtWhen(p.next_run)+'  ('+fmtIn(p.next_run)+')' : 'no further run');
+  head.appendChild(when);
+  card.appendChild(head);
+
+  var meta=el('div','docket-meta');
+  meta.appendChild(metaRow('repeat', p.schedule_label||p.freq));
+  if(p.kind==='jtf'){
+    if(p.lead) meta.appendChild(slotRow(p.lead,'LEAD'));
+    (p.collaborators||[]).forEach(function(c,i){ meta.appendChild(slotRow(c,'C'+(i+1))); });
+  } else {
+    meta.appendChild(metaRow('precinct', p.precinct||''));
+    meta.appendChild(metaRow('models', laneText(p)));
+  }
+  meta.appendChild(metaRow('judge', judgeText(p)));
+  card.appendChild(meta);
+
+  var det=el('details');
+  det.appendChild(el('summary',null,'prompt'));
+  var pre=el('pre'); pre.textContent=p.prompt||''; det.appendChild(pre);
+  card.appendChild(det);
+
+  if(p.runs && p.runs.length){
+    var runs=el('div','pruns');
+    runs.textContent = 'last runs: ' + p.runs.slice(0,4).map(function(r){
+      return fmtWhen(r.ts) + ' ' + r.status + (r.case ? ' (case '+r.case+')' : '');
+    }).join('   |   ');
+    card.appendChild(runs);
+  }
+
+  var acts=el('div','docket-acts');
+  // Run now leads the row: it is the one control that launches real work, and it
+  // confirms first because a mis-click on a JTF entry spawns a whole task force.
+  var go=el('button','runnow','Run now');
+  go.title='Launch this entry immediately. The next scheduled time moves to the '
+         + 'occurrence after the one shown, on the same schedule.';
+  go.onclick=function(){
+    var when = p.next_run ? ' Its next scheduled time moves to the occurrence after '
+             + fmtWhen(p.next_run) + '.' : '';
+    if(confirm('Run "'+p.name+'" now? This launches a fresh '
+               +(p.kind==='jtf'?'JTF':'deputy')+' straight away.'+when))
+      act('run-now', p.id);
+  };
+  acts.appendChild(go);
+  var edit=el('button',null,'Edit');
+  edit.onclick=function(){ openComposer(p); };
+  acts.appendChild(edit);
+  var toggle=el('button',null, p.paused ? 'Resume' : 'Pause');
+  toggle.onclick=function(){
+    if(!p.paused && !confirm('Pause "'+p.name+'"? It stops running on its schedule '
+                             +'until you resume it. Nothing is lost.')) return;
+    act(p.paused ? 'resume' : 'pause', p.id);
+  };
+  acts.appendChild(toggle);
+  // Cancel is offered only OFF the docket, so the path to retiring a live entry is
+  // pause first, then cancel — a mis-click on a scheduled entry cannot retire it.
+  if(p.paused || !p.next_run){
+    var cancel=el('button','danger','Cancel');
+    cancel.onclick=function(){
+      if(confirm('Cancel "'+p.name+'"? It comes off the docket for good; the spec and '
+                 +'its run history are kept on disk under docket/cancelled/.'))
+        act('cancel', p.id); };
+    acts.appendChild(cancel);
+  }
+  card.appendChild(acts);
+  return card;
+}
+
+async function load(){
+  var d=await getJSON('/api/docket'); if(!d) return;
+  var on=$('pactive'), off=$('poff');
+  on.innerHTML=''; off.innerHTML='';
+  var rows=d.docket||[], nOn=0, nOff=0;
+  rows.forEach(function(p){
+    if(!p.paused && p.next_run){ on.appendChild(entryCard(p)); nOn++; }
+    else { off.appendChild(entryCard(p)); nOff++; }
+  });
+  if(!nOn) on.appendChild(el('div','muted small','none scheduled'));
+  if(!nOff) off.appendChild(el('div','muted small','none'));
+  $('pactive-n').textContent = nOn ? nOn+' scheduled' : '';
+  $('poff-n').textContent = nOff ? nOff+' paused or finished' : '';
+  if(d.error){ $('pstatus').className='small flag'; $('pstatus').textContent=d.error; }
+}
+
+// ---- composer -------------------------------------------------------------
+// A case entry's precinct + work split IS a precinct slot, so it reuses the same
+// config panel the JTF slots use rather than a second implementation of it.
+function renderCaseCfg(){
+  var host=$('pcasecfg'); host.innerHTML='';
+  PC.caseSlot.name = $('pprecinct').value;
+  host.appendChild(slotConfig(PC.caseSlot));
+}
+function renderLead(){
+  var host=$('pleadcfg'); host.innerHTML='';
+  if(!PC.lead){ host.appendChild(el('span','muted small','none selected')); return; }
+  host.appendChild(slotCard(PC.lead,'LEAD','lead',function(){ PC.lead=null; renderLead(); }));
+}
+function renderCollabs(){
+  var host=$('pcollabs'); host.innerHTML='';
+  if(!PC.collabs.length){ host.appendChild(el('span','muted small','none added')); return; }
+  PC.collabs.forEach(function(slot,i){
+    host.appendChild(slotCard(slot,'C'+(i+1),'collab',function(){
+      PC.collabs.splice(i,1); renderCollabs(); }));
+  });
+}
+function syncKind(){
+  var jtf = $('pkind').value==='jtf';
+  $('jtf-block').style.display = jtf ? '' : 'none';
+  $('case-block').style.display = jtf ? 'none' : '';
+  if(!jtf) renderCaseCfg();
+}
+var FREQ_HINT={
+  once:'Runs once, then moves to the stood-down list.',
+  hourly:'Runs every hour, at the minute you set.',
+  daily:'Runs every day at that time.',
+  weekly:'Runs on that weekday, every week.',
+  monthly:'Runs on that day each month — a day past the end of a short month runs on its last day.'};
+function syncFreq(){
+  var f=$('pfreq').value;
+  $('pdow-wrap').style.display  = f==='weekly'  ? '' : 'none';
+  $('pdom-wrap').style.display  = f==='monthly' ? '' : 'none';
+  $('pdate-wrap').style.display = f==='once'    ? '' : 'none';
+  $('pfreq-hint').textContent = FREQ_HINT[f]||'';
+}
+function syncJudge(){
+  syncJudgeModels($('pjudge'), $('pjudge_service'), $('pjudge_model'), $('pjudge-models'));
+}
+function openComposer(p){
+  PC.editing = p ? p.id : null;
+  PC.lead=null; PC.collabs=[];
+  PC.caseSlot = {kind:'precinct', name:'', service:'', model:'',
+                 report_service:'', report_model:''};
+  $('pstatus').textContent='';
+  $('pname').value = p ? p.name : '';
+  $('pkind').value = p ? p.kind : 'case';
+  $('pprompt').value = p ? p.prompt : '';
+  $('pjudge').value = p ? (p.judge||'') : '';
+  $('pjudge_service').value = p ? (p.judge_service||'') : '';
+  syncJudge();
+  if(p && p.judge_model) $('pjudge_model').value = p.judge_model;
+  $('pfreq').value = p ? p.freq : 'weekly';
+  $('ptime').value = (p && p.at) ? p.at : '09:00';
+  $('pdow').value  = (p && p.dow!=null) ? p.dow : 5;
+  $('pdom').value  = (p && p.dom!=null) ? p.dom : 1;
+  if(p && p.freq==='once' && p.start){
+    var d=new Date(p.start*1000);
+    $('pdate').value = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')
+                       +'-'+String(d.getDate()).padStart(2,'0');
+  }
+  if(p && p.kind==='jtf'){
+    PC.lead = p.lead ? Object.assign({}, p.lead) : null;
+    PC.collabs = (p.collaborators||[]).map(function(c){ return Object.assign({}, c); });
+  } else if(p){
+    PC.caseSlot = {kind:'precinct', name:p.precinct||'', service:p.service||'',
+                   model:p.model||'', report_service:p.report_service||'',
+                   report_model:p.report_model||''};
+    $('pprecinct').value = p.precinct||'';
+  }
+  syncFreq(); syncKind(); renderLead(); renderCollabs();
+  $('composer').style.display='';
+  $('composer').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+function closeComposer(){ $('composer').style.display='none'; PC.editing=null; }
+
+function collectEntry(){
+  var kind=$('pkind').value, freq=$('pfreq').value;
+  var out={ name:$('pname').value.trim(), kind:kind, prompt:$('pprompt').value.trim(),
+            freq:freq, at:$('ptime').value||'', judge:$('pjudge').value||'' };
+  if(out.judge){
+    out.judge_service=$('pjudge_service').value||'';
+    out.judge_model=$('pjudge_model').value||'';
+  }
+  if(PC.editing) out.id=PC.editing;
+  if(freq==='weekly') out.dow=parseInt($('pdow').value,10);
+  if(freq==='monthly') out.dom=parseInt($('pdom').value,10);
+  if(freq==='once'){
+    if(!$('pdate').value) return {error:'Pick the date for a one-off entry.'};
+    // Built as LOCAL time on purpose: the runner and cron both work in the box's
+    // local time, and new Date('YYYY-MM-DD') alone would be UTC midnight.
+    var t=($('ptime').value||'09:00').split(':'), d=$('pdate').value.split('-');
+    out.start=new Date(+d[0], +d[1]-1, +d[2], +t[0]||0, +t[1]||0, 0).getTime()/1000;
+  }
+  if(kind==='jtf'){
+    if(!PC.lead) return {error:'Choose a lead.'};
+    if(!PC.collabs.length) return {error:'Add at least one collaborator.'};
+    out.lead=slotPayload(PC.lead);
+    out.collaborators=PC.collabs.map(slotPayload);
+  } else {
+    out.precinct=$('pprecinct').value;
+    ['service','model','report_service','report_model'].forEach(function(k){
+      out[k]=PC.caseSlot[k]||''; });
+  }
+  return {entry:out};
+}
+async function post(body){
+  var r=await fetch('/api/docket', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  if(r.status===401){ location='/login'; return null; }
+  var d={}; try{ d=await r.json(); }catch(e){}
+  if(!r.ok || !d.ok) throw new Error(d.error||('HTTP '+r.status));
+  return d;
+}
+async function save(){
+  var st=$('pstatus'), c=collectEntry();
+  if(c.error){ st.className='small flag'; st.textContent=c.error; return; }
+  st.className='small muted'; st.textContent='Saving…';
+  try{
+    await post({op:'save', entry:c.entry});
+    closeComposer(); await load();
+  }catch(ex){ st.className='small flag'; st.textContent='Error: '+ex.message; }
+}
+async function act(op, id){
+  var st=$('pstatus');
+  try{
+    await post({op:op, id:id});
+    st.className='small muted'; st.textContent=''; await load();
+  }catch(ex){
+    st.className='small flag'; st.textContent='Error: '+ex.message;
+    $('composer').style.display='';
+    $('composer').scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+}
+
+loadSlotPrecincts().then(function(){ renderCaseCfg(); });
+wireSlotPicker();
+$('pnew').onclick=function(){ openComposer(null); };
+$('pcancel').onclick=closeComposer;
+$('psave').onclick=save;
+$('pkind').addEventListener('change', syncKind);
+$('pfreq').addEventListener('change', syncFreq);
+$('pprecinct').addEventListener('change', renderCaseCfg);
+$('pjudge').addEventListener('change', syncJudge);
+$('pjudge_service').addEventListener('change', syncJudge);
+$('plead-btn').onclick=function(){
+  openPick('Choose the lead', function(slot){
+    PC.lead=slot;
+    if(slot.kind==='deputy')
+      PC.collabs=PC.collabs.filter(function(s){ return !sameSlot(s,slot); });
+    renderLead(); renderCollabs();
+  });
+};
+$('pcollab-btn').onclick=function(){
+  openPick('Add a collaborator', function(slot){
+    var dup = slot.kind==='deputy' &&
+      ((PC.lead && sameSlot(PC.lead,slot)) ||
+       PC.collabs.some(function(s){ return sameSlot(s,slot); }));
+    if(!dup) PC.collabs.push(slot);
+    renderCollabs();
+  });
+};
+syncFreq(); syncKind(); syncJudge(); load();
+"""
 
 # --------------------------------------------------------------------------- #
 # precincts (Task 372 — Sheriff & Deputies). Server-rendered (no JS needed).
@@ -1718,7 +3130,7 @@ def precincts_page():
         "<button type='submit'>Set sheriff model</button></form>"
     )
     compaction_txt = (
-        "Ledger <b>compaction is a Claude API call</b> on the global "
+        "Ledger <b>compaction is an agent-service call</b> on the global "
         f"<span class='mono'>{e(models.label(cur_model))}</span> model &mdash; it is given every precinct's "
         "(truncated) ledger for big-picture context and rewrites the crossing one; a "
         "mechanical rewrite is the automatic FALLBACK if that call fails or hits a usage limit."
@@ -1786,49 +3198,22 @@ def precincts_page():
         f"{rows}</table></div>"
         "<p class='muted small'>Model = default model a spawned deputy runs on (set it on "
         "the precinct page; an email 'model:' tag overrides per-request). Ledger = "
-        "big-picture digest (sheriff-compacted). Closed cases = the append-only case-log "
+        "big-picture digest (sheriff-compacted). Closed cases = the current one-row-per-case "
         "index. Case files = per-task specs. Deputies = task-number agents mapped to this "
         "precinct. Click a precinct for its ledger, case log, and deputies.</p>"
     )
     return _shell("Precincts", banner + intro + table, active="precincts")
 
 
-# Case 557: the create-case Service picker chooses a MODE, and the Model list has
-# to follow it — a mode may only offer models it can actually run. This map is
-# GENERATED from models.aliases_for_mode / models.MODES, so the browser-side filter
-# below cannot drift from the Python registry (add a mode there, it appears here).
-_CC_MODES_JS = (
-    "var CC_MODES=" + json.dumps({
-        m: {"label": models.mode_label(m),
-            "blurb": models.mode_spec(m)["blurb"],
-            "deputy": models.deputy_service(m),
-            "writer": models.writer_service(m),
-            "aliases": list(models.aliases_for_mode(m))}
-        for m in models.MODE_IDS}) + ";\n"
-    "var CC_DEFAULT_MODE=" + json.dumps(models.DEFAULT_MODE) + ";\n"
-    # Case 557 (uid=671): per-SERVICE alias lists + display labels, so the change
-    # handler can REBUILD each model <select> from scratch. The previous approach
-    # (optgroup.hidden / .disabled) does NOT work in a macOS native select popup —
-    # WebKit ignores `hidden` on <optgroup>, so ChatGPT models stayed visible in
-    # Claude mode, which is exactly the bug Steven reported.
-    "var CC_SVC_ALIASES=" + json.dumps(
-        {s: list(models.aliases_for(s)) for s in models.SERVICE_IDS}) + ";\n"
-    "var CC_MODEL_LABELS=" + json.dumps(
-        {a: models.label(a) for a in models.ALL_ALIASES}) + ";\n"
-    "var CC_SVC_LABELS=" + json.dumps(
-        {s: models.service_label(s) for s in models.SERVICE_IDS}) + ";\n"
-    # Case 561: the WORK TYPES a case splits into. Generated from
-    # models.WORK_TYPES so the form's wording is the same wording the deputy's
-    # prompt and the switch CLI use — the definition of "human report writing"
-    # only exists in one place.
-    + "var CC_WORK_TYPES=" + json.dumps(
-        {w: {"label": models.WORK_TYPES[w]["label"],
-             "blurb": models.WORK_TYPES[w]["blurb"]}
-         for w in models.WORK_TYPE_IDS}) + ";\n"
-    + "var CC_SERVICE_IDS=" + json.dumps(list(models.SERVICE_IDS)) + ";\n"
-)
 
-_PRECINCT_DETAIL_JS = _COMMON_JS + _CC_MODES_JS + r"""
+_PRECINCT_DETAIL_JS = _COMMON_JS + _CC_MODES_JS + _MSG_JS + r"""
+// Case 616: a follow-up on a CLOSED case goes to that case's own deputy, so the
+// row hands openMessage() the deputy from the case log rather than the case
+// number — the case number is what the message is ABOUT, and the deputy is who
+// reads it. #msgmodal is its own overlay, deliberately not #pcmodal: the
+// case-file popup and this dialog are independent and either may be open.
+function pcFollowUp(cnum, deputy){ openMessage(deputy, cnum, 'precinct'); }
+
 // Case 440 (Feng uid=469): the precinct Case-log rows open the shared
 // showTask()/showCaseFile() popup (from _COMMON_JS, now prepended) inside a centered
 // MODAL overlay (#pcmodal) that floats on top of everything — not the old inline box
@@ -2089,9 +3474,18 @@ def precinct_detail_page(name):
     cur_model = d.get("model", "opus")
     field_css = ("padding:5px 9px;border-radius:6px;border:1px solid var(--accent-border);"
                  "background:var(--surface2);color:var(--fg);font:inherit")
+    # The records manager and POST handler accept every registered alias.  Keep
+    # the page aligned with them: a precinct default names both its model and
+    # service, so ChatGPT choices must be selectable here as well as on the
+    # create-case and deputy-switch pages.
     opts = "".join(
-        f"<option value='{m}'{' selected' if m == cur_model else ''}>{models.label(m)}</option>"
-        for m in models.ALIASES)
+        f"<optgroup label='{e(models.service_label(svc))}'>"
+        + "".join(
+            f"<option value='{m}'{' selected' if m == cur_model else ''}>"
+            f"{e(models.label(m))}</option>"
+            for m in models.aliases_for(svc))
+        + "</optgroup>"
+        for svc in models.SERVICE_IDS)
     model_card = (
         "<div class='card'>"
         "<div class='small muted' style='margin-bottom:6px'>Default model for spawned "
@@ -2148,13 +3542,23 @@ def precinct_detail_page(name):
                     f"{cf_btn}")
         else:
             acts = cf_btn
+        # Case 616: write to the case's own deputy — the same act as replying to
+        # its email thread. Only offered where there IS a deputy to revive (the
+        # pre-377 rows have no deputy column, and a deputy whose relaunch script
+        # is gone cannot come back); state.py decided that, and the CLI checks it
+        # again before it writes anything.
+        if c.get("can_followup"):
+            oc_fu = e(f"pcFollowUp({json.dumps(tid)}, {json.dumps(c['deputy'])})")
+            acts += (f"<a onclick=\"{oc_fu}\" title='Send this case&#39;s deputy a "
+                     "follow-up — question or task, exactly like replying to its "
+                     "email'>&#8617; follow up</a>")
         # Task 377 #1: Deputy column (empty '-' for pre-377 rows that carry none).
         crows += (f"<tr><td class='small'>{e(tid)}</td>"
                   f"<td class='small'>{e(c.get('deputy') or '-')}</td>"
                   f"<td class='small'>{e(c['summary'])}</td>"
                   f"<td class='small'><div class='viewacts'>{acts}</div></td></tr>")
     cases = (f"<h2>Case log <span class='muted small'>{len(d['cases'])} closed cases "
-             "(append-only index)</span></h2>"
+             "(current index; one row per case)</span></h2>"
              "<div class='tablewrap'><table>"
              "<tr><th>Case</th><th>Deputy</th><th>Summary</th><th>View</th></tr>"
              f"{crows or '<tr><td colspan=4 class=small muted>no closed cases yet</td></tr>'}"
@@ -2168,7 +3572,10 @@ def precinct_detail_page(name):
              "<div class='pcmodal-dialog' role='dialog' aria-modal='true'>"
              "<div class='pcmodal-bar'><button type='button' class='pcmodal-x' "
              "onclick='pcClose()' aria-label='close'>&#10005; close</button></div>"
-             "<div id='detail'></div></div></div>")
+             "<div id='detail'></div></div></div>"
+             # Case 616: the follow-up dialog — the same markup the Status page
+             # carries, so one JS block drives both.
+             + _MSG_MODAL_HTML)
     # Task 377 #4: the per-precinct "Create new case" form (collapsed <details> so
     # it doesn't dominate). model optional / follow-up optional / description required
     # / multiple file+photo uploads. Submits multipart to the authed POST endpoint.

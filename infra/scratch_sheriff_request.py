@@ -87,7 +87,7 @@ _STATES = ("pending", "done", "denied")
 # the dashboard's Judges tab, or from a user e-mail via the receptionist.
 OPS = ("log_remove", "ledger_modify", "precinct_create", "precinct_delete",
        "precinct_restore", "case_number",
-       "critic_add", "critic_update", "critic_remove")
+       "critic_add", "critic_update", "critic_remove", "field_guide_rewrite")
 
 # Phase D: the precinct-lifecycle ops are USER-authorized (the user asks; the
 # receptionist HANDS OFF). They may be posted WITHOUT a deputy session -- with an
@@ -101,7 +101,7 @@ OPS = ("log_remove", "ledger_modify", "precinct_create", "precinct_delete",
 # them; nothing here is self-approving.
 RECEPTIONIST_ORIGIN = "receptionist"
 USER_AUTHORIZED_OPS = ("precinct_create", "precinct_delete", "precinct_restore",
-                       "critic_add", "critic_update", "critic_remove")
+                       "critic_add", "critic_update", "critic_remove", "field_guide_rewrite")
 try:                                        # reuse the inbox allow-list if importable
     import scratch_inbox as _inbox          # noqa: E402
     ALLOWED_REQUESTERS = set(_inbox.ALLOWED)

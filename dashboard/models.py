@@ -22,11 +22,12 @@ what it renders. Stdlib-free, matching the rest of the dashboard.
 # alias -> (label, exact id, service). Order = how selectors should list them.
 MODELS = {
     # ---- Anthropic / claude ----
-    "fable":  ("Fable 5",       "claude-fable-5",            "claude"),
+    "fable":  ("Fable 5.1",     "claude-fable-5-1",          "claude"),
     "opus":   ("Opus 5",        "claude-opus-5",             "claude"),
     "sonnet": ("Sonnet 5",      "claude-sonnet-5",           "claude"),
     "haiku":  ("Haiku 4.5",     "claude-haiku-4-5-20251001", "claude"),
     # ---- OpenAI / chatgpt (codex CLI) ----
+    "astra":  ("GPT-6 Astra",   "gpt-6-astra",              "chatgpt"),
     "sol":    ("GPT-5.6 Sol",   "gpt-5.6-sol",               "chatgpt"),
     "terra":  ("GPT-5.6 Terra", "gpt-5.6-terra",             "chatgpt"),
     "luna":   ("GPT-5.6 Luna",  "gpt-5.6-luna",              "chatgpt"),
@@ -141,14 +142,22 @@ _MODE_SERVICE_ALIASES = {
     "anthropic": "claude", "claude-code": "claude", "cc": "claude",
 }
 
-# COMPAT: ALIASES stays CLAUDE-ONLY — it is what the precinct-default and
-# sheriff-model selectors iterate, and those stayed claude-only in Case 557.
-# Use aliases_for(service) or ALL_ALIASES to reach the full set.
+# COMPAT: ALIASES stays CLAUDE-ONLY for legacy callers that deliberately mean
+# Claude. Service-neutral controls (precinct defaults, Sheriff model, create
+# case, and deputy switching) use aliases_for(service) or ALL_ALIASES.
 ALIASES = ("fable", "opus", "sonnet", "haiku")
-CHATGPT_ALIASES = ("sol", "terra", "luna", "gpt55")
+CHATGPT_ALIASES = ("astra", "sol", "terra", "luna", "gpt55")
 ALL_ALIASES = ALIASES + CHATGPT_ALIASES
 
-_ID_TO_ALIAS = {mid: a for a, (_, mid, _svc) in MODELS.items()}
+# Ids an alias used to resolve to, mirroring scratch_models._LEGACY_IDS. A Status
+# row or roster entry written before the bump still carries the old id, and without
+# this it would render as the raw string instead of the model's label (Case 759).
+_LEGACY_IDS = {
+    "claude-fable-5": "fable",
+}
+
+_ID_TO_ALIAS = dict(_LEGACY_IDS)
+_ID_TO_ALIAS.update({mid: a for a, (_, mid, _svc) in MODELS.items()})
 
 
 def alias_of(model):

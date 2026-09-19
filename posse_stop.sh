@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # posse_stop.sh — stop your Posse's always-on services: the dashboard + the daemons
-# (inbox, watchdog, jobmgr, sheriff, and — with --gpu — gpu_manager). Each runs in its
+# (inbox, watchdog, jobmgr, sheriff, docket, and — with --gpu — gpu_manager). Each runs in its
 # own tmux session; killing the session stops its auto-restart wrapper AND the process.
 #
 # Deputies and detached jobs run in their OWN tmux sessions and are LEFT RUNNING — a
 # shutdown of the management plane should not kill work in flight. Stop those
 # individually with:  tmux kill-session -t =<name>
 #
-#   bash posse_stop.sh            # stop dashboard + inbox + watchdog + jobmgr + sheriff
+#   bash posse_stop.sh            # stop dashboard + inbox + watchdog + jobmgr + sheriff + docket
 #   bash posse_stop.sh --gpu      # also stop the GPU resource manager
 #   bash posse_stop.sh --dry-run  # show what WOULD stop (changes nothing)
 #   bash posse_stop.sh --help
@@ -17,7 +17,7 @@ usage() {
   cat <<'EOF'
 posse_stop.sh — stop your Posse's daemons + dashboard.
 
-  bash posse_stop.sh            stop dashboard + inbox + watchdog + jobmgr + sheriff
+  bash posse_stop.sh            stop dashboard + inbox + watchdog + jobmgr + sheriff + docket
   bash posse_stop.sh --gpu      also stop the GPU resource manager
   bash posse_stop.sh --dry-run  show what WOULD stop; change nothing
   bash posse_stop.sh --help     this help
@@ -40,7 +40,7 @@ done
 
 command -v tmux >/dev/null 2>&1 || { echo "tmux not found — nothing to stop." >&2; exit 0; }
 
-SESSIONS=(infra_dashboard inbox watchdog jobmgr sheriff)
+SESSIONS=(infra_dashboard inbox watchdog jobmgr sheriff docket)
 [ "$WANT_GPU" = 1 ] && SESSIONS+=(gpu_manager)
 
 running() { tmux has-session -t "=$1" 2>/dev/null; }
@@ -67,7 +67,7 @@ done
 
 # Heads-up about sessions we deliberately leave alone (deputies / jobs / anything else).
 others="$(tmux list-sessions -F '#{session_name}' 2>/dev/null \
-          | grep -Ev '^(infra_dashboard|inbox|watchdog|jobmgr|sheriff|gpu_manager)$' || true)"
+          | grep -Ev '^(infra_dashboard|inbox|watchdog|jobmgr|sheriff|docket|gpu_manager)$' || true)"
 if [ -n "$others" ]; then
   echo
   echo "Left running (deputies / jobs / other tmux sessions):"

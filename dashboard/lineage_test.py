@@ -14,6 +14,7 @@ right case. Self-contained (no pytest).  Run:  python lineage_test.py
 """
 import json
 import os
+import pathlib
 import sys
 import tempfile
 import traceback
@@ -260,10 +261,41 @@ def test_request_summary_471():
           state.request_summary(999999) == "")
 
 
+def test_lineage_tab_removed_but_reconstruction_kept():
+    """Case 761: Feng asked for the Lineage TAB and any support only it used to go.
+    What must survive is everything other surfaces read from this module: History's
+    day mini-trees, a case's conversation + ancestors panel, and the task titles the
+    JTF / Patrols agent picker searches."""
+    import pages, server, jtf, lineage as lin
+
+    assert not hasattr(pages, "lineage_page"), "the Lineage page is still defined"
+    assert not hasattr(pages, "_LINEAGE_JS"), "the Lineage page JS is still defined"
+    assert not hasattr(lin, "build_forest"), "the forest builder is still defined"
+    nav = pages._nav("status")
+    assert "/lineage" not in nav and ">Lineage<" not in nav, "the nav still links the tab"
+    src = pathlib.Path(server.__file__).read_text()
+    for route in ('"/lineage"', '"/api/forest"', '"/api/lineage"'):
+        assert route not in src, f"server still routes {route}"
+    assert not (pathlib.Path(server.__file__).parent / "lineage_figure.py").exists(), \
+        "the forest figure dev tool is still present"
+
+    # kept, and still reachable from the surfaces that use them
+    for name in ("build_lineage", "history_day_lineage", "task_conversation", "lineage_for"):
+        assert hasattr(lin, name), f"lineage.{name} was removed but is still used"
+    assert "lineage.history_day_lineage" in src, "History lost its day trees"
+    assert "lineage.task_conversation" in src and "lineage.lineage_for" in src, \
+        "the case conversation panel lost its reconstruction"
+    assert "build_lineage" in pathlib.Path(jtf.__file__).read_text(), \
+        "the agent picker lost the task titles it searches"
+    check("761: Lineage tab gone; History, conversations and the agent picker keep "
+          "their reconstruction", True)
+
+
 def main():
     _setup()
     for t in (test_autoack, test_conversation_scoped, test_deliverables_scoped,
-              test_lineage_direct_reply_only, test_request_summary_471):
+              test_lineage_direct_reply_only, test_request_summary_471,
+              test_lineage_tab_removed_but_reconstruction_kept):
         try:
             t()
         except Exception:

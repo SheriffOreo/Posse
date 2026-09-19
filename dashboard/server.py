@@ -18,6 +18,7 @@ import re
 import ssl
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +35,9 @@ import state
 
 _INLINE_OK = {".txt", ".log", ".md", ".csv", ".json", ".png", ".jpg", ".jpeg",
               ".gif", ".svg", ".pdf", ".output"}
+# Case 591: a deputy name reaches an argv, so it is checked here as well as in
+# the CLI. Same shape scratch_model_switch._VALID_NAME enforces.
+_VALID_WORKER = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _session_cookie(value, max_age):
@@ -47,18 +51,28 @@ def _session_cookie(value, max_age):
 def _api_status():
     return {
         "daemons": state.daemon_status(),
-        "workers": state.workers(active_only=True),
+        # Case 591: the Status board lists failed deputies so they can be relaunched.
+        "workers": state.workers(active_only=True, include_failed=True),
         "gpu": {
             "manager_alive": state.gpu_manager_alive(),
             "running": [j for j in state.gpu_jobs_active() if j["bucket"] == "running"],
             "pending": [j for j in state.gpu_jobs_active() if j["bucket"] == "pending"],
         },
         "jobs": state.jobmgr_jobs(active_only=True),
+        # Case 760: the JTF groups whose deputies are on this board, so the table
+        # can be split into one box per joint task force plus the ungrouped rest.
+        # Derived from the same workers() call above, so a box can never name a
+        # deputy the table below has no row (and no controls) for.
+        "jtfs": state.jtf_board(),
         "limit": state.limit_state(),
         # Case 582: ALL live limits (both vendors' account walls + per-model caps).
         # "limit" stays so nothing already reading it breaks; the banner uses this,
         # because a ChatGPT wall is invisible in "limit" by construction.
         "limits": state.limit_states(),
+        # Case 681: auth expiry is account-local too.  This intentionally exposes
+        # only the account display label + blocked state, never an auth home, key,
+        # token, or credential timestamp.
+        "auths": state.auth_states(),
     }
 
 
@@ -155,6 +169,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._html(pages.precinct_detail_page((q.get("name") or [""])[0]))
         if path == "/judges":                       # Case 551
             return self._html(pages.judges_page())
+        if path == "/field-guide":                  # Case 685
+            return self._html(pages.field_guide_page())
         if path == "/api/judge":                    # one judge's custom prompt
             cid = (q.get("id") or [""])[0]
             return self._json({"id": cid, "prompt": state.critic_prompt(cid)})
@@ -163,6 +179,9 @@ class Handler(BaseHTTPRequestHandler):
                                "charter": state.critic_charter(),
                                "requests": state.critic_requests(),
                                "reviews": state.critic_reviews()})
+        if path == "/api/field-guide":
+            return self._json({"guide": state.field_guide(),
+                               "requests": state.field_guide_requests()})
         if path == "/api/judge_review":             # Case 555: one case's FULL rulings
             case = (q.get("case") or [""])[0]
             if (q.get("part") or [""])[0] == "prompt":
@@ -170,10 +189,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"case": case, "round": rnd,
                                    "prompt": state.critic_review_prompt(case, rnd)})
             return self._json(state.critic_review_detail(case))
-        if path == "/lineage":
-            return self._html(pages.lineage_page())
         if path == "/jtf":
             return self._html(pages.jtf_page())
+        if path == "/docket":                      # Case 761
+            return self._html(pages.docket_page())
+        if path == "/api/docket":
+            return self._json(state.docket())
         if path == "/cowork":
             # Phase E: "Cowork" was renamed "JTF" — keep the old link working
             # (redirect, never 500) for any bookmark / in-flight page.
@@ -185,6 +206,18 @@ class Handler(BaseHTTPRequestHandler):
             # Deliberately NOT part of _api_status — only the Status page Refresh
             # button hits this, so nvidia-smi never runs on the 8s auto-poll.
             return self._json(state.gpu_stats())
+        if path == "/api/deputy/settings":
+            # Case 591: the live settings the switch / relaunch modal prefills
+            # with. On demand only — the modal opens far less often than the 8 s
+            # status poll, and this shells out per deputy.
+            return self._deputy_settings((q.get("name") or [""])[0])
+        if path == "/api/deputy/message":
+            # Case 616: what the reply / follow-up dialog prefills with — is this
+            # deputy live (so the message interrupts it) or ended (so it is
+            # revived), and is it still on the case the button was pressed for.
+            # Read-only; the CLI's `show` writes nothing.
+            return self._deputy_message_settings(
+                (q.get("name") or [""])[0], (q.get("case") or [""])[0])
         if path == "/api/precincts":
             return self._json({"sheriff": state.sheriff_status(),
                                "precincts": state.precincts()})
@@ -216,10 +249,6 @@ class Handler(BaseHTTPRequestHandler):
                 "lineage": lineage.lineage_for(tid),
                 "deliverables": state.deliverables_for(tid, (conv or {}).get("agent")),
             })
-        if path == "/api/lineage":
-            return self._json(lineage.build_lineage())
-        if path == "/api/forest":
-            return self._json(lineage.build_forest())
         if path == "/api/agents":
             qs = (q.get("q") or [""])[0]
             return self._json(jtf.agent_index(qs))
@@ -228,13 +257,12 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"error": "not found"}, 404)
 
     # -- POST ---------------------------------------------------------------
-    # Whitelisted set for the model write path (mirrors scratch_records._MODELS).
-    _MODELS = ("fable", "opus", "sonnet", "haiku")
+    # Whitelisted set for persistent model writes.  The sheriff resolves the
+    # service from the selected alias, so it can run either registered backend.
+    _MODELS = tuple(models.ALL_ALIASES)
     # Case 561 (Feng uid=676): a PRECINCT's default may be any registered model, so
     # that "each precinct has a default service and model" is actually expressible —
     # the alias is globally unique, so naming the model names the service. The
-    # narrow _MODELS above stays for the GLOBAL SHERIFF model, whose ledger
-    # compaction is a Claude call.
     _PRECINCT_MODELS = tuple(models.ALL_ALIASES)
 
     def do_POST(self):
@@ -276,6 +304,52 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authed():
                 return self._json({"ok": False, "error": "unauthorized"}, 401)
             return self._propose_critic()
+        # Case 685: an authenticated operator can ask the sheriff to review one
+        # Field Guide category.  This queues a request only; it never writes the
+        # sheriff-owned standing text or launches a model on the web request.
+        if u.path == "/api/field-guide/rewrite":
+            if not self._authed():
+                return self._json({"ok": False, "error": "unauthorized"}, 401)
+            return self._field_guide_rewrite()
+        # Case 782: the Field Guide's request box. Opens a RECEPTIONIST case saying
+        # what the operator wants changed; it writes no policy of its own.
+        if u.path == "/api/field-guide/message":
+            if not self._authed():
+                return self._json({"ok": False, "error": "unauthorized"}, 401)
+            return self._field_guide_message()
+        # Case 591: the Status board's per-deputy buttons -- switch a live deputy's
+        # model, or relaunch one the watchdog has given up on. Writes an order file
+        # and returns; the WATCHDOG carries it out on its next tick, so nothing on
+        # this path calls Claude or spawns anything.
+        if u.path == "/api/deputy/control":
+            if not self._authed():
+                return self._json({"ok": False, "error": "unauthorized"}, 401)
+            return self._deputy_control()
+        # Case 616: the Status board's reply button and the precinct case log's
+        # follow-up button. Unlike the control orders above this one does NOT go
+        # through the watchdog: it is the e-mail interrupt path, so it appends to
+        # the deputy's mailbox and relaunches it there and then, and the request
+        # blocks until the deputy is confirmed alive again (a few seconds).
+        if u.path == "/api/deputy/message":
+            if not self._authed():
+                return self._json({"ok": False, "error": "unauthorized"}, 401)
+            return self._deputy_message()
+        # Case 760: add a collaborator to a LIVE JTF. Like the reply button this is
+        # the message path, not a watchdog order -- it hands the LEAD an onboarding
+        # step and blocks until the lead has it. The new deputy is NOT spawned here:
+        # the note travels through every collaborator first (scratch_jtf_onboard.py).
+        if u.path == "/api/jtf/collaborator":
+            if not self._authed():
+                return self._json({"ok": False, "error": "unauthorized"}, 401)
+            return self._jtf_collaborator()
+        # Case 761: create / edit / pause / resume / cancel a DOCKET. The dashboard
+        # neither schedules nor fires anything -- it hands the submission to the
+        # tsomp scratch_docket.py CLI, which owns the store and every validation
+        # rule (precinct, service, model, judge, schedule), and relays its answer.
+        if u.path == "/api/docket":
+            if not self._authed():
+                return self._json({"ok": False, "error": "unauthorized"}, 401)
+            return self._docket_write()
         if u.path not in ("/login", "/register"):
             return self._json({"error": "not found"}, 404)
         ip = self._client_ip()
@@ -367,6 +441,13 @@ class Handler(BaseHTTPRequestHandler):
         if model in self._MODELS:
             # Force the LIVE records root by dropping any TSOMP_RECORDS_ROOT override.
             env = {k: v for k, v in os.environ.items() if k != "TSOMP_RECORDS_ROOT"}
+            # An authenticated dashboard is the explicit operator control plane for
+            # this one global setting.  Pass the sheriff capability to its short
+            # lived records-manager child rather than weakening deputy authorization.
+            try:
+                env["TSOMP_SHERIFF_TOKEN"] = (config.RECORDS / ".sheriff_token").read_text().strip()
+            except OSError:
+                return self._redirect("/precincts")
             try:
                 subprocess.run(
                     [sys.executable, str(config.STATE_ROOT / "scratch_records.py"),
@@ -376,6 +457,231 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as ex:
                 sys.stderr.write(f"[infra-dash] set sheriff model failed: {ex}\n")
         return self._redirect("/precincts")
+
+    # -- Case 591: operator orders on a deputy -------------------------------
+    _CONTROL_CLI = "scratch_watchdog_control.py"
+    _CONTROL_OPS = ("switch", "relaunch", "terminate", "cancel")
+
+    def _control(self, op, name, to=None, report_to=None):
+        """Run one order through the tsomp control CLI and return its JSON.
+
+        Shelling out rather than importing is the choice `/precinct/model` already
+        made: the CLI owns the validation, the roster lookup and the record
+        format, so the dashboard can only ask for what it is allowed to ask for
+        and there is one implementation to keep correct.
+        """
+        who = (auth.account().get("name") or auth.account().get("email") or "").strip()
+        cmd = [sys.executable, str(config.STATE_ROOT / self._CONTROL_CLI), op,
+               "--worker", name, "--json",
+               "--by", f"dashboard ({who})" if who else "dashboard"]
+        if to:
+            cmd += ["--to", to]
+        if report_to:
+            cmd += ["--report-to", report_to]
+        # Force the LIVE state by dropping any TSOMP_* override the server
+        # inherited — a test root here would file the order where nothing reads it.
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("TSOMP_RECORDS_ROOT", "TSOMP_WATCHDOG_JOBS",
+                            "TSOMP_JOBS_DIR")}
+        try:
+            p = subprocess.run(cmd, cwd=str(config.STATE_ROOT), env=env,
+                               timeout=60, capture_output=True, text=True)
+            return json.loads(p.stdout)
+        except Exception as ex:
+            sys.stderr.write(f"[infra-dash] {self._CONTROL_CLI} {op} failed: {ex}\n")
+            return {"ok": False, "error": f"could not run {self._CONTROL_CLI}: {ex}"}
+
+    def _deputy_settings(self, name):
+        """GET side: the live settings the modal prefills with. Read-only — the
+        CLI's `show` writes nothing."""
+        if not _VALID_WORKER.match(name or ""):
+            return self._json({"ok": False, "error": "bad worker name"}, 400)
+        r = self._control("show", name)
+        return self._json(r, 200 if r.get("ok") else 400)
+
+    def _deputy_control(self):
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n > 8192:
+            return self._json({"ok": False, "error": "body too large"}, 413)
+        try:
+            body = json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+        except Exception:
+            return self._json({"ok": False, "error": "expected a JSON body"}, 400)
+        op = str(body.get("op") or "").strip()
+        name = str(body.get("name") or "").strip()
+        if op not in self._CONTROL_OPS:
+            return self._json({"ok": False, "error": f"unknown op {op!r}"}, 400)
+        if not _VALID_WORKER.match(name):
+            return self._json({"ok": False, "error": "bad worker name"}, 400)
+        r = self._control(op, name,
+                          to=str(body.get("to") or "").strip() or None,
+                          report_to=str(body.get("report_to") or "").strip() or None)
+        return self._json(r, 200 if r.get("ok") else 400)
+
+    # -- Case 616: an operator message to a deputy ---------------------------
+    _MESSAGE_CLI = "scratch_deputy_message.py"
+    # Long enough for a real instruction, short enough that nobody pastes a
+    # design document into a mailbox. The CLI enforces its own limit too.
+    _MAX_MESSAGE = 20000
+
+    def _message_cli(self, op, name, case="", message=None, source=""):
+        """Run one delivery through the tsomp CLI and return its JSON.
+
+        The message goes in through a FILE, not argv: it is free text the operator
+        typed, and argv is visible in `ps` — which is also how a worker once killed
+        itself, by pattern-matching its own command line (rc=143, Task 176).
+        """
+        who = (auth.account().get("name") or auth.account().get("email") or "").strip()
+        cmd = [sys.executable, str(config.STATE_ROOT / self._MESSAGE_CLI), op,
+               "--worker", name, "--json", "--by", who or "the operator"]
+        if case:
+            cmd += ["--case", str(case)]
+        if source:
+            cmd += ["--source", source]
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("TSOMP_RECORDS_ROOT", "TSOMP_WATCHDOG_JOBS",
+                            "TSOMP_JOBS_DIR")}
+        tmp = None
+        try:
+            if message is not None:
+                fd, tmp = tempfile.mkstemp(prefix="dashmsg_", suffix=".txt")
+                with os.fdopen(fd, "w") as f:
+                    f.write(message)
+                cmd += ["--message-file", tmp]
+            p = subprocess.run(cmd, cwd=str(config.STATE_ROOT), env=env,
+                               timeout=180, capture_output=True, text=True)
+            return json.loads(p.stdout)
+        except Exception as ex:
+            sys.stderr.write(f"[infra-dash] {self._MESSAGE_CLI} {op} failed: {ex}\n")
+            return {"ok": False, "error": f"could not run {self._MESSAGE_CLI}: {ex}"}
+        finally:
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+
+    # -- Case 760: add a collaborator to a running JTF -----------------------
+    _ONBOARD_CLI = "scratch_jtf_onboard.py"
+
+    @staticmethod
+    def _valid_collab_request(body, known):
+        """Validate an add-collaborator submission -> (request, error).
+
+        A pure function for the same reason _valid_slot is one: the refusals are
+        the interesting behaviour and a test should be able to drive them without
+        standing up a request. An unusable work-split value is REFUSED rather than
+        dropped (the Case-551 rule) -- a silently ignored model choice is the
+        failure mode this precinct keeps re-learning.
+        """
+        jtf_id = str(body.get("jtf") or "").strip()
+        precinct = str(body.get("precinct") or "").strip()
+        msg = str(body.get("message") or "").strip()
+        if not re.fullmatch(r"[0-9a-zA-Z]{1,16}", jtf_id):
+            return None, "bad JTF id"
+        if precinct not in known:
+            return None, f"unknown precinct '{precinct}'"
+        if not msg:
+            return None, ("a message for the lead is required -- it is what tells "
+                          "the lead why this collaborator is joining")
+        lanes = {}
+        for f in ("service", "model", "report_service", "report_model"):
+            v = str(body.get(f) or "").strip().lower()
+            if not v:
+                continue
+            ok = (v in (models.MODES if f == "service" else models.SERVICE_IDS)
+                  if f.endswith("service") else v in models.ALL_ALIASES)
+            if not ok:
+                return None, f"invalid {f} '{v}'"
+            lanes[f] = v
+        if (lanes.get("model") and lanes.get("service")
+                and models.service_of(lanes["model"]) != lanes["service"]):
+            return None, (f"model '{lanes['model']}' does not belong to service "
+                          f"'{lanes['service']}'")
+        return {"jtf": jtf_id, "precinct": precinct, "message": msg,
+                "lanes": lanes}, None
+
+    def _jtf_collaborator(self):
+        """Start an onboarding chain: the LEAD is asked to write the note, every
+        collaborator adds to it, and only then is the new deputy spawned.
+
+        The same shell-out contract as the two buttons above -- the CLI owns the
+        validation, the chain state and the delivery, so a malformed request is
+        refused by the one implementation rather than by a copy living here.
+        """
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n > self._MAX_MESSAGE + 4096:
+            return self._json({"ok": False, "error": "message too large"}, 413)
+        try:
+            body = json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+        except Exception:
+            return self._json({"ok": False, "error": "expected a JSON body"}, 400)
+        ask, err = self._valid_collab_request(body, {p["name"] for p in state.precincts()})
+        if err:
+            return self._json({"ok": False, "error": err}, 400)
+        jtf_id, precinct, lanes = ask["jtf"], ask["precinct"], ask["lanes"]
+        msg = ask["message"]
+        who = (auth.account().get("name") or auth.account().get("email") or "").strip()
+        cmd = [sys.executable, str(config.STATE_ROOT / self._ONBOARD_CLI), "request",
+               "--jtf", jtf_id, "--precinct", precinct,
+               "--by", who or "the operator"]
+        for f, v in lanes.items():
+            cmd += [f"--{f.replace('_', '-')}", v]
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("TSOMP_RECORDS_ROOT", "TSOMP_WATCHDOG_JOBS",
+                            "TSOMP_JOBS_DIR", "TSOMP_JTF_ROOT")}
+        tmp = None
+        try:
+            fd, tmp = tempfile.mkstemp(prefix="jtfonboard_", suffix=".txt")
+            with os.fdopen(fd, "w") as f:
+                f.write(msg)
+            cmd += ["--message-file", tmp]
+            p = subprocess.run(cmd, cwd=str(config.STATE_ROOT), env=env,
+                               timeout=180, capture_output=True, text=True)
+            r = json.loads(p.stdout)
+        except Exception as ex:
+            sys.stderr.write(f"[infra-dash] {self._ONBOARD_CLI} request failed: {ex}\n")
+            r = {"ok": False, "error": f"could not run {self._ONBOARD_CLI}: {ex}"}
+        finally:
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        return self._json(r, 200 if r.get("ok") else 400)
+
+    def _deputy_message_settings(self, name, case=""):
+        if not _VALID_WORKER.match(name or ""):
+            return self._json({"ok": False, "error": "bad worker name"}, 400)
+        r = self._message_cli("show", name, case=case)
+        return self._json(r, 200 if r.get("ok") else 400)
+
+    def _deputy_message(self):
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n > self._MAX_MESSAGE + 4096:
+            return self._json({"ok": False, "error": "message too large"}, 413)
+        try:
+            body = json.loads(self.rfile.read(n).decode("utf-8", "replace")) if n else {}
+        except Exception:
+            return self._json({"ok": False, "error": "expected a JSON body"}, 400)
+        name = str(body.get("name") or "").strip()
+        msg = str(body.get("message") or "").strip()
+        case = str(body.get("case") or "").strip()
+        source = str(body.get("source") or "").strip()
+        if not _VALID_WORKER.match(name):
+            return self._json({"ok": False, "error": "bad worker name"}, 400)
+        if not msg:
+            return self._json({"ok": False, "error": "the message is empty"}, 400)
+        if len(msg) > self._MAX_MESSAGE:
+            return self._json({"ok": False,
+                               "error": f"message is {len(msg)} characters; the "
+                                        f"limit is {self._MAX_MESSAGE}"}, 400)
+        if case and not re.match(r"^[A-Za-z0-9_-]{1,24}$", case):
+            return self._json({"ok": False, "error": "bad case id"}, 400)
+        if source not in ("", "status", "precinct"):
+            return self._json({"ok": False, "error": "bad source"}, 400)
+        r = self._message_cli("send", name, case=case, message=msg, source=source)
+        return self._json(r, 200 if r.get("ok") else 400)
 
     # -- authed write: create a web case (Task 377 #4) -----------------------
     def _allocate_case(self):
@@ -432,8 +738,7 @@ class Handler(BaseHTTPRequestHandler):
         if precinct not in known:
             return self._json({"ok": False, "error": f"unknown precinct '{precinct}'"}, 400)
         # Case 557: a CASE may pick either service, so this path validates against
-        # the full cross-service registry -- not self._MODELS, which stays
-        # claude-only for the precinct/sheriff write paths it guards.
+        # the full cross-service registry, shared by all persisted model paths.
         if model and model not in models.ALL_ALIASES:
             return self._json({"ok": False, "error": f"invalid model '{model}'"}, 400)
         # Case 557: the "service" field carries a MODE ("claude" / "claude+chatgpt" /
@@ -576,8 +881,7 @@ class Handler(BaseHTTPRequestHandler):
                                "describe what this judge should care about — a sentence or "
                                "two at minimum, or the deputy has nothing to write from"}, 400)
         # Case 561: a judge may run on either service, so validate against the full
-        # cross-service registry (self._MODELS stays claude-only for the precinct
-        # and sheriff write paths it guards).
+        # cross-service registry shared by the precinct and sheriff write paths.
         if model and model not in models.ALL_ALIASES:
             return self._json({"ok": False, "error": f"invalid model '{model}'"}, 400)
 
@@ -624,12 +928,171 @@ class Handler(BaseHTTPRequestHandler):
                            "note": "opened as a receptionist case; the deputy writes the "
                                    "prompt and files it with the sheriff."})
 
+    # -- Case 685: ask the sheriff to review a Field Guide category ---------
+    _FIELD_GUIDE_MAX_BODY = 4096
+
+    def _field_guide_rewrite(self):
+        """Queue, but never perform, one operator-triggered Field Guide review.
+
+        The field-guide CLI owns category validation, request coalescing, and the
+        sheriff-request record format. This thin authenticated wrapper keeps the
+        dashboard from becoming a second writer for standing policy or a web
+        endpoint that directly invokes the sheriff model.
+        """
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n <= 0 or n > self._FIELD_GUIDE_MAX_BODY:
+            return self._json({"ok": False, "error": "bad request size"}, 400)
+        try:
+            payload = json.loads(self.rfile.read(n).decode("utf-8", "replace"))
+        except Exception:
+            return self._json({"ok": False, "error": "invalid JSON"}, 400)
+        if not isinstance(payload, dict):
+            return self._json({"ok": False, "error": "invalid payload"}, 400)
+        category = str(payload.get("category") or "").strip().lower()
+        guide = state.field_guide()
+        known = {str(row.get("id")) for row in guide.get("categories") or []
+                 if isinstance(row, dict)}
+        if category not in known:
+            return self._json({"ok": False, "error": "unknown Field Guide category"}, 400)
+        requester = (auth.account().get("email") or config.OPERATOR.get("email") or "").strip()
+        if not requester:
+            return self._json({"ok": False,
+                               "error": "the dashboard has no operator email for a sheriff request"}, 500)
+        cmd = [sys.executable, str(config.STATE_ROOT / "scratch_field_guide.py"), "rewrite",
+               "--category", category, "--origin", "receptionist", "--requester", requester,
+               "--precinct", "infra"]
+        env = {k: v for k, v in os.environ.items() if k != "TSOMP_RECORDS_ROOT"}
+        try:
+            proc = subprocess.run(cmd, cwd=str(config.STATE_ROOT), env=env, timeout=30,
+                                  capture_output=True, text=True)
+            data = json.loads(proc.stdout or "{}")
+            if proc.returncode or not isinstance(data, dict):
+                raise ValueError((proc.stderr or "invalid Field Guide response").strip())
+        except Exception as exc:
+            sys.stderr.write(f"[infra-dash] Field Guide request failed: {exc}\n")
+            return self._json({"ok": False, "error": "could not queue sheriff review"}, 500)
+        return self._json({"ok": True, "category": category, "request_id": data.get("id"),
+                           "coalesced": bool(data.get("coalesced")),
+                           "note": "queued for sheriff review"})
+
+    # -- Case 782: ask the receptionist for a Field Guide change -----------
+    _FIELD_GUIDE_MSG_MAX_BODY = 16384
+    _FIELD_GUIDE_MSG_MAX_TEXT = 6000
+
+    def _field_guide_message(self):
+        """Open one receptionist case describing a Field Guide change the operator wants.
+
+        This is the Case-569 'propose a judge' path applied to standing policy: the
+        dashboard states a wish and lets a deputy do the work, rather than becoming a
+        second writer for text the sheriff owns. A brand-new section is deliberately
+        allowed here even though no CLI can create one -- the category list is a closed
+        tuple in scratch_field_guide.py, so a new section is a code change, and the
+        spec below says so instead of the request failing with nowhere to go.
+        """
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n <= 0 or n > self._FIELD_GUIDE_MSG_MAX_BODY:
+            return self._json({"ok": False, "error": "bad request size"}, 400)
+        try:
+            payload = json.loads(self.rfile.read(n).decode("utf-8", "replace"))
+        except Exception:
+            return self._json({"ok": False, "error": "invalid JSON"}, 400)
+        if not isinstance(payload, dict):
+            return self._json({"ok": False, "error": "invalid payload"}, 400)
+
+        text = str(payload.get("text") or "").strip()
+        if len(text) < 20:
+            return self._json({"ok": False, "error":
+                               "describe the change in a sentence or two \u2014 a deputy has "
+                               "to work from it"}, 400)
+        if len(text) > self._FIELD_GUIDE_MSG_MAX_TEXT:
+            return self._json({"ok": False, "error": "that request is too long"}, 400)
+
+        target = str(payload.get("target") or "new").strip().lower()
+        known = {}
+        with contextlib.suppress(Exception):
+            known = {str(row.get("id")): str(row.get("label") or row.get("id"))
+                     for row in (state.field_guide().get("categories") or [])
+                     if isinstance(row, dict)}
+        if target != "new" and target not in known:
+            return self._json({"ok": False, "error": "unknown Field Guide section"}, 400)
+
+        if target == "new":
+            scope = ("Steven wants a **new Field Guide section**. Note before you plan: the "
+                     "category list is a closed tuple (`CATEGORIES`) in "
+                     "`scratch_field_guide.py`, so a new section is a CODE change as well as "
+                     "a standing-text change \u2014 it cannot be added by a sheriff request "
+                     "alone. " + ("Existing sections are: " + ", ".join(sorted(known)) + "."
+                                  if known else
+                                  "The Field Guide could not be read just now, so check "
+                                  "which sections already exist before you plan."))
+        else:
+            scope = (f"Steven wants the **{known[target]}** section of the Field Guide changed "
+                     f"(category id `{target}`). Its standing text is sheriff-owned: read the "
+                     f"current wording with `python scratch_field_guide.py show --category "
+                     f"{target}` before you propose anything.")
+
+        description = (
+            "Field Guide change request, submitted from the dashboard's **Field Guide** tab.\n\n"
+            + scope
+            + "\n\n## What Steven asked for (verbatim from the form)\n\n"
+            + text
+            + "\n\n## Your job\n\n"
+              "Work out what this change actually requires, then take it there. The sheriff "
+              "owns every word of standing policy, so the standing-text part of it is a "
+              "sheriff request (`python scratch_field_guide.py request --category <c> "
+              "--reason ...`), quoting the wording you want clause by clause \u2014 that "
+              "command takes only `--reason`, so wording you do not quote is wording the "
+              "sheriff will invent for you. If the request needs anything the Field Guide "
+              "cannot express, say so to Steven rather than approximating it. Check whether "
+              "the live **vyas** judge enforces the same rule you are changing "
+              "(`scratch_full_logs/records/critics/vyas.md`): a guide edit the judge "
+              "contradicts is an inert policy."
+        )
+
+        precinct = "receptionist"
+        if precinct not in {p["name"] for p in state.precincts()}:
+            return self._json({"ok": False, "error":
+                               "the receptionist precinct is not registered"}, 500)
+
+        sid = time.strftime("%Y%m%d%H%M%S") + "_" + os.urandom(4).hex()
+        case = self._allocate_case()
+        record = {"id": sid, "ts": time.time(), "precinct": precinct,
+                  "model": None, "service": None, "parent": None,
+                  "description": description, "files": [], "case": case,
+                  "critic": None,
+                  "deputy_hint": f"guide_{case}" if case else "",
+                  "source": "web_field_guide",
+                  "requester": (auth.account().get("email")
+                                or config.OPERATOR.get("email") or "")}
+        try:
+            pend = config.WEB_CASES / "pending"
+            pend.mkdir(parents=True, exist_ok=True)
+            tmp = pend / (sid + ".json.tmp")
+            tmp.write_text(json.dumps(record, indent=2))
+            os.replace(tmp, pend / (sid + ".json"))
+        except Exception as ex:
+            return self._json({"ok": False, "error": f"could not queue submission: {ex}"}, 500)
+        return self._json({"ok": True, "case": case, "sid": sid, "target": target,
+                           "note": "opened as a receptionist case"})
+
     # -- authed write: create a JTF (Joint Task Force) (Case 384e) -----------
     @staticmethod
     def _valid_slot(slot, known):
-        """Normalize + validate ONE slot to {"kind","name"} or None. A precinct slot's
-        name must be a live precinct; a deputy slot just needs a non-empty name (the
-        must-take machinery no-ops safely if the deputy can't be revived)."""
+        """Normalize + validate ONE slot to {"kind","name",...} or None. A precinct
+        slot's name must be a live precinct; a deputy slot just needs a non-empty name
+        (the must-take machinery no-ops safely if the deputy can't be revived).
+
+        Case 599: a PRECINCT slot may also carry its own WORK SPLIT — service/model for
+        the work lane and report_service/report_model for the report lane — exactly the
+        four fields the create-case form collects, because a precinct slot IS a fresh
+        case in that precinct. Validated here rather than silently dropped by the
+        bridge: the user made a choice and must be told if it did not take (the Case 551
+        rule). All four are optional; empty = the precinct default / "same as work",
+        which is the pre-599 behaviour byte for byte.
+
+        A DEPUTY slot carries none of them — it is a live agent that keeps its own
+        configured model, so accepting a model there would be a promise nothing
+        fulfils. An explicit model on a deputy slot is REJECTED, not ignored."""
         if not isinstance(slot, dict):
             return None
         kind = str(slot.get("kind", "")).strip().lower()
@@ -638,7 +1101,28 @@ class Handler(BaseHTTPRequestHandler):
             return None
         if kind == "precinct" and name not in known:
             return None
-        return {"kind": kind, "name": name}
+        out = {"kind": kind, "name": name}
+        lanes = {k: str(slot.get(k) or "").strip().lower()
+                 for k in ("service", "model", "report_service", "report_model")}
+        if kind == "deputy":
+            return None if any(lanes.values()) else out
+        # work lane: `service` is a MODE id here for the same reason the create-case
+        # form posts one (the two single-agent mode ids ARE the service ids).
+        if lanes["service"] and lanes["service"] not in models.MODE_IDS:
+            return None
+        if lanes["report_service"] and lanes["report_service"] not in models.SERVICE_IDS:
+            return None
+        for mk, sk in (("model", "service"), ("report_model", "report_service")):
+            m, s = lanes[mk], lanes[sk]
+            if m and m not in models.ALL_ALIASES:
+                return None
+            # a model must belong to the service it is paired with. The work lane's
+            # `service` is a mode, so compare against the mode's DEPUTY service.
+            svc = models.deputy_service(s) if (s and sk == "service") else s
+            if m and svc and models.service_of(m) != svc:
+                return None
+        out.update({k: v for k, v in lanes.items() if v})
+        return out
 
     def _create_jtf(self):
         """Validate a JTF submission (a lead + >=1 collaborator, each slot a precinct or
@@ -675,9 +1159,25 @@ class Handler(BaseHTTPRequestHandler):
         description = str(payload.get("description") or "").strip()
         if not description:
             return self._json({"ok": False, "error": "a task description is required"}, 400)
+        # Case 599 (uid=770): the judge's own service+model, as on the create-case
+        # form. Rejected rather than silently dropped (the Case 551 rule); empty =
+        # the judge's registered default, which is the pre-599 behaviour.
+        judge_model = str(payload.get("judge_model") or "").strip().lower()
+        judge_service = str(payload.get("judge_service") or "").strip().lower()
+        if judge_model and judge_model not in models.ALL_ALIASES:
+            return self._json({"ok": False, "error": f"invalid judge_model '{judge_model}'"}, 400)
+        if judge_service and judge_service not in models.SERVICE_IDS:
+            return self._json({"ok": False,
+                               "error": f"invalid judge_service '{judge_service}'"}, 400)
+        if judge_model and judge_service and models.service_of(judge_model) != judge_service:
+            return self._json({"ok": False, "error":
+                               f"judge model '{judge_model}' does not belong to "
+                               f"service '{judge_service}'"}, 400)
 
         sid = time.strftime("%Y%m%d%H%M%S") + "_" + os.urandom(4).hex()
         record = {"id": sid, "ts": time.time(), "lead": lead, "collaborators": collabs,
+                  "judge_model": judge_model or None,
+                  "judge_service": judge_service or None,
                   # Case 551: a JTF names WHICH judge signs its deliverables off.
                   # Legacy bools still work (the bridge maps true -> default critic).
                   "critic": (str(payload.get("critic") or "").strip().lower()
@@ -695,6 +1195,61 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": f"could not queue submission: {ex}"}, 500)
         return self._json({"ok": True, "sid": sid,
                            "note": "the inbox handler will materialize the JTF and email an ACK."})
+
+    # -- authed write: DOCKET (Case 761) -----------------------------------
+    _DOCKET_OPS = ("save", "pause", "resume", "cancel", "run-now")
+
+    def _docket_write(self):
+        """Run one entry operation through the owning CLI and relay its verdict.
+
+        Deliberately thin: duplicating scratch_docket.py's validation here would
+        give the operator two answers to the same question and let them drift. This
+        checks only what the subprocess cannot be asked to check cheaply -- the body
+        is small, the op is one we offer, and an id-op names an id."""
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if n <= 0:
+            return self._json({"ok": False, "error": "empty submission"}, 400)
+        if n > config.DOCKET_MAX_BODY:
+            return self._json({"ok": False, "error": "submission too large"}, 413)
+        try:
+            payload = json.loads(self.rfile.read(n).decode("utf-8", "replace"))
+        except Exception:
+            return self._json({"ok": False, "error": "invalid JSON"}, 400)
+        if not isinstance(payload, dict):
+            return self._json({"ok": False, "error": "expected a JSON object"}, 400)
+        op = str(payload.get("op") or "").strip().lower()
+        if op not in self._DOCKET_OPS:
+            return self._json({"ok": False, "error": f"unknown op '{op}'"}, 400)
+
+        cli = config.STATE_ROOT / "scratch_docket.py"
+        if not cli.is_file():
+            return self._json({"ok": False, "error": "the docket is unavailable"}, 503)
+        env = {k: v for k, v in os.environ.items() if k != "TSOMP_RECORDS_ROOT"}
+        if op == "save":
+            entry = payload.get("entry")
+            if not isinstance(entry, dict):
+                return self._json({"ok": False, "error": "missing entry"}, 400)
+            entry.setdefault("requester", config.OPERATOR.get("email") or "")
+            entry["created_by"] = "dashboard"
+            cmd, stdin = [sys.executable, str(cli), "save"], json.dumps(entry)
+        else:
+            pid = str(payload.get("id") or "").strip()
+            if not pid:
+                return self._json({"ok": False, "error": f"'{op}' needs a entry id"}, 400)
+            cmd, stdin = [sys.executable, str(cli), op, "--id", pid], None
+        try:
+            proc = subprocess.run(cmd, input=stdin, cwd=str(config.STATE_ROOT), env=env,
+                                  timeout=30, capture_output=True, text=True)
+            answer = json.loads(proc.stdout or "{}")
+        except Exception as ex:
+            return self._json({"ok": False, "error": f"entry command failed: {ex}"}, 500)
+        if not isinstance(answer, dict) or not answer.get("ok"):
+            # the CLI's own message names the field the operator got wrong, so it is
+            # relayed verbatim rather than flattened into a generic 400.
+            error = (answer or {}).get("error") if isinstance(answer, dict) else ""
+            return self._json({"ok": False, "error": error or "entry command failed"}, 400)
+        state.invalidate("docket")
+        return self._json(answer)
 
     # -- guarded file download ---------------------------------------------
     def _download(self, req):

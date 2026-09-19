@@ -4,7 +4,7 @@
 # re-running never spawns a duplicate — it just reports what is already up. Run it
 # after a reboot, after editing config, or any time to confirm the system is healthy.
 #
-#   bash posse_start.sh            # start or verify: jobmgr, sheriff, inbox, watchdog, dashboard
+#   bash posse_start.sh            # start or verify: jobmgr, sheriff, docket, inbox, watchdog, dashboard
 #   bash posse_start.sh --gpu      # also start the optional GPU resource manager
 #   bash posse_start.sh --dry-run  # show what WOULD start (changes nothing)
 #   bash posse_start.sh --help
@@ -17,7 +17,7 @@ usage() {
   cat <<'EOF'
 posse_start.sh — start (or verify) your whole Posse (idempotent).
 
-  bash posse_start.sh            start or verify: jobmgr, sheriff, inbox, watchdog, dashboard
+  bash posse_start.sh            start or verify: jobmgr, sheriff, docket, inbox, watchdog, dashboard
   bash posse_start.sh --gpu      also start the optional GPU resource manager
   bash posse_start.sh --dry-run  show what WOULD start; change nothing
   bash posse_start.sh --help     this help
@@ -58,8 +58,8 @@ say()     { printf '  %s\n' "$*"; }
 suffix=""; [ "$DRY" = 1 ] && suffix=" (dry-run — nothing will change)"
 echo "Starting your Posse${suffix}..."
 
-# 1) jobmgr + 2) sheriff — idempotent, flock-guarded starters (they self-verify).
-for pair in "jobmgr:scratch_jobmgr_start.sh" "sheriff:scratch_sheriff_start.sh"; do
+# 1) jobmgr + 2) sheriff + 3) docket — idempotent starters (they self-verify).
+for pair in "jobmgr:scratch_jobmgr_start.sh" "sheriff:scratch_sheriff_start.sh" "docket:scratch_docket_start.sh"; do
   name="${pair%%:*}"; script="${pair##*:}"
   if [ "$DRY" = 1 ]; then
     if running "$name"; then say "✓ $name: already running"; else say "• $name: WOULD start ($script)"; fi

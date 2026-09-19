@@ -1,11 +1,12 @@
 """
 Central configuration for the claude_infra dashboard.
 
-Everything is READ-ONLY against the live infra state directory. The one knob
-that matters is INFRA_STATE_ROOT: it points at the directory the daemons use for
-runtime state (default: the infra/ dir shipped beside this dashboard). This is the
-SAME env var the daemon "cutover" uses, so the dashboard and a relocated daemon
-agree on where state lives.
+Status readers are read-only against the live infra state directory. Authenticated
+action endpoints delegate narrowly validated requests to the subsystem that owns a
+write. The one knob that matters is INFRA_STATE_ROOT: it points at the directory the
+daemons use for runtime state (default: the infra/ dir shipped beside this dashboard).
+This is the SAME env var the daemon "cutover" uses, so the dashboard and a relocated
+daemon agree on where state lives.
 
 No secrets live here. The dashboard's own login secret lives under instance/
 (git-ignored), created by set_password.py.
@@ -98,6 +99,13 @@ LIMIT_STATE = JOBS / "limit_state.json"
 LIMIT_STATE_SERVICES = {"claude": LIMIT_STATE,
                         "chatgpt": JOBS / "limit_state_chatgpt.json"}
 MODEL_LIMIT_STATE = JOBS / "limit_state_models.json"
+# Case 681: account inventory and live (non-secret) availability state.  The
+# dashboard reads these only to say which account is limited or needs renewal;
+# credentials stay in the account-specific auth homes and are never represented
+# here.  Keep both files under SCRATCH so a relocated daemon state root moves the
+# dashboard view with it.
+ACCOUNT_REGISTRY = SCRATCH / "accounts.json"
+ACCOUNT_STATE = SCRATCH / "account_state.json"
 
 # Task 372 (Sheriff & Deputies precincts): the records room.
 RECORDS = SCRATCH / "records"
@@ -122,6 +130,10 @@ CRITICS_JSON = RECORDS / "critics.json"
 CRITICS_DIR = RECORDS / "critics"
 CRITIC_REVIEWS = SCRATCH / "critic_reviews"
 SHERIFF_REQUESTS = RECORDS / "sheriff_requests"
+# Case 685: global sheriff-owned standing deliverable policy plus deputy lesson
+# notes.  The dashboard reads it through scratch_field_guide.py; it never writes
+# a guide directly.
+FIELD_GUIDE = RECORDS / "field_guide"
 
 # Task 377 #4: the web "Create new case" drop dir the inbox-handler bridge
 # (scratch_web_case.py) consumes. The POST handler writes pending/<sid>.json +
@@ -137,6 +149,12 @@ WEB_CASE_MAX_FILE_BYTES = 20 * 1024 * 1024   # per-file cap (bytes)
 JTF = SCRATCH / "jtf"
 JTF_MAX_BODY = 256 * 1024               # JTF submission is small JSON (no uploads)
 
+# Case 761: DOCKET — the standing-schedule store owned by tsomp scratch_docket.py.
+# The dashboard reads it through that CLI (single source of truth for the schedule
+# maths) and delegates every write to it; nothing here fires a entry.
+DOCKET = SCRATCH / "docket"
+DOCKET_MAX_BODY = 256 * 1024            # a entry is small JSON (prompt + spec)
+
 # jobmgr job buckets
 JOB_BUCKETS = ["pending", "running", "wakes", "sleeping", "done"]
 GPU_BUCKETS = ["pending", "running", "done"]
@@ -146,11 +164,8 @@ GPU_BUCKETS = ["pending", "running", "done"]
 # AND does not match a DENY fragment. Prevents path traversal + secret leaks.
 DOWNLOAD_ROOTS = [
     (STATE_ROOT / "reports").resolve(),
-    (STATE_ROOT / "outputs_sweep").resolve(),
-    (STATE_ROOT / "outputs_tuning").resolve(),
     (SCRATCH).resolve(),
     (GPU_QUEUE / "logs").resolve(),
-    (STATE_ROOT / "eval").resolve(),
 ]
 # Optional operator-added roots: absolute paths (os.pathsep-separated) to extra
 # directories a worker emails deliverables from (e.g. a separate notes/paper dir
@@ -162,7 +177,8 @@ for _extra in os.environ.get("INFRA_EXTRA_DOWNLOAD_ROOTS", "").split(os.pathsep)
 # Never serve these, even inside a whitelisted root.
 DOWNLOAD_DENY = [
     "credentials.json", ".smtp_env", ".anthropic_key", ".credentials",
-    "auth.json", "register.json", ".env", "id_rsa", "private", ".pem", ".key",
+    "auth.json", "register.json", "accounts.json", "account_state.json", ".env",
+    "id_rsa", "private", ".pem", ".key",
     "/.git/",  # Case 512: never serve VCS internals (a remote URL can embed a
                # token) — matters once cross-precinct project dirs become roots.
 ]

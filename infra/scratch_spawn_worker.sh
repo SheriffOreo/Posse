@@ -204,6 +204,12 @@ SPLIT_BLOCK="$(python3 scratch_model_switch.py protocol --case "$TASK_UID" \
   --work-model "$WORKER_MODEL" --work-service "$WORKER_SERVICE" \
   --report-model "$WORKER_REPORT_MODEL" --report-service "$WORKER_REPORT_SERVICE" 2>/dev/null)"
 JUDGE_AWARENESS="$(python3 scratch_critic.py awareness --case "$TASK_UID" 2>/dev/null)"
+# Every deputy gets the sheriff-owned Field Guide at launch. `prompt` reads STANDING
+# text only, never the pending lessons, so one deputy's optional observation cannot
+# quietly become the next deputy's policy. The block carries the identity/session a
+# deputy needs to file a lesson or a rewrite request without hand-editing files.
+FIELD_GUIDE_BLOCK="$(python3 scratch_field_guide.py prompt --deputy "$NAME" --session "$SID" \
+  --case "$TASK_UID" --precinct "$WORKER_PRECINCT" 2>/dev/null)"
 CRITIC_BLOCK=""
 CRITIC_GATE=""
 if [ -n "$WORKER_CRITIC" ]; then
@@ -409,6 +415,8 @@ THE WORK SPLIT — WHICH MODEL DOES WHAT.
 $SPLIT_BLOCK
 
 $JUDGE_AWARENESS
+
+$FIELD_GUIDE_BLOCK
 
 $CRITIC_BLOCK
 

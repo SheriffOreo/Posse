@@ -37,8 +37,20 @@ def main():
         return 1
     tok = auth.create_register_token(email=args.email, name=args.name)
     port = os.environ.get("INFRA_DASH_PORT", str(config.PORT))
-    # The link is opened through the SSH tunnel, so localhost is the right host.
-    print(f"http://localhost:{port}/register?token={tok}")
+    # Match the bind this instance is actually configured for. The token is
+    # SINGLE-USE, so printing a link whose scheme or host cannot be opened costs the
+    # operator the token: on a public+TLS bind, localhost/http is simply wrong.
+    public = os.environ.get("INFRA_DASH_PUBLIC", "") == "1"
+    tls = public or os.environ.get("INFRA_DASH_TLS", "") == "1"
+    scheme = "https" if tls else "http"
+    if public:
+        host = os.environ.get("INFRA_DASH_ADVERTISE", "") or "<this-host>"
+        print(f"{scheme}://{host}:{port}/register?token={tok}")
+        print("(replace <this-host> with this machine's hostname or IP if it is not "
+              "already filled in)", file=sys.stderr)
+    else:
+        # Localhost bind: the link is opened through an SSH tunnel.
+        print(f"{scheme}://localhost:{port}/register?token={tok}")
     if args.email:
         print(f"(account username: {args.email})", file=sys.stderr)
     return 0

@@ -1,12 +1,13 @@
-# Claude Infra Dashboard
+# The Posse dashboard
 
-> The observability surface for **[Rookery](../README.md)** — the headless-worker
-> orchestration system. This page documents the dashboard itself; see the
-> [project README](../README.md) for the whole system and its architecture figure.
+> The operator's view of **[Posse](../README.md)**. This page documents the dashboard
+> itself; see the [project README](../README.md) for the whole system.
 
-A small, **login-protected, read-only** web dashboard over the live infra state
-(workers, GPU, job manager, usage limits, job history + task conversations &
-lineage). Pure Python **standard library** — no pip installs, no build step.
+A small, **login-protected** web dashboard over the live system state (deputies, GPU,
+job manager, usage limits, job history, case conversations). Most of it is a read-only
+view, but it is **not** a read-only application: the Precincts, JTF and Docket tabs
+create work, and that work runs with the same autonomous shell access as any other
+deputy. Pure Python **standard library** — no pip installs, no build step.
 
 ## What it shows
 
@@ -30,11 +31,43 @@ lineage). Pure Python **standard library** — no pip installs, no build step.
   this task → follow-up children), and a **DELIVERABLES** section linking that task's
   job artifacts (output / stdout / stderr) and matching `reports/` files — every link
   served through the guarded `/download` endpoint.
-- On History (and Lineage) the task **conversation/detail panel is sticky** — it
+- On History the task **conversation/detail panel is sticky** — it
   follows the scroll and updates in place, so clicking a job at the bottom of a long
   day-list shows the detail where you are rather than jumping to the top. A
   conversation taller than the viewport **scrolls inside the panel** (the panel is
   capped at `100vh − 80px`), so the last messages and deliverables stay reachable.
+
+**Docket** (`/entries`) — standing work that runs on a schedule (Case 761)
+- A **entry** is a saved spec plus a time: either a single **case** in one precinct
+  (with its work split and judge) or a whole **JTF** (lead + numbered collaborators,
+  each with its own model and split). It also holds the prompt the run is launched with.
+- Two lists: **On the docket** (scheduled) and **Stood down** (paused, or a spent
+  one-off) with a **Resume** button. Every entry carries **Edit** (prompt, precinct or
+  composition, models, work split, judge, time, repeat), **Pause/Resume** and **Cancel**;
+  a cancelled entry is moved to `docket/cancelled/`, never deleted.
+- Repeats: once / hourly / daily / weekly / monthly. The prompt may carry date
+  placeholders that are filled in at launch — `{date}`, `{time}`, `{datetime}`,
+  `{weekday}`, and `{d:FMT}` / `{d+N:FMT}` / `{d-N:FMT}` (strftime of the fire date,
+  shifted N days).
+- When a entry comes due, the runner drops a **brand-new** submission into
+  `web_cases/pending/` or `jtf/pending/` — the same queues this dashboard's Create-case
+  and New-JTF forms write — and the inbox loop spawns **fresh** deputies from it. No
+  worker from a previous run is ever resumed or reused.
+- The schedule store, the arithmetic and every validation rule live in
+  `infra/scratch_docket.py`; the dashboard reads through that CLI and delegates every
+  write to it. The **docket** daemon (started by `posse_start.sh`) runs it once a
+  minute — without that daemon entries still save, but nothing ever fires.
+
+**Field Guide** (`/field-guide`) — the standing output standards every deputy is launched with
+- One section per category. This release ships **code** and **report**; each opens
+  folded, with a button to read the standing text.
+- The text is **sheriff-owned**: nothing on this page edits it. Each section has a
+  button asking the sheriff to review that category, and a box for asking the
+  **receptionist** for a change — a new section, or different wording in one that
+  exists. Both open work; neither writes policy.
+- Deputies may file optional **lessons** from the CLI. They are shown here, never
+  injected into a launch prompt, and a category is reviewed automatically once ten
+  are pending.
 
 **Appearance** — a **day/night toggle** (moon/sun button in the nav) switches between
 the default dark palette and a light theme; the choice is saved in `localStorage`
@@ -90,7 +123,7 @@ private" warning → **Advanced → Proceed**. To bind publicly over plain HTTP 
 
 | var | default | meaning |
 |-----|---------|---------|
-| `INFRA_STATE_ROOT` | `../infra` (shipped beside the dashboard) | dir the daemons read/write (read-only here) |
+| `INFRA_STATE_ROOT` | `../infra` (shipped beside the dashboard) | dir the daemons read/write; the dashboard reads it, and writes only the queue records its forms create |
 | `INFRA_DASH_HOST` | `127.0.0.1` | bind address; `0.0.0.0` = all interfaces (public) |
 | `INFRA_DASH_PORT` | `8787` | port |
 | `INFRA_DASH_PUBLIC` | `0` | `1` = shortcut for host `0.0.0.0` + TLS on (public, encrypted) |
@@ -101,8 +134,10 @@ private" warning → **Advanced → Proceed**. To bind publicly over plain HTTP 
 
 ## Security notes
 
-- **Read-only.** No endpoint mutates infra state. (No "manage/kill" actions ship in v1 —
-  those were left for explicit sign-off; see repo `README.md`.)
+- **Controlled actions.** Read pages never mutate state. Authenticated action endpoints
+  validate a narrow request and hand it to the owning subsystem (for example, a watchdog
+  control order or a sheriff request); the Field Guide page can queue a review but cannot
+  edit standing guidance or run the sheriff model from the web request.
 - **Auth.** Login form → PBKDF2-SHA256 password check (constant-time) → signed,
   expiring, `HttpOnly` `SameSite=Strict` session cookie (HMAC-SHA256). In-memory
   backoff after repeated failures. The plaintext password is never stored.
@@ -124,11 +159,16 @@ private" warning → **Advanced → Proceed**. To bind publicly over plain HTTP 
 
 ### Fully automated — no Claude/Anthropic API
 
-The served dashboard is **pure Python standard library**. It reads the live state
-files **read-only**, serves HTTP(S), and does nothing else: it makes **no
-Claude/Anthropic API calls, spawns no `claude` process, and issues no external
-network requests**. The only subprocess it ever runs is `tmux ls` (to show daemon
-health). Verify:
+The served dashboard is **pure Python standard library**. It makes **no
+Claude/Anthropic API calls, starts no agent itself, and issues no external network
+requests** — so the page cannot spend your usage limit by being open or refreshed.
+
+What it does do: it reads the live state files, and on an authenticated write it runs
+one of the repo's own CLIs (`scratch_records.py`, `scratch_case_seq.py`,
+`scratch_docket.py`, `scratch_field_guide.py`) or drops a record into a queue. That is
+how a new case, a JTF, a docket entry or a policy request is created. The daemons, not
+this server, then launch the agent — which is why creating work here costs exactly what
+creating it by email costs. `tmux ls` is used to show daemon health. Verify:
 
 ```bash
 grep -rInE 'anthropic|claude|ANTHROPIC_API|api\.anthropic|subprocess|os\.system|requests\.|urllib\.request|http\.client' dashboard/*.py
@@ -136,9 +176,7 @@ grep -rInE 'anthropic|claude|ANTHROPIC_API|api\.anthropic|subprocess|os\.system|
 
 The only hits are `.anthropic_key` in the download **denylist**, the string
 "claude_infra" in docstrings, and the `subprocess.run(["tmux","ls"])` health check —
-no LLM calls. (`lineage_figure.py` is a **standalone, offline** figure generator that
-imports matplotlib; it is **not** imported by `server.py` and is never part of the
-running service.) So the dashboard runs unattended with zero token cost.
+no LLM calls. So the dashboard runs unattended with zero token cost.
 
 ## Files
 
@@ -146,10 +184,13 @@ running service.) So the dashboard runs unattended with zero token cost.
 |------|------|
 | `server.py` | stdlib HTTP server: routing, auth gate, JSON APIs, guarded `/download` |
 | `state.py` | read-only readers over watchdog roster / jobs / gpu_queue / limit state |
-| `lineage.py` | task-lineage reconstruction + per-task email-thread assembly |
+| `lineage.py` | task-lineage reconstruction + per-task email-thread assembly (History day trees, each case's conversation panel, JTF/Docket agent search) |
 | `auth.py` | password hashing + signed-cookie sessions + login backoff |
 | `pages.py` | HTML/CSS/JS (status + history are JS-driven off the JSON APIs) |
 | `config.py` | paths + bind + download-safety config (all env-overridable) |
+| `docket_ui_test.py` | offline tests for the Docket tab (render, routes, delegate-only writes) |
+| `guidance_ui_test.py` | offline tests for the Field Guide tab (folding, the receptionist box, delegate-only writes) |
+| `state_test.py` | offline tests for the readers, including which controls an install may offer |
 | `set_password.py` | set/reset the login password |
 | `make_register_link.py` | mint the one-time registration URL (first-password bootstrap) |
 | `start_dashboard.sh` | launch/verify the auto-restarting `infra_dashboard` tmux session (+ public/TLS) |
@@ -157,9 +198,14 @@ running service.) So the dashboard runs unattended with zero token cost.
 
 ## Task lineage — how reliable is it?
 
-Follow-ups are launched as **new** task numbers, but the parent link is **not
-persisted** today (see repo `MIGRATION.md` and `../proposed_patches/`). Lineage is
-reconstructed best-effort, per edge, from: explicit `task_A->B->C` chains in specs
-(high confidence), "follow-up of Task N" phrasing, then normalized-subject email
-threading (fallback). Each edge is labelled with its basis in the UI. The permanent
-fix is a one-line stamp in `scratch_inbox_handle.sh` (patch provided, not applied).
+The standalone Lineage **tab** was removed in Case 761 (Feng: the forest view was not
+useful). The reconstruction below still runs: it builds History's day mini-trees, the
+ancestors/children strip on a case's conversation panel, and the task titles the
+JTF/Docket agent picker searches.
+
+A follow-up is launched as a **new** case, and its parent link **is** persisted:
+`scratch_inbox_handle.sh` stamps `parent_task:` onto every new spec via
+`scratch_task_parent.py`, so those edges are exact. Older cases, and any spec that
+predates the stamp, are reconstructed best-effort per edge from explicit
+`task_A->B->C` chains, "follow-up of Task N" phrasing, then normalized-subject email
+threading. Each edge is labelled with its basis in the UI.

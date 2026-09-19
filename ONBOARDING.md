@@ -6,7 +6,9 @@
 
 This is the **step-by-step guide for a new operator** standing up a Posse instance on
 their own machine. Follow it top to bottom; each step is a few commands and takes ~20
-minutes end to end. When you finish you will have: a running fleet manager (the
+minutes end to end **once you already have a dedicated mailbox and an authenticated
+Claude CLI**. Creating the mailbox (a new account, 2-Step Verification, an app password)
+and completing the Claude sign-in are the slow parts — do those first, or budget an hour. When you finish you will have: a running fleet manager (the
 **Sheriff** + daemons), a login-gated **dashboard** at a URL you choose, and the
 ability to **email a task** and watch a **deputy** work it to completion.
 
@@ -41,9 +43,10 @@ yourself, script it, or troubleshoot.
 - **You are the operator.** One person runs one Posse instance. Your **email address**
   is your identity everywhere: it is your **dashboard username**, the address the posse
   **emails you** at, and the **allow-listed sender** whose messages command the fleet.
-- **The control plane is email.** You send a task as an email; a deputy picks it up.
-  You reply to steer it. Nothing else can drive the fleet — an allow-list gates every
-  sender (fail-closed).
+- **Email is the main control plane.** You send a task as an email; a deputy picks it
+  up. You reply to steer it. An allow-list gates every sender (fail-closed). The
+  dashboard is the other way in: its Precincts, JTF and Docket tabs create work too,
+  behind the dashboard login rather than the mail allow-list.
 - **The posse needs its own mailbox.** Create a dedicated email account (a Gmail is the
   reference) that the daemons log into to send and receive. That account is separate
   from your personal address.
@@ -54,8 +57,8 @@ yourself, script it, or troubleshoot.
   and keep their runtime **state** (logs, mailboxes, records, queues) under
   `infra/scratch_full_logs/` (they resolve it next to their own code). You point the
   **dashboard** at that same place with `INFRA_STATE_ROOT` so it reads what the daemons
-  write. Relocating state to an arbitrary directory is the documented, deferred cutover
-  — see [`MIGRATION.md`](MIGRATION.md).
+  write. To keep state somewhere else entirely, set `INFRA_STATE_ROOT` to that
+  directory for both the daemons and the dashboard.
 
 You will configure **four** things: a **state directory**, your **identity**, the
 **posse mailbox**, and **Claude auth**. Then you start the daemons and register your
@@ -82,8 +85,8 @@ pip install.
 ## 2. Get the code
 
 ```bash
-git clone https://github.com/<your-org>/claude_infra.git posse
-cd posse
+git clone https://github.com/SheriffOreo/Posse.git
+cd Posse
 ```
 
 Everything below is run from this directory.
@@ -92,20 +95,30 @@ Everything below is run from this directory.
 
 ## 3. Configure your instance (`infra_env.sh`)
 
-`infra_env.sh` is the single place that holds your instance's non-secret configuration.
-The defaults already work for a fresh clone; open it and set your **identity** and
-**allow-list**:
+`infra_env.sh` is the tracked template holding your instance's non-secret
+configuration. The defaults already work for a fresh clone; open it and set your
+**identity** and **allow-list**:
+
+> **If you ran `setup.py`, edit `infra_env.local.sh` instead.** The installer writes your
+> answers to that file, and `posse_start.sh` loads it *instead of* this template — it does
+> not merge the two. So after an installer run, changes to `infra_env.sh` have no effect.
+> Edit the template only if you are configuring by hand and never ran the installer.
+> `infra_env.local.sh` is git-ignored, so `git pull` never touches your settings.
 
 ```bash
 # YOUR IDENTITY  (your address is your dashboard username + where the posse mails you)
 export INFRA_OPERATOR_EMAIL="you@example.com"
 export INFRA_OPERATOR_NAME="Your Name"          # used in the "Hi <name>," greeting
 
-# WHO MAY COMMAND THE FLEET  (comma-separated allow-list; defaults to just you)
+# WHO MAY COMMAND THE FLEET  (comma-separated allow-list)
+# Defaults to INFRA_OPERATOR_EMAIL above — so if you leave that blank, this is EMPTY
+# and the posse ignores every message it receives. Set both.
 export INFRA_MAIL_ALLOWED="you@example.com"
 
 # STATE ROOT — leave the default: the daemons run from infra/ and keep state under
 # infra/scratch_full_logs; this points the dashboard at that same place.
+# INFRA_CODE_ROOT is set for you at the top of this file (it auto-detects the repo
+# directory), so use the line below as-is rather than pasting it into a bare shell.
 export INFRA_STATE_ROOT="$INFRA_CODE_ROOT/infra"
 
 # OPTIONAL — run the daemons inside a conda env (unset => system python3 is fine)
@@ -120,13 +133,16 @@ Then **source it in the shell you will start the daemons from** — the tmux dae
 inherit this environment:
 
 ```bash
-source ./infra_env.sh
+source ./infra_env.sh          # or ./infra_env.local.sh if the installer wrote one
 ```
 
 > **Why the allow-list matters.** `INFRA_MAIL_ALLOWED` is a **fail-closed** gate: only
 > mail from those exact addresses is ever routed or acted on; everything else is left
-> untouched. It is **empty by default**, so a fresh install ignores all mail until you
-> set it. To let a teammate send tasks later, add their address here (Step 10).
+> untouched. It defaults to `INFRA_OPERATOR_EMAIL`, so setting your identity is usually
+> enough — but if you leave your email blank, the allow-list is **empty** and the posse
+> ignores every message you send it, with no error anywhere. If you emailed a task and
+> nothing happened, check this first. To let a teammate send tasks later, add their
+> address here (Step 10).
 
 ---
 
@@ -156,7 +172,7 @@ chmod 600 ~/.smtp_env
 Send yourself a test message to confirm the credentials work:
 
 ```bash
-python infra/scratch_notify_email.py "Posse test" "hello from my posse" \
+python3 infra/scratch_notify_email.py "Posse test" "hello from my posse" \
     --agent setup --to "$INFRA_OPERATOR_EMAIL"
 ```
 
@@ -208,7 +224,11 @@ side is running `claude` once interactively to accept the folder-trust prompt (a
 
 ## 6. Choose the web host & port
 
-The dashboard is a login-gated, **read-only** web UI. Two ways to reach it:
+The dashboard is a login-gated web UI. It is mostly a **read-only** view of what the
+daemons are doing, but it is not read-only: the Precincts, JTF and Docket tabs
+**create work** — a new case, a joint task force, or a schedule — and that work runs
+with the same autonomous shell access as any other deputy. Protect it accordingly.
+Two ways to reach it:
 
 **Localhost + SSH tunnel (default, safest).** It binds `127.0.0.1:8787`; reach it from
 your laptop over a tunnel:
@@ -238,7 +258,7 @@ The dashboard has one operator account. Your **email is the username**; you set 
 
 ```bash
 cd dashboard
-python make_register_link.py --email "$INFRA_OPERATOR_EMAIL" --name "$INFRA_OPERATOR_NAME"
+python3 make_register_link.py --email "$INFRA_OPERATOR_EMAIL" --name "$INFRA_OPERATOR_NAME"
 # prints:  http://localhost:8787/register?token=...
 cd ..
 ```
@@ -258,7 +278,7 @@ shows your email as the signed-in account.
 ## 8. Start the system
 
 **One command — `bash posse_start.sh`** — starts (or verifies) the whole system: the
-daemons (jobmgr, sheriff, inbox, watchdog) **and** the dashboard. It is **idempotent**,
+daemons (jobmgr, sheriff, docket, inbox, watchdog) **and** the dashboard. It is **idempotent**,
 so re-run it any time (after a reboot, after editing config) — every service is guarded
 by a tmux session check, so nothing is ever started twice.
 
@@ -296,6 +316,9 @@ tmux new-session -d -s watchdog \
 
 # 5) Sheriff — the system manager: keeps precinct records healthy (zero-API monitoring)
 bash infra/scratch_sheriff_start.sh
+
+# 6) Docket runner — fires the scheduled entries on the Docket tab, once a minute
+bash infra/scratch_docket_start.sh
 ```
 
 Then the dashboard:
@@ -311,7 +334,7 @@ cd ..
 **Verify** everything is up:
 
 ```bash
-tmux ls                                 # expect: jobmgr, inbox, watchdog, sheriff, infra_dashboard (+ gpu_manager if started)
+tmux ls                                 # expect: jobmgr, inbox, watchdog, sheriff, docket, infra_dashboard (+ gpu_manager if started)
 curl -sk http://localhost:8787/healthz  # -> {"ok": true}   (use https:// if TLS is on)
 ```
 
@@ -326,9 +349,9 @@ Work is organized into **precincts** — the domains you operate in (e.g. `resea
 **you create the rest.** Register one per domain:
 
 ```bash
-python infra/scratch_records.py directory register \
+python3 infra/scratch_records.py directory register \
   --name research --description "literature + experiments" --model opus
-python infra/scratch_records.py directory register \
+python3 infra/scratch_records.py directory register \
   --name ops --description "infrastructure + deployments" --model opus
 ```
 
@@ -337,6 +360,14 @@ python infra/scratch_records.py directory register \
 (big-picture digest), an append-only **case log**, and per-case files — all under
 `$INFRA_STATE_ROOT/scratch_full_logs/records/<precinct>/`. They appear on the dashboard's
 **Precincts** page.
+
+The command confirms with a line like `registered precinct[research] mode=mutable
+model=opus`. **Mode** is whether the sheriff may rewrite that precinct's ledger as it
+grows: `mutable` (the default, and what you want) lets it compact the ledger; `fixed` is
+reserved for the Receptionist, whose ledger is a description of the system rather than a
+record of work. A new precinct's directory starts with only `cases/` — the ledger and
+case log are written when its first case closes, so an empty-looking directory right
+after registering is expected.
 
 ---
 
@@ -353,8 +384,7 @@ Body:    Attach any files you need. Send a plan, a milestone, and a final.
 
 Within a poll cycle the router spawns a **deputy** in the `research` precinct. It will
 email you a short **plan**, then **milestones**, then a **final** result. Watch it live
-on the dashboard's **Status** page; the case and its lineage show up under **History**
-and **Lineage**.
+on the dashboard's **Status** page; the case and its lineage show up under **History**.
 
 **Steer it mid-task** by simply **replying** to any of its emails — your reply is
 injected into the deputy's mailbox and it re-reads it without losing its place (its
@@ -384,14 +414,22 @@ bring in a collaborator:
 
 - **The wait discipline (load-bearing).** A deputy waiting on a job either **polls**
   (short jobs, ≤ 4-min intervals — every poll is a cache-warm read) or **submits + sleeps**
-  (long jobs — the job manager event-wakes it). This keeps token cost bounded; see the
-  README's "wait discipline" section.
+  (long jobs — the job manager event-wakes it). This keeps token cost bounded, and it is why a
+  deputy waiting on a long job costs almost nothing while it waits.
 - **Start / stop the system.** `bash posse_start.sh` starts or verifies everything;
   `bash posse_stop.sh` stops the daemons + dashboard (deputies and jobs in flight keep
   running). Both take `--dry-run` (preview) and `--gpu` (include the GPU manager).
 - **Daemons are self-healing.** The starters are idempotent; re-run any of them any time.
   The watchdog relaunches crashed or rate-limited deputies. **After a reboot, just run
   `bash posse_start.sh`.**
+- **Deputies launch with the Field Guide.** The **Field Guide** tab holds your standing
+  output standards; this release ships **code** and **report**, and every deputy is
+  launched with them. The text is sheriff-owned, so the page can ask for a change but
+  never makes one — use the section's review button, or the box that opens a
+  receptionist case for a new section or new wording.
+- **Recurring work goes on the Docket.** The **Docket** tab saves a case or a whole JTF
+  plus a schedule; when one comes due the docket daemon launches **fresh** deputies from
+  it. Nothing from a previous run is reused.
 - **Secrets never touch git.** `~/.smtp_env`, `~/.anthropic_key`,
   `~/.claude/.credentials.json`, and `dashboard/instance/` all live outside the repo and
   are chmod 600. A secret scan should be part of every commit.
@@ -405,7 +443,7 @@ bring in a collaborator:
 | Test email never arrives | Wrong `SMTP_USER`/`SMTP_PASS` (use a Gmail **app password**, not the login password), or 2-Step Verification not enabled. Re-run the Step 4 test command and read the error. |
 | You emailed a task but nothing happened | Your address isn't in `INFRA_MAIL_ALLOWED` (fail-closed), or the inbox router (`tmux` session `inbox`) isn't running. Check `tmux ls` and `$INFRA_STATE_ROOT/scratch_full_logs/inbox_agent.log`. |
 | Deputy spawns then dies immediately | Claude CLI not authenticated. Run `claude` → `/login` (subscription) or set `~/.anthropic_key` + `TSOMP_CLAUDE_AUTH=apikey`. |
-| Dashboard shows "Password not set" | Run the Step 7 registration link (or `python dashboard/set_password.py`). |
+| Dashboard shows "Password not set" | Run the Step 7 registration link (or `python3 dashboard/set_password.py`). |
 | `/healthz` refused | Dashboard tmux (`infra_dashboard`) not up, or wrong scheme — use `https://` when `INFRA_DASH_TLS=1`. Check `dashboard/instance/` for the cert and the wrapper log. |
 | Dashboard is empty although deputies are running | The dashboard's `INFRA_STATE_ROOT` doesn't point at where the daemons write (`infra/scratch_full_logs`). Set `INFRA_STATE_ROOT="$INFRA_CODE_ROOT/infra"` before `start_dashboard.sh`. |
 
